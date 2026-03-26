@@ -1,0 +1,22 @@
+# Fin-R1 Data Hub - Historical Data Module
+# 历史数据下载与存储模块依赖
+
+# Database (兼容Python 3.9)
+sqlalchemy==2.0.31
+psycopg2-binary==2.9.9
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.3
+
+# A-Share Data Source (Python 3.9兼容的最新版)
+akshare>=1.16.0
+
+# Scheduling
+schedule==1.2.0
+
+# Utils
+tqdm==4.66.1
+python-dateutil==2.8.2
+pytz==2023.3
+python-dotenv==1.0.0

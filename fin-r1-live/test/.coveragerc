@@ -1,0 +1,35 @@
+# Coverage configuration
+[run]
+source = .
+omit = 
+    test/*
+    */test_*.py
+    */*_test.py
+    */__pycache__/*
+    */venv/*
+    */env/*
+    setup.py
+    conftest.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+    @abc.abstractmethod
+    pass
+    ^\s*\.\.\.\s*$
+
+precision = 2
+show_missing = True
+skip_covered = False
+
+[html]
+directory = coverage_html
+
+[xml]
+output = coverage.xml

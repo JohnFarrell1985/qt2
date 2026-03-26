@@ -1,0 +1,87 @@
+https://auth.huaweicloud.com/authui/login?id=hid_2hrnoig1sz1ekp2&username=guoxin.dong
+# 华北-乌兰察布一
+# A800安全组，添加入规则端口 8012 给Web UI
+
+
+# 查看磁盘剩余容量是否足够下载权重
+df -h /home/data
+sh download_Fin-R1.sh
+
+# docker images下载Dir也设置到这目录
+# 下载vllm驱动，我这里是A800，适配v0.4.0
+nohup docker pull --disable-content-trust vllm/vllm-openai:v0.4.0 > docker_pull.log 2>&1 &
+
+# 启动Fin-R1 API Server
+# nvidia-smi 查看到2号GPU目前空闲，gpus device=2
+# lsof -i:8010未占用，port 8010
+docker run -d \
+  --name fin-r1-vllm \
+  --gpus device=2 \
+  --network host \
+  --shm-size=16g \
+  -v /home/data/Fin-R1:/models/Fin-R1 \
+  vllm/vllm-openai:v0.4.0 \
+  --model /models/Fin-R1 \
+  --gpu-memory-utilization 0.8 \
+  --max-num-batched-tokens 32768 \
+  --max-model-len 32768 \
+  --port 8010 \
+  --host 0.0.0.0
+
+# 测试API
+curl http://192.168.0.198:8010/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "/models/Fin-R1",
+    "messages": [{"role": "user", "content": "分析与两会主旨密切相关的受益股"}]
+  }'
+  
+# 关闭Fin-R1
+docker stop fin-r1-vllm && docker rm fin-r1-vllm
+
+# 下载chat-ui通用Web UI
+nohup docker pull --disable-content-trust yidadaa/chatgpt-next-web:latest > chatui_pull.log 2>&1 &
+
+# 启动chatgpt-next-web对接Fin-R1 API
+docker run -d \
+  --name fin-r1-webui \
+  -p 8011:3000 \
+  -e BASE_URL=http://172.17.0.1:8010 \
+  -e API_KEY="none" \
+  -e HOST="0.0.0.0" \
+  -e PORT=3000 \
+  -e DEFAULT_MODEL="/models/Fin-R1" \
+  -e DISABLE_OPENAI_MODEL_LIST=true \
+  -e CUSTOM_MODELS="/models/Fin-R1" \
+  yidadaa/chatgpt-next-web:latest
+
+# Web UI默认3000端口
+http://116.204.127.251:8011
+
+
+# 本地电脑终端执行（替换成你的服务器账号）
+ssh -L 8011:127.0.0.1:8011 root@116.204.127.251
+# 浏览器直接访问，直接通过 SSH 隧道访问服务器的 WebUI，无需依赖云安全组。
+http://127.0.0.1:8011
+
+
+# 手动在提示词内数据现在的数据
+# 或者
+# 一键创建+启动实时中间层（无需手动写文件）
+sh alive_data.sh
+
+# 停止旧WebUI容器
+docker stop fin-r1-webui && docker rm fin-r1-webui
+
+# 启动新WebUI（BASE_URL指向8012的中间层）
+docker run -d \
+  --name fin-r1-webui \
+  -p 8011:3000 \
+  -e BASE_URL=http://172.17.0.1:8012 \
+  -e API_KEY="none" \
+  -e HOST="0.0.0.0" \
+  -e PORT=3000 \
+  -e DEFAULT_MODEL="Fin-R1-Live" \
+  -e DISABLE_OPENAI_MODEL_LIST=true \
+  -e CUSTOM_MODELS="Fin-R1-Live" \
+  yidadaa/chatgpt-next-web:latest

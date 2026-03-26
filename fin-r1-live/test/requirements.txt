@@ -1,0 +1,48 @@
+# Test dependencies for Fin-R1 Live Data Middleware
+
+# Testing Framework
+pytest==7.4.4
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-html==4.1.1
+pytest-xdist==3.5.0
+
+# HTTP Testing
+httpx==0.26.0
+respx==0.20.2  # Mock httpx
+
+# Database Testing
+pytest-postgresql==5.0.0
+
+# Mocking
+pytest-mock==3.12.0
+aioresponses==0.7.6  # Mock aiohttp
+
+# Test Data
+faker==23.1.0
+factory-boy==3.3.0
+
+# Coverage
+coverage==7.4.1
+
+# Code Quality
+pytest-flake8==1.1.1
+pytest-black==0.3.12
+pytest-isort==3.1.0
+
+# Type Checking (optional but recommended)
+pytest-mypy-plugins==3.0.0
+
+# Performance Testing
+pytest-benchmark==4.0.0
+
+# Snapshot Testing (optional)
+pytest-snapshot==0.9.0
+
+# Existing project dependencies (for reference)
+# These should be installed from main requirements.txt
+# fastapi==0.109.0
+# uvicorn[standard]==0.27.0
+# sqlalchemy==2.0.25
+# pandas==2.1.4
+# numpy==1.26.3
