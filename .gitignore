@@ -15,7 +15,6 @@ env/
 
 # Environment variables (contains secrets)
 .env
-!.env.example
 
 # IDE
 .idea/
@@ -47,6 +46,10 @@ postgres_data/
 # Backup files (may be large)
 *.sql.gz
 *.dump
+
+# ML Models
+models/
+*.pkl
 
 # Temp
 tmp/

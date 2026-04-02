@@ -1,0 +1,92 @@
+{
+  "_doc": "宏观环境状态配置 - 不同宏观状态映射不同策略",
+  "states": {
+    "bull_strong": {
+      "label": "强势牛市",
+      "description": "经济复苏/过热, 流动性充裕, 市场情绪亢奋",
+      "indicators": {
+        "market_trend": "上涨且加速",
+        "pmi": ">52",
+        "m2_growth": ">10%",
+        "credit_spread": "收窄",
+        "shibor_1m": "<2.5%"
+      },
+      "preferred_strategies": ["momentum_aggressive", "growth_factor"],
+      "avoid_strategies": ["defensive", "low_volatility"],
+      "position_multiplier": 1.2
+    },
+    "bull_moderate": {
+      "label": "温和牛市",
+      "description": "经济稳步增长, 流动性合理, 市场情绪偏乐观",
+      "indicators": {
+        "market_trend": "上涨",
+        "pmi": "50~52",
+        "m2_growth": "8%~10%",
+        "credit_spread": "稳定",
+        "shibor_1m": "2%~3%"
+      },
+      "preferred_strategies": ["balanced_growth", "quality_factor"],
+      "avoid_strategies": [],
+      "position_multiplier": 1.0
+    },
+    "range_bound": {
+      "label": "震荡市",
+      "description": "经济数据分化, 政策观望期, 市场缺乏方向",
+      "indicators": {
+        "market_trend": "横盘震荡",
+        "pmi": "49~51",
+        "m2_growth": "7%~9%",
+        "credit_spread": "稳定或略升",
+        "shibor_1m": "2%~3.5%"
+      },
+      "preferred_strategies": ["mean_reversion", "low_volatility", "dividend_yield"],
+      "avoid_strategies": ["momentum_aggressive"],
+      "position_multiplier": 0.8
+    },
+    "bear_moderate": {
+      "label": "温和熊市",
+      "description": "经济放缓, 流动性偏紧, 市场情绪偏悲观",
+      "indicators": {
+        "market_trend": "下跌",
+        "pmi": "48~50",
+        "m2_growth": "<8%",
+        "credit_spread": "走扩",
+        "shibor_1m": ">3%"
+      },
+      "preferred_strategies": ["defensive", "low_volatility", "value_factor"],
+      "avoid_strategies": ["momentum_aggressive", "growth_factor"],
+      "position_multiplier": 0.5
+    },
+    "bear_severe": {
+      "label": "深度熊市",
+      "description": "经济衰退, 信用收缩, 市场恐慌",
+      "indicators": {
+        "market_trend": "下跌且加速",
+        "pmi": "<48",
+        "m2_growth": "<7%",
+        "credit_spread": "大幅走扩",
+        "shibor_1m": ">4% 或骤降(央行放水)"
+      },
+      "preferred_strategies": ["cash_heavy", "defensive"],
+      "avoid_strategies": ["momentum_aggressive", "growth_factor", "balanced_growth"],
+      "position_multiplier": 0.3
+    },
+    "recovery": {
+      "label": "底部复苏",
+      "description": "经济触底企稳, 政策宽松初期, 市场情绪从悲观转中性",
+      "indicators": {
+        "market_trend": "筑底或初步反弹",
+        "pmi": "由低回升 >49",
+        "m2_growth": "回升中",
+        "credit_spread": "见顶回落",
+        "shibor_1m": "下降中"
+      },
+      "preferred_strategies": ["value_factor", "contrarian", "small_cap"],
+      "avoid_strategies": [],
+      "position_multiplier": 0.9
+    }
+  },
+  "current_state": "range_bound",
+  "state_update_frequency": "weekly",
+  "notes": "每周日更新宏观状态; 可通过API或手动修改; 策略分配在 strategy_allocation 表中维护"
+}
