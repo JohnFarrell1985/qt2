@@ -24,18 +24,24 @@ class StrategyPool:
     def create_strategy(
         self,
         name: str,
-        factor_names: List[str],
+        factor_names: Optional[List[str]] = None,
         factor_weights: Optional[Dict[str, float]] = None,
         model_params: Optional[Dict[str, Any]] = None,
         description: str = "",
         applicable_macro: Optional[List[str]] = None,
+        strategy_tier: str = "ml",
+        strategy_class: str = "",
+        config: Optional[Dict[str, Any]] = None,
     ) -> int:
         """创建新策略"""
         with get_session() as session:
             stmt = insert(Strategy).values(
                 strategy_name=name,
+                strategy_tier=strategy_tier,
+                strategy_class=strategy_class or name,
+                config_json=json.dumps(config or {}, ensure_ascii=False),
                 description=description,
-                factor_names_json=json.dumps(factor_names, ensure_ascii=False),
+                factor_names_json=json.dumps(factor_names or [], ensure_ascii=False),
                 factor_weights_json=json.dumps(factor_weights or {}, ensure_ascii=False),
                 model_params_json=json.dumps(model_params or {}, ensure_ascii=False),
                 applicable_macro=",".join(applicable_macro) if applicable_macro else "",
@@ -43,8 +49,11 @@ class StrategyPool:
             ).on_conflict_do_update(
                 index_elements=["strategy_name"],
                 set_={
+                    "strategy_tier": strategy_tier,
+                    "strategy_class": strategy_class or name,
+                    "config_json": json.dumps(config or {}, ensure_ascii=False),
                     "description": description,
-                    "factor_names_json": json.dumps(factor_names, ensure_ascii=False),
+                    "factor_names_json": json.dumps(factor_names or [], ensure_ascii=False),
                     "factor_weights_json": json.dumps(factor_weights or {}, ensure_ascii=False),
                     "model_params_json": json.dumps(model_params or {}, ensure_ascii=False),
                     "applicable_macro": ",".join(applicable_macro) if applicable_macro else "",
@@ -53,7 +62,7 @@ class StrategyPool:
             ).returning(Strategy.id)
             result = session.execute(stmt)
             strategy_id = result.scalar_one()
-            logger.info(f"策略已创建/更新: {name} (id={strategy_id})")
+            logger.info(f"策略已创建/更新: {name} (id={strategy_id}, tier={strategy_tier})")
             return strategy_id
 
     def update_backtest_metrics(
@@ -128,6 +137,9 @@ class StrategyPool:
         return {
             "id": s.id,
             "strategy_name": s.strategy_name,
+            "strategy_tier": s.strategy_tier or "ml",
+            "strategy_class": s.strategy_class or "",
+            "config": json.loads(s.config_json) if s.config_json else {},
             "description": s.description,
             "factor_names": json.loads(s.factor_names_json) if s.factor_names_json else [],
             "factor_weights": json.loads(s.factor_weights_json) if s.factor_weights_json else {},

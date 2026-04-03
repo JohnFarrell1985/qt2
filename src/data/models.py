@@ -165,6 +165,50 @@ class IndexWeight(Base):
     )
 
 
+# ============ 可转债 ============
+
+class ConvertibleBond(Base):
+    """可转债基础信息表 — 字段对齐 xtdata.get_cb_info()"""
+    __tablename__ = "convertible_bond"
+
+    code = Column(String(20), primary_key=True, comment="可转债代码如 123001.SZ")
+    bond_name = Column(String(100), comment="转债简称")
+    stock_code = Column(String(20), comment="正股代码")
+    convert_price = Column(Float, comment="最新转股价")
+    convert_start_date = Column(String(20), comment="转股起始日 YYYYMMDD")
+    convert_end_date = Column(String(20), comment="转股截止日")
+    maturity_date = Column(String(20), comment="到期日")
+    issue_amount = Column(Float, comment="发行规模(亿)")
+    remain_amount = Column(Float, comment="剩余规模(亿)")
+    level = Column(String(20), comment="信用评级")
+    analConvpremiumratio = Column(Float, comment="转股溢价率(%)")
+    pure_bond_value = Column(Float, comment="纯债价值")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        Index("idx_cb_stock", "stock_code"),
+    )
+
+
+class CBDaily(Base):
+    """可转债日线行情表"""
+    __tablename__ = "cb_daily"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(20), nullable=False, comment="可转债代码")
+    trade_date = Column(Date, nullable=False)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(BigInteger)
+    amount = Column(Float)
+
+    __table_args__ = (
+        Index("idx_cbd_code_date", "code", "trade_date", unique=True),
+    )
+
+
 # ============ 因子数据 ============
 
 class FactorMeta(Base):
@@ -375,6 +419,9 @@ class Strategy(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     strategy_name = Column(String(100), nullable=False, unique=True)
+    strategy_tier = Column(String(20), default="ml", comment="rule/scoring/ml")
+    strategy_class = Column(String(100), comment="策略实现类名, 对应 registry key")
+    config_json = Column(Text, comment="策略运行时参数 JSON")
     description = Column(Text)
     factor_names_json = Column(Text, comment="因子列表 JSON")
     factor_weights_json = Column(Text, comment="因子权重 JSON")

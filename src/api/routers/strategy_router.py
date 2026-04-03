@@ -1,4 +1,4 @@
-"""策略池 / 标的池 / 宏观环境 API"""
+"""策略池 / 标的池 / 宏观环境 / 三档策略引擎 API"""
 from datetime import date
 from typing import List, Optional
 
@@ -10,6 +10,7 @@ from src.strategy.strategy_pool import StrategyPool
 from src.strategy.instrument_pool import InstrumentPoolManager
 from src.strategy.macro_env import MacroEnvironment
 from src.strategy.orchestrator import StrategyOrchestrator
+from src.strategy.registry import registry
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/strategy", tags=["策略管理"])
@@ -20,11 +21,16 @@ macro_env = MacroEnvironment()
 orchestrator = StrategyOrchestrator()
 
 
-# ---- Strategy ----
+# ================================================================
+# Strategy CRUD (支持三档)
+# ================================================================
 
 class StrategyCreate(BaseModel):
     name: str
-    factor_names: List[str]
+    strategy_tier: str = "ml"
+    strategy_class: str = ""
+    config: dict = {}
+    factor_names: List[str] = []
     factor_weights: dict = {}
     model_params: dict = {}
     description: str = ""
@@ -35,6 +41,9 @@ class StrategyCreate(BaseModel):
 def create_strategy(req: StrategyCreate):
     sid = pool_mgr.create_strategy(
         name=req.name,
+        strategy_tier=req.strategy_tier,
+        strategy_class=req.strategy_class,
+        config=req.config,
         factor_names=req.factor_names,
         factor_weights=req.factor_weights,
         model_params=req.model_params,
@@ -45,8 +54,11 @@ def create_strategy(req: StrategyCreate):
 
 
 @router.get("/strategies")
-def list_strategies(status: Optional[str] = None):
-    return pool_mgr.list_strategies(status=status)
+def list_strategies(status: Optional[str] = None, tier: Optional[str] = None):
+    strats = pool_mgr.list_strategies(status=status)
+    if tier:
+        strats = [s for s in strats if s.get("strategy_tier") == tier]
+    return strats
 
 
 @router.get("/strategies/{name}")
@@ -69,7 +81,130 @@ def rank_strategies(metric: str = "backtest_sharpe"):
     return df.to_dict(orient="records") if not df.empty else []
 
 
-# ---- Instrument Pool ----
+# ================================================================
+# Registry — 查询已注册的策略类
+# ================================================================
+
+@router.get("/registry")
+def list_registered():
+    """查看全局 registry 中已注册的所有策略类"""
+    return registry.list_all()
+
+
+@router.get("/registry/{tier}")
+def list_registered_by_tier(tier: str):
+    return registry.list_by_tier(tier)
+
+
+# ================================================================
+# Signal Generation — 三档策略信号生成
+# ================================================================
+
+class SignalRequest(BaseModel):
+    strategy_class: str
+    config: dict = {}
+    universe: List[str] = []
+    pool_name: str = ""
+    trade_date: Optional[str] = None
+
+
+@router.post("/signals/generate")
+def generate_signals(req: SignalRequest):
+    """直接调用指定策略类生成信号"""
+    td = date.fromisoformat(req.trade_date) if req.trade_date else date.today()
+
+    universe = req.universe
+    if not universe and req.pool_name:
+        universe = instrument_mgr.get_pool_codes(req.pool_name)
+    if not universe:
+        raise HTTPException(400, "需要提供 universe 或 pool_name")
+
+    try:
+        strat = registry.create(req.strategy_class, config=req.config)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+    try:
+        signals = strat.generate_signals(td, universe)
+    except Exception as e:
+        logger.error(f"策略 {req.strategy_class} 信号生成失败: {e}")
+        raise HTTPException(500, f"信号生成失败: {e}")
+
+    return {
+        "strategy": req.strategy_class,
+        "trade_date": td.isoformat(),
+        "n_signals": len(signals),
+        "signals": [
+            {
+                "code": s.code, "direction": s.direction,
+                "score": s.score, "reason": s.reason,
+            }
+            for s in signals
+        ],
+    }
+
+
+class ExecuteRequest(BaseModel):
+    trade_date: Optional[str] = None
+    total_capital: float = 1_000_000.0
+    available_cash: float = 0.0
+    holdings: List[dict] = []
+    price_map: dict = {}
+
+
+@router.post("/execute")
+def execute_plan(req: ExecuteRequest):
+    """完整执行: 策略信号 → 持仓监控 → 仲裁 → 仓位 → 操作清单
+
+    输入当前持仓和资金, 输出今日操作指令。
+    """
+    from src.strategy.base import HoldingPosition
+
+    td = date.fromisoformat(req.trade_date) if req.trade_date else None
+    holdings = []
+    for h in req.holdings:
+        holdings.append(HoldingPosition(
+            code=h["code"],
+            buy_date=date.fromisoformat(h.get("buy_date", "2025-01-01")),
+            buy_price=h.get("buy_price", 0),
+            quantity=h.get("quantity", 0),
+            current_price=h.get("current_price", 0),
+            highest_price=h.get("highest_price", 0),
+            hold_days=h.get("hold_days", 0),
+            strategy_name=h.get("strategy_name", ""),
+            profit_pct=h.get("profit_pct", 0),
+            can_sell=h.get("can_sell", True),
+        ))
+
+    result = orchestrator.execute(
+        trade_date=td,
+        holdings=holdings,
+        total_capital=req.total_capital,
+        available_cash=req.available_cash or req.total_capital * 0.5,
+        price_map=req.price_map,
+    )
+
+    actions_out = []
+    for a in result.get("actions", []):
+        actions_out.append({
+            "code": a.code,
+            "direction": a.direction,
+            "priority": a.priority,
+            "target_quantity": a.target_quantity,
+            "target_amount": a.target_amount,
+            "target_weight_pct": a.target_weight_pct,
+            "reasons": a.reasons,
+        })
+
+    return {
+        "summary": result.get("summary", {}),
+        "actions": actions_out,
+    }
+
+
+# ================================================================
+# Instrument Pool
+# ================================================================
 
 class PoolCreate(BaseModel):
     name: str
@@ -114,7 +249,9 @@ def init_builtin_pools():
     return {"initialized": count}
 
 
-# ---- Macro Environment ----
+# ================================================================
+# Macro Environment
+# ================================================================
 
 @router.get("/macro/summary")
 def macro_summary():
@@ -145,7 +282,9 @@ def macro_strategy_mapping():
     return macro_env.get_strategy_macro_mapping()
 
 
-# ---- Orchestrator ----
+# ================================================================
+# Orchestrator — 分配与执行计划
+# ================================================================
 
 class AllocationCreate(BaseModel):
     strategy_name: str

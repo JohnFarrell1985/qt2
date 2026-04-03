@@ -1,5 +1,5 @@
 {
-  "_doc": "宏观环境状态配置 - 不同宏观状态映射不同策略",
+  "_doc": "宏观环境状态配置 - 不同宏观状态映射不同策略 (三档: rule/scoring/ml)",
   "states": {
     "bull_strong": {
       "label": "强势牛市",
@@ -11,8 +11,13 @@
         "credit_spread": "收窄",
         "shibor_1m": "<2.5%"
       },
-      "preferred_strategies": ["momentum_aggressive", "growth_factor"],
-      "avoid_strategies": ["defensive", "low_volatility"],
+      "preferred_strategies": [
+        "momentum",
+        "industry_rotation",
+        "multifactor_equal",
+        "lgb_ml"
+      ],
+      "avoid_strategies": ["low_vol_dividend", "grid_trading", "reversal"],
       "position_multiplier": 1.2
     },
     "bull_moderate": {
@@ -25,7 +30,12 @@
         "credit_spread": "稳定",
         "shibor_1m": "2%~3%"
       },
-      "preferred_strategies": ["balanced_growth", "quality_factor"],
+      "preferred_strategies": [
+        "momentum",
+        "moving_average",
+        "multifactor_ic",
+        "lgb_ml"
+      ],
       "avoid_strategies": [],
       "position_multiplier": 1.0
     },
@@ -39,8 +49,14 @@
         "credit_spread": "稳定或略升",
         "shibor_1m": "2%~3.5%"
       },
-      "preferred_strategies": ["mean_reversion", "low_volatility", "dividend_yield"],
-      "avoid_strategies": ["momentum_aggressive"],
+      "preferred_strategies": [
+        "grid_trading",
+        "cb_dual_low",
+        "low_vol_dividend",
+        "reversal",
+        "multifactor_equal"
+      ],
+      "avoid_strategies": ["momentum"],
       "position_multiplier": 0.8
     },
     "bear_moderate": {
@@ -53,8 +69,13 @@
         "credit_spread": "走扩",
         "shibor_1m": ">3%"
       },
-      "preferred_strategies": ["defensive", "low_volatility", "value_factor"],
-      "avoid_strategies": ["momentum_aggressive", "growth_factor"],
+      "preferred_strategies": [
+        "low_vol_dividend",
+        "cb_dual_low",
+        "grid_trading",
+        "multifactor_ic"
+      ],
+      "avoid_strategies": ["momentum", "industry_rotation"],
       "position_multiplier": 0.5
     },
     "bear_severe": {
@@ -67,8 +88,16 @@
         "credit_spread": "大幅走扩",
         "shibor_1m": ">4% 或骤降(央行放水)"
       },
-      "preferred_strategies": ["cash_heavy", "defensive"],
-      "avoid_strategies": ["momentum_aggressive", "growth_factor", "balanced_growth"],
+      "preferred_strategies": [
+        "cb_dual_low",
+        "low_vol_dividend"
+      ],
+      "avoid_strategies": [
+        "momentum",
+        "industry_rotation",
+        "moving_average",
+        "lgb_ml"
+      ],
       "position_multiplier": 0.3
     },
     "recovery": {
@@ -81,12 +110,17 @@
         "credit_spread": "见顶回落",
         "shibor_1m": "下降中"
       },
-      "preferred_strategies": ["value_factor", "contrarian", "small_cap"],
+      "preferred_strategies": [
+        "reversal",
+        "cb_dual_low",
+        "multifactor_equal",
+        "lgb_ml"
+      ],
       "avoid_strategies": [],
       "position_multiplier": 0.9
     }
   },
   "current_state": "range_bound",
   "state_update_frequency": "weekly",
-  "notes": "每周日更新宏观状态; 可通过API或手动修改; 策略分配在 strategy_allocation 表中维护"
+  "notes": "每周日更新宏观状态; 策略名称对应 registry 中的 name; 三档策略通过 strategy_allocation 表绑定标的池"
 }

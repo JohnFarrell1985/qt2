@@ -17,29 +17,45 @@ from src.data.models import InstrumentPool
 logger = get_logger(__name__)
 
 BUILTIN_POOLS = {
+    "沪深A股": {
+        "description": "沪深两市全部A股",
+        "filter_rules": {"sector": "沪深A股", "asset_type": "stock"},
+    },
     "沪深300": {
         "description": "沪深300成分股",
-        "filter_rules": {"sector": "沪深300"},
+        "filter_rules": {"sector": "沪深300", "asset_type": "stock"},
     },
     "中证500": {
         "description": "中证500成分股",
-        "filter_rules": {"sector": "中证500"},
+        "filter_rules": {"sector": "中证500", "asset_type": "stock"},
+    },
+    "中证1000": {
+        "description": "中证1000成分股",
+        "filter_rules": {"sector": "中证1000", "asset_type": "stock"},
     },
     "创业板": {
         "description": "创业板全部股票",
-        "filter_rules": {"sector": "创业板"},
+        "filter_rules": {"sector": "创业板", "asset_type": "stock"},
     },
     "科创板": {
         "description": "科创板全部股票",
-        "filter_rules": {"sector": "科创板"},
+        "filter_rules": {"sector": "科创板", "asset_type": "stock"},
     },
     "大市值": {
         "description": "总市值 > 500亿",
-        "filter_rules": {"min_market_cap": 500},
+        "filter_rules": {"min_market_cap": 500, "asset_type": "stock"},
     },
     "中小市值": {
         "description": "50亿 < 总市值 < 300亿",
-        "filter_rules": {"min_market_cap": 50, "max_market_cap": 300},
+        "filter_rules": {"min_market_cap": 50, "max_market_cap": 300, "asset_type": "stock"},
+    },
+    "沪深转债": {
+        "description": "沪深两市全部可转债",
+        "filter_rules": {"sector": "沪深转债", "asset_type": "cb"},
+    },
+    "ETF基金": {
+        "description": "沪深两市全部ETF",
+        "filter_rules": {"sector": "沪深ETF", "asset_type": "etf"},
     },
 }
 
@@ -129,12 +145,18 @@ class InstrumentPoolManager:
         return codes
 
     def _apply_filter_rules(self, rules: Dict[str, Any]) -> List[str]:
-        """应用筛选规则"""
+        """应用筛选规则, 支持 asset_type 区分股票/可转债/ETF"""
+        asset_type = rules.get("asset_type", "stock")
+
+        # 对于可转债和ETF, 优先通过 QMT 板块接口获取
+        if asset_type in ("cb", "etf") and "sector" in rules:
+            return self._fetch_from_qmt_sector(rules["sector"])
+
         from sqlalchemy import text
         conditions = ["1=1"]
         params: Dict[str, Any] = {}
 
-        if "sector" in rules:
+        if "sector" in rules and asset_type == "stock":
             conditions.append("sector = :sector")
             params["sector"] = rules["sector"]
         if "exchange" in rules:
@@ -162,6 +184,18 @@ class InstrumentPoolManager:
         with get_session() as session:
             result = session.execute(sql, params)
             return [row[0] for row in result.fetchall()]
+
+    @staticmethod
+    def _fetch_from_qmt_sector(sector_name: str) -> List[str]:
+        """通过 QMT 板块接口获取标的列表"""
+        try:
+            from src.data.qmt_client import QMTClient
+            client = QMTClient()
+            codes = client.get_stock_list_in_sector(sector_name)
+            return codes or []
+        except Exception as e:
+            logger.warning(f"从QMT获取板块 {sector_name} 失败: {e}")
+            return []
 
     def init_builtin_pools(self) -> int:
         """初始化内置标的池"""
