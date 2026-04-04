@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (详细版)
 
-> 最后更新: 2026-04-03
+> 最后更新: 2026-04-04
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -37,6 +37,7 @@
 | 风险预警 | `src/riskmonitor/` | doc/13 引擎扩展章节 |
 | 行业轮动 | `src/sectorwatch/` | doc/13 引擎扩展章节 |
 | 宏观经济 | `src/macrotrack/` | doc/13 引擎扩展章节 |
+| **ETF 轮动** | `src/strategy/etf_rotation/` | [doc/TODO.md P1-20](#p1-20-etf-全球资产轮动策略-tactical-asset-allocation) |
 
 ---
 
@@ -156,6 +157,22 @@
    df = preprocess_cross_section(df, method='mad', neutralize_industry=True)
    ```
 2. 确认 `preprocess_cross_section` 对每个日期截面独立处理 (避免前视偏差)
+3. **新增: IC 去重门控** (借鉴 RD-Agent): 新因子入库前，计算其与现有 SOTA 因子池的截面 Pearson 相关性，**max IC ≥ 0.99 的新因子丢弃** — 防止因子池膨胀/冗余:
+   ```python
+   def deduplicate_factors(sota_factors: pd.DataFrame, new_factors: pd.DataFrame,
+                           threshold: float = 0.99) -> pd.DataFrame:
+       """RD-Agent 式因子去重: 按日期截面计算新旧因子 IC, 丢弃高冗余因子"""
+       ic_matrix = {}
+       for date, group in pd.concat([sota_factors, new_factors], axis=1).groupby(level=0):
+           corr = group[sota_factors.columns].corrwith(group[new_factors.columns])
+           ic_matrix[date] = corr
+       mean_ic = pd.DataFrame(ic_matrix).T.mean()  # 跨日期平均
+       max_ic_per_new = mean_ic.unstack().max(axis=0)  # 每个新因子的最大相关性
+       keep = max_ic_per_new[max_ic_per_new < threshold].index
+       return new_factors[keep]
+   ```
+
+> **来源:** 微软 RD-Agent 0.8.0 (`rdagent/scenarios/qlib/developer/factor_runner.py`) 的 `deduplicate_new_factors` 方法
 
 ---
 
@@ -625,26 +642,53 @@ class PurgedTimeSeriesSplit(BaseCrossValidator):
 
 ---
 
-### P1-02: Rolling Walk-Forward 重训练
+### P1-02: Rolling Walk-Forward 重训练 + Bandit 自动资源分配
 
 | 属性 | 内容 |
 |------|------|
 | **模块** | ml |
 | **文件** | `src/ml/auto_iterate.py` |
-| **工作量** | 2 天 |
+| **工作量** | 3 天 (含 Bandit) |
 
 **为什么要做:**
 A 股市场风格每 3-6 个月显著切换 (如 2024 小盘成长 → 2025 大盘价值)。固定训练集的模型会逐渐失效 (alpha decay)。研究显示美国市场年化 alpha 衰减成本为 5.6%，欧洲为 9.9%。
+
+此外，在自动迭代中，系统需要决定 **"这一轮应该挖掘新因子还是优化模型？"** — 当前是人工决定，但微软 RD-Agent 证明可以用**强化学习 (Thompson Sampling 多臂老虎机)** 自动做出最优决策。
 
 **业界最佳实践:**
 - **Qlib Rolling Retrain Pipeline**: 24 月训练 + 6 月验证 + 6 月测试，每 6 月前滚
 - **动量策略生命周期**: ~10 个月后转负，必须在此之前重训练
 - **自动化**: 每周/月自动触发重训练，不依赖人工判断
+- **RD-Agent(Q) Bandit Action Selection** (微软, arXiv:2505.15155): 使用 8 维量化指标向量 (IC, ICIR, Rank IC, Rank ICIR, 年化收益, IR, 最大回撤, Sharpe) 驱动 **Linear Thompson Sampling 双臂老虎机**，在 "factor" 和 "model" 两个臂之间自动选择下一轮迭代方向。实验反馈直接更新 Bandit 后验概率，无需人工干预
+
+**RD-Agent Bandit 架构:**
+```python
+class Metrics:
+    """8 维量化指标向量 (来自 Qlib 回测结果)"""
+    ic: float; icir: float; rank_ic: float; rank_icir: float
+    arr: float; ir: float; mdd: float; sharpe: float
+    # 权重: (0.1, 0.1, 0.05, 0.05, 0.25, 0.15, 0.1, 0.2)
+    # reward = dot(weights, [ic, icir, rank_ic, rank_icir, arr, ir, -mdd, sharpe])
+
+class LinearThompsonTwoArm:
+    """双臂: "factor" vs "model", 8维线性上下文, 高斯后验 Thompson Sampling"""
+    def next_arm(self, context_x): ...  # 采样奖励, 选更高的臂
+
+class EnvController:
+    """决策器: record(metrics, prev_arm) → decide(metrics) → "factor" | "model" """
+```
 
 **参考文档:**
 - Qlib Workflow: [github.com/microsoft/qlib](https://github.com/microsoft/qlib)
+- **RD-Agent**: [github.com/microsoft/RD-Agent](https://github.com/microsoft/RD-Agent) (微软开源，LLM 驱动自主因子-模型联合进化)
+- RD-Agent(Q) 论文: [arXiv:2505.15155](https://arxiv.org/abs/2505.15155) — *Data-Centric Multi-Agent for Joint Factor and Model Optimization*
 - [Signal Decay Analysis: Understanding Alpha Lifecycles](https://microalphas.com/signal-decay-patterns/)
 - [Multi-Factor Strategies Framework for Independent Quants](https://dev.to/quant001/multi-factor-strategies-arent-exclusive-to-big-firms-a-research-framework-for-independent-quants-38ka)
+
+**落地方案:**
+1. **Rolling Walk-Forward**: 24+6+6 月窗口，每 6 月前滚重新训练
+2. **Bandit 自动决策** (可选，P2 阶段细化): 每轮迭代结束后收集 8 维指标，更新 Thompson Sampling 后验，自动选择下轮做 "因子挖掘" 还是 "模型调优"
+3. 集成入 `auto_iterate.py` 的 `iterate()` 主循环
 
 ---
 
@@ -708,7 +752,7 @@ LightGBM 模型的预测能力会随市场结构变化退化 (concept drift)。P
 |------|------|
 | **模块** | portfolio |
 | **文件** | 新增 `src/portfolio/optimizer.py` |
-| **工作量** | 3-5 天 |
+| **工作量** | 5-7 天 (含 CAA 模式) |
 
 **为什么要做:**
 当前 `PositionSizer` 只支持等权/ATR/Kelly 三种简单分配，不控制:
@@ -718,30 +762,134 @@ LightGBM 模型的预测能力会随市场结构变化退化 (concept drift)。P
 - 组合风险最优化
 
 **业界最佳实践:**
-- **Markowitz Mean-Variance (1952)**: 经典框架，但对预期收益估计敏感
-- **Risk Parity**: 风险贡献均等化，不依赖收益预测，稳健性更好
+
+#### 方法 1: CAA — Classical Asset Allocation (Keller, Butler & Kipnis, 2015) ⭐ 推荐
+
+> 论文: *Momentum and Markowitz: a Golden Combination* (Keller, Butler, Kipnis, 2015)
+
+CAA 是动量驱动的纯多头 MVO 模型，百年回测 (1915-2014) 证明它**始终大幅跑赢等权 (1/N)**。业界曾普遍认为 MVO "不稳定、误差放大" (Michaud 1989, DeMiguel 2007, Ang 2014)，但 Keller 等人证明这是因为传统实现犯了两个错误:
+
+1. **允许做空** — 做空权重放大了估计误差。Ma (2002) 证明纯多头约束消除了 MVO 大部分不稳定性
+2. **回望期过长 (60 个月)** — 5 年处于价格均值回归区间 (Asness 2012)，过去表现好的资产未来往往变差
+
+CAA 的核心修正:
+- **纯多头 (long-only)** — 我们 A 股散户天然纯多头，完美契合
+- **短回望期 (1-12 月)** — 利用动量因子的最优窗口
+- **收益估计 = 1/3/6/12 月动量均值** — 跨越动量有效区间，减少单窗口偏差
+- **协方差 = 近 12 个月** — 波动率和相关性也有短期持续性 ("generalized momentum")
+- **权重上限 (cap=25%)** — 强制分散化，降低集中度风险
+- **现金不设上限** — 极端恐慌时可 100% 现金 (与我们情绪引擎完美联动)
+- 使用 **CLA (Critical Line Algorithm)** 而非通用二次优化器 — 在 N >> T 时不受协方差矩阵奇异影响
+
+**百年回测数据:**
+
+| 宇宙 | 模型 | CAGR | 波动率 | 最大回撤 | Sharpe | Calmar |
+|------|------|------|--------|---------|--------|--------|
+| N=8 全球多资产 | **CAA** (TV=10%) | **12.7%** | 8.3% | **-17.3%** | **0.92** | **0.45** |
+| | EW (1/N) | 8.7% | 9.2% | -49.7% | 0.40 | 0.07 |
+| N=39 全球大宇宙 | **CAA** (TV=10%) | **15.4%** | 10.4% | **-22.8%** | **1.00** | **0.46** |
+| | EW (1/N) | 8.8% | 10.7% | -63.3% | 0.35 | 0.06 |
+
+- N=39 的 Sharpe 达到 **1.0** (EW 的 3 倍)，最大回撤仅为 EW 的 **1/3**
+- 2008 金融危机前模型自动切换至 100% 国债 (动量信号驱动)
+- **结果对 cap 参数 (10%-100%) 全部稳健** — CAA 始终打败 EW，无论 cap 取何值
+- 年换手率约 4-7 倍，交易成本在 0.7% 以内对结论无影响
+
+**CAA 与 Smart Beta 的关系 (Hallerbach 2013):**
+
+| Smart Beta 策略 | 等价于 CAA/MSR 的假设 |
+|----------------|---------------------|
+| 等权 (1/N) | 所有收益、波动率、相关性相等 |
+| 最小方差 (MV) | 所有收益相等 |
+| 最大分散化 (MD) | 所有 Sharpe ratio 相等 |
+| 风险平价 (ERC) | Sharpe 相等 + 相关性相同 |
+
+**CAA 数学性质 (保障稳健性):**
+- **尺度不变性**: 月度/年度收益换算不影响最优权重
+- **水平不变性**: 所有资产收益平移相同常数 (如减去无风险利率) 不影响最优权重
+- **IIA (独立于无关备选)**: 加入完全相关的复制资产不改变结果
+
+#### 方法 2: skfolio (scikit-learn 原生组合优化)
+
+当需要更复杂的约束 (行业暴露上限、CVaR 风险度量、Black-Litterman 观点融合) 时，可使用 skfolio 作为 CAA 的补充或替代。
+
+#### 方法 3: Risk Parity / HRP
+
+- **Risk Parity**: 风险贡献均等化，不依赖收益预测，稳健性好
 - **HRP (Hierarchical Risk Parity)**: López de Prado 提出，使用层次聚类确定资产权重，比传统 MVO 更稳定
-- **约束优化**: 行业暴露 ≤ 15%、单只 ≤ 5%、日换手率 ≤ 20%
+- **适用场景**: 不愿对收益做预测时 (但 CAA 论文认为: 用动量做收益预测时，MVO 效果远优于 Risk Parity)
+
+#### 约束优化
+
+所有方法均需施加:
+- 行业暴露 ≤ 15%、单只 ≤ 5% (或 CAA 默认的 25%)、日换手率 ≤ 20%
 
 **技术选型:**
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
+| **自研 CLA** | - | - | 实现论文中的 Critical Line Algorithm (Python 版 Bailey & de Prado 2013 已开源) |
 | **skfolio** | >=0.5 | ✅ 2026活跃 | 基于 scikit-learn 的组合优化库，支持 MVO/Risk Parity/HRP/Black-Litterman，内置 WalkForward CV |
 | **cvxpy** | >=1.5 | ✅ | 凸优化求解器，skfolio 底层依赖 |
 | **Riskfolio-Lib** | >=7.2 | ✅ | 另一选择，24+ 凸风险度量 |
 | **riskparity.py** | >=0.1 | ✅ | 专用风险平价库 |
+| numpy/pandas | >=2.0 | ✅ | 协方差矩阵 + 动量计算 |
 
 **参考文档:**
+- 📄 **Keller, Butler & Kipnis (2015)**: *Momentum and Markowitz: a Golden Combination*, SSRN (34 页，含完整 CLA R 代码) — **最核心参考**
+- Bailey & López de Prado (2013): *An Open-Source Implementation of the Critical-Line Algorithm*, Algorithms 2013, 6, 169-196 (Python CLA 实现, SSRN 2197616)
+- Ma & Jagannathan (2002): *Risk Reduction in Large Portfolios: Why Imposing the Wrong Constraints Helps*, NBER w8922 (证明纯多头约束提升 MVO 稳健性)
+- Kwan (2007): *A Simple Spreadsheet-Based Exposition of the Markowitz Critical Line Method*, Spreadsheets in Education (CLA Excel 教程)
 - skfolio 官方: [skfolio.org](https://skfolio.org/) (scikit-learn 原生集成)
 - skfolio 优化指南: [skfolio.org/user_guide/optimization.html](https://skfolio.org/user_guide/optimization.html)
 - Riskfolio-Lib: [riskfolio-lib.readthedocs.io](https://riskfolio-lib.readthedocs.io/en/latest)
 - [Portfolio Optimization with Python (2026)](https://pub.towardsai.net/portfolio-optimization-with-python-mean-variance-vs-risk-parity-vs-min-vol-28fee8192d2f)
 - [cvxpy Portfolio Optimization Tutorial](https://trader-algoritmico.com/blog/portfolio-optimization-with-cvxpy-mean-variance-vs-hrp-in-python)
 
-**落地方案 (推荐 skfolio):**
+**落地方案:**
+
+**方案 A: CAA 模式 (推荐作为默认)**
 ```python
-from skfolio import Population
+class CAAOptimizer:
+    """Classical Asset Allocation — Keller, Butler & Kipnis (2015)
+    动量驱动的纯多头均值-方差优化，使用 CLA 求解。
+    """
+    def __init__(self, target_vol=0.10, cap=0.25, cash_assets=None):
+        self.target_vol = target_vol     # 目标年化波动率 (进取=10%, 稳健=5%)
+        self.cap = cap                   # 风险资产权重上限 (默认 25%)
+        self.cash_assets = cash_assets   # 现金类资产不设上限 (如国债ETF)
+
+    def optimize(self, prices_12m: pd.DataFrame) -> dict[str, float]:
+        # 1. 动量收益估计: (ROC_1m + ROC_3m + ROC_6m + ROC_12m) / 22
+        ret_forecast = (
+            prices_12m.pct_change(1).iloc[-1]
+            + prices_12m.pct_change(3).iloc[-1]
+            + prices_12m.pct_change(6).iloc[-1]
+            + prices_12m.pct_change(12).iloc[-1]
+        ) / 22
+
+        # 2. 协方差矩阵: 近 12 个月月度收益
+        monthly_returns = prices_12m.resample("ME").last().pct_change().dropna()
+        cov_matrix = monthly_returns.cov()
+
+        # 3. 权重上限: 风险资产 cap%, 现金类 100%
+        weight_limits = {col: 1.0 if col in self.cash_assets else self.cap
+                         for col in prices_12m.columns}
+
+        # 4. CLA 求解 (target volatility 模式)
+        weights = self._cla_solve(cov_matrix, ret_forecast, weight_limits)
+        return weights
+
+    def _cla_solve(self, cov_mat, ret_forecast, weight_limits):
+        """Markowitz Critical Line Algorithm
+        参考: Bailey & de Prado (2013), Kwan (2007)
+        从有效前沿最高收益点出发，沿前沿向左搜索满足目标波动率的权重组合。
+        """
+        ...  # 实现 CLA 角点遍历 + 二分搜索目标波动率
+```
+
+**方案 B: skfolio 模式 (高级约束)**
+```python
 from skfolio.optimization import MeanRisk, ObjectiveFunction, RiskMeasure
 from skfolio.model_selection import WalkForward
 
@@ -751,6 +899,29 @@ model = MeanRisk(
     max_weight=0.05,  # 单只 ≤ 5%
 )
 cv = WalkForward(train_size=252*2, test_size=63)  # 2年训练+3月测试
+```
+
+**PositionSizer 集成:**
+```python
+class PositionSizer:
+    def allocate(self, ..., method="equal"):
+        if method == "caa":
+            return CAAOptimizer(target_vol=settings.sizer.caa_target_vol,
+                                cap=settings.sizer.caa_cap).optimize(prices_12m)
+        elif method == "skfolio":
+            return SkfolioOptimizer(...).optimize(...)
+        elif method == "atr":
+            ...  # 现有 ATR 逻辑
+        else:
+            ...  # 等权
+```
+
+**`.env` 新增参数:**
+```bash
+SIZER_METHOD=caa               # equal / atr / kelly / caa / skfolio
+SIZER_CAA_TARGET_VOL=0.10      # CAA 目标年化波动率 (进取=0.10, 稳健=0.05)
+SIZER_CAA_CAP=0.25             # CAA 风险资产权重上限
+SIZER_CAA_CASH_ASSETS=["511010.SH","511260.SH"]  # 现金类资产代码 (国债ETF等)
 ```
 
 ---
@@ -1089,6 +1260,106 @@ class SlippageModel:
 
 ---
 
+### P2-18: LLM 驱动自动因子-模型联合迭代 (借鉴 RD-Agent)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | ml |
+| **文件** | 新增 `src/ml/rd_loop.py`, `src/ml/bandit.py` |
+| **工作量** | 5 天 |
+
+**为什么要做:**
+当前 `auto_iterate.py` 的迭代循环是固定的: 训练 LGB → 评估 → 调参 → 重复。它不会:
+- 自动决定 "这一轮应该挖掘新因子还是优化模型超参"
+- 利用 LLM 基于历史反馈提出新假设 (如 "上一轮加入换手率因子后 IC 提升了, 下一步试试加入量比因子")
+- 记住历史实验结果, 避免重复无效尝试
+
+微软 RD-Agent(Q) 已在论文 (arXiv:2505.15155) 中验证了这种 **LLM + Bandit + Trace** 的联合迭代架构的有效性。
+
+**RD-Agent 架构 (我们的简化版):**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   RD Loop (联合迭代主循环)                      │
+│                                                               │
+│  ┌─────────┐    ┌──────────────┐    ┌────────┐    ┌────────┐ │
+│  │ Bandit   │──→│ LLM Propose  │──→│ Execute │──→│Feedback│ │
+│  │ 选择方向  │    │ 生成假设+代码 │    │ 回测验证 │    │ 评估结果│ │
+│  │factor/   │    │              │    │         │    │        │ │
+│  │model     │    │              │    │         │    │        │ │
+│  └─────────┘    └──────────────┘    └────────┘    └───┬────┘ │
+│       ↑                                                │      │
+│       └──────────── Trace (实验历史记忆) ←──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心组件:**
+
+1. **Bandit 行动选择器** (`src/ml/bandit.py`):
+   - 8 维指标向量: IC, ICIR, Rank IC, Rank ICIR, 年化收益, IR, 最大回撤, Sharpe
+   - Thompson Sampling 双臂: "factor" (挖掘新因子) vs "model" (优化模型)
+   - 根据上一轮实验反馈自动决定下一轮方向
+
+2. **Trace 实验历史** (`src/ml/experiment_tracker.py`):
+   - 记录每轮: 假设 → 实现 → 结果 → 反馈
+   - 智能过滤: 当前做因子时只看因子历史 + 最新成功模型; 反之亦然
+   - 防止重复: LLM 可以看到 "上次试过 XX 因子, IC 只有 0.01, 不值得再试"
+
+3. **LLM 假设生成** (可选, 使用 `src/dataclean/llm_client.py`):
+   - 基于场景描述 + 历史 Trace + 当前 SOTA 状态
+   - 输出: 新因子公式或模型调参方案
+   - 降级: LLM 不可用时回退为规则引擎 (随机因子组合 / 网格搜索)
+
+**技术选型:**
+
+| 技术 | 版本 | 说明 |
+|------|------|------|
+| numpy | >=1.26 | Thompson Sampling 采样 |
+| openai SDK | >=1.60 | LLM 假设生成 (可选) |
+| pickle | 内置 | Trace 序列化 |
+
+**参考文档:**
+- **RD-Agent 源码**: [github.com/microsoft/RD-Agent](https://github.com/microsoft/RD-Agent) v0.8.0
+  - Bandit: `rdagent/scenarios/qlib/proposal/bandit.py`
+  - Trace: `rdagent/core/proposal.py`
+  - 联合循环: `rdagent/app/qlib_rd_loop/quant.py` (`QuantRDLoop`)
+  - 因子去重: `rdagent/scenarios/qlib/developer/factor_runner.py`
+- **RD-Agent(Q) 论文**: [arXiv:2505.15155](https://arxiv.org/abs/2505.15155) — *Data-Centric Multi-Agent for Joint Factor and Model Optimization*
+
+**落地方案 (简化版, 不依赖完整 RD-Agent 框架):**
+```python
+class SimpleRDLoop:
+    def __init__(self):
+        self.bandit = LinearThompsonTwoArm(n_features=8)
+        self.trace = Trace()
+        self.weights = [0.1, 0.1, 0.05, 0.05, 0.25, 0.15, 0.1, 0.2]
+
+    def iterate(self):
+        # 1. Bandit 选择方向
+        prev_metrics = self.trace.last_metrics()
+        action = self.bandit.next_arm(prev_metrics)  # "factor" or "model"
+
+        if action == "factor":
+            # 2a. 生成新因子 (LLM 或规则)
+            new_factors = self.propose_factors(self.trace)
+            # 3a. 去重 (IC < 0.99)
+            new_factors = deduplicate_factors(self.sota_factors, new_factors)
+            # 4a. 训练 + 回测
+            result = self.run_backtest(factors=self.sota_factors + new_factors)
+        else:
+            # 2b. 优化模型
+            new_params = self.propose_model_changes(self.trace)
+            result = self.run_backtest(model_params=new_params)
+
+        # 5. 反馈 + 更新
+        metrics = extract_metrics(result)
+        reward = np.dot(self.weights, metrics)
+        self.bandit.update(action, reward, metrics)
+        self.trace.append(action, metrics, result)
+```
+
+---
+
 ## P3: 长期 (可选优化 + 远期规划)
 
 ### P3-01: SHAP 可解释性
@@ -1135,30 +1406,64 @@ shap.waterfall_plot(shap.Explanation(shap_values[0], base_values=explainer.expec
 
 ---
 
-### P3-02: 实验管理 (MLflow)
+### P3-02: 实验管理 (MLflow + Trace 模式)
 
 | 属性 | 内容 |
 |------|------|
 | **模块** | ml |
 | **文件** | 新增 `src/ml/experiment_tracker.py` |
-| **工作量** | 1 天 |
+| **工作量** | 2 天 (含 Trace 模式) |
 
 **为什么要做:**
 当前 ML 迭代没有实验追踪 — 无法回答 "上次用哪个因子组合、什么超参、训练了多长时间、结果如何"。每次迭代结果丢失，重复实验浪费算力。
 
 **业界最佳实践:**
+
+#### 方案 A: MLflow (业界标准)
 - **MLflow**: Apache 2.0 开源，支持自部署。2026 年最新版支持 PostgreSQL 后端 + S3 artifact 存储
 - **核心功能**: 记录超参 (LR, num_leaves, max_depth) → 记录指标 (IC, ICIR, Sharpe) → 存储模型 artifact → Model Registry 管理模型版本
 - **2026 金融应用**: [Financial Market Intelligence Platform](https://github.com/cdobratz/market-intelligence-mvp) 使用 MLflow + Airflow + FastAPI 的完整管道
+
+#### 方案 B: Trace 模式 (借鉴 RD-Agent) ⭐
+
+微软 RD-Agent 设计了一套轻量级 **Trace (实验历史记忆)** 模式，比 MLflow 更贴合我们的迭代场景:
+
+```python
+class Trace:
+    """实验历史记忆链: [(Experiment, HypothesisFeedback), ...]"""
+    hist: list[tuple[Experiment, Feedback]]
+    scen: Scenario
+
+class Experiment:
+    hypothesis: Hypothesis       # 本次实验的假设 ("尝试加入换手率因子")
+    sub_tasks: list[Task]        # 具体实现任务
+    result: pd.Series | None     # 8 维指标 (IC, ICIR, Sharpe 等)
+    based_experiments: list[Experiment]  # 基于哪些先前实验
+
+class HypothesisFeedback:
+    decision: bool               # 本次假设是否被验证通过
+    reason: str                  # 分析 (LLM 或规则生成)
+    observations: str            # 关键观察
+```
+
+**Trace 智能过滤 (RD-Agent 核心设计):**
+不是把所有历史都保留/传递，而是按当前任务类型过滤:
+- **做因子时**: 保留全部因子实验 + 仅保留最新一个成功的模型实验
+- **做模型时**: 保留全部模型实验 + 仅保留最新一个成功的因子实验
+- 这样既提供了上下文，又避免了历史膨胀
+
+**推荐**: 先实现 Trace 模式 (轻量，1 天)，再选择性集成 MLflow (重量级，需要部署)。Trace 可以序列化为 pickle/JSON 存储在 PostgreSQL 中。
 
 **技术选型:**
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
 | **mlflow** | >=2.20 | ✅ 2026活跃 | 核心: tracking + model registry |
+| **Trace (自研)** | - | - | 借鉴 RD-Agent 的轻量实验历史链 |
 | sqlite (轻量) 或 PostgreSQL | - | - | MLflow 后端存储 |
 
 **参考文档:**
+- **RD-Agent Trace 架构**: `rdagent/core/proposal.py` (`Trace` 类), `rdagent/scenarios/qlib/proposal/quant_proposal.py` (智能过滤)
 - MLflow 官方: [mlflow.org](https://mlflow.org/)
 - [MLflow 完整指南 (2026.03)](https://www.marktechpost.com/2026/03/01/a-complete-end-to-end-coding-guide-to-mlflow-experiment-tracking/)
 - [MLflow Production Guide (2026.03)](https://www.youngju.dev/blog/ai-platform/2026-03-07-ai-platform-mlflow-experiment-tracking-model-registry.en)
@@ -1277,6 +1582,361 @@ LLM API 有成本和延迟。FinBERT 110M 参数，家用 GPU (GTX 1660+) 或 CP
 
 ---
 
+### P1-20: ETF 全球资产轮动策略 (Tactical Asset Allocation)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | strategy / etf_rotation |
+| **文件** | 新增 `src/strategy/etf_rotation/` (策略) + `doc/14-ETF资产配置轮动.md` (设计文档) |
+| **工作量** | 7-10 天 |
+
+**为什么要做:**
+
+当前系统 10 个策略全部面向 **个股/可转债** — 数据量大、财务指标复杂、研报依赖高。对于 A 股散户来说，有一类更简单但回报卓越的方法: **ETF 全球资产轮动 (Tactical Asset Allocation)**。
+
+核心优势:
+- **数据量极少**: 仅需 10-20 只 ETF 的日线 OHLCV，无需财报/基本面
+- **无选股压力**: 不挑个股，直接买 "一篮子" 资产类别
+- **天然分散化**: 跨资产 (A 股/美股/黄金/债券)、跨国家、跨风格
+- **学术背景深厚**: Keller (VAA/DAA/RAA)、Antonacci (Dual Momentum)、Faber (GTAA) 均有 SSRN 论文 + 10 年以上实盘验证
+- **与个股策略正交**: 个股策略赚 alpha，ETF 轮动赚 beta + 趋势溢价，两者组合可显著提升整体 Sharpe
+- **回测结果优异**: BigQuant/聚宽社区回测年化 24-35%，Sharpe 1.2-1.5，最大回撤 -11% ~ -20%
+- **zhangsensen/etf-rotation-strategy**: A 股实盘 6 周收益 +6.37%，胜率 83.3%，样本外 Sharpe 1.38
+
+**不做的后果:**
+系统只能做个股，无法享受全球大类资产的动量溢价和危机对冲收益。黄金 2024-2025 年涨幅 40%+、纳指 2023-2024 年涨幅 80%+，纯做 A 股散户完全错过。
+
+---
+
+#### 一、策略原理: 为什么 ETF 轮动有效
+
+**动量效应 (Momentum Factor)**:
+过去 1-12 个月表现强的资产，未来 1-3 个月大概率继续强势。这是学术界最稳健的异象之一 (Jegadeesh & Titman 1993, Asness 2014)。
+
+**均值回归的时间边界**:
+动量在 1-12 个月有效，12 个月以上进入均值回归。因此轮动频率取月度 (捕捉动量) 而非年度 (避免反转)。
+
+**"广度动量" (Breadth Momentum)**:
+Keller (2017) 发现: 当多数资产动量为正 → 牛市，当动量为负的资产增多 → 危机前兆。这比单看指数更灵敏。
+
+**免费午餐: 跨资产相关性**:
+A 股、美股、黄金、债券的相关性长期 < 0.3。轮动入最强资产 + 危机时切换债券/黄金 → 同时提升收益和降低回撤。
+
+---
+
+#### 二、ETF 候选池设计 (基于 A 股场内可交易 ETF)
+
+**池设计原则:**
+1. **必须场内交易** (QMT 可直接下单)
+2. **日均成交额 ≥ 1 亿元** (保证流动性)
+3. **覆盖 5+ 资产类别** (分散化)
+4. **跨境 ETF 优先 T+0** (灵活止损)
+
+| 分类 | 代码 | 名称 | 资产类别 | T+0? | 说明 |
+|------|------|------|----------|------|------|
+| **A 股宽基** | 510300.SH | 沪深 300 ETF | A 股大盘 | ❌ | 最具代表性 |
+| | 159915.SZ | 创业板 ETF | A 股成长 | ❌ | 中小盘成长 |
+| | 510500.SH | 中证 500 ETF | A 股中盘 | ❌ | 中盘 alpha |
+| | 159612.SZ | 中证 A50 ETF | A 股核心蓝筹 | ❌ | 行业龙头 |
+| **A 股风格** | 510880.SH | 红利 ETF | A 股红利 | ❌ | 高股息防守 |
+| **港股** | 513180.SH | 恒生科技 ETF | 港股科技 | ✅ | 互联网龙头 |
+| | 513060.SH | 恒生 ETF | 港股大盘 | ✅ | 港股基准 |
+| **美股** | 513100.SH | 纳指 100 ETF | 美股科技 | ✅ | QDII 王者 |
+| | 513500.SH | 标普 500 ETF | 美股大盘 | ✅ | 全球基准 |
+| **日欧** | 513880.SH | 日经 225 ETF | 日本股市 | ✅ | 日股行情 |
+| | 513030.SH | 德国 DAX ETF | 欧洲大盘 | ✅ | 欧洲配置 |
+| **商品** | 518880.SH | 黄金 ETF | 贵金属 | ✅ | 终极避险 |
+| | 159985.SZ | 豆粕 ETF | 农产品 | ✅ | 通胀对冲 |
+| **债券** | 511260.SH | 十年国债 ETF | 国债 | ✅ | 防御资产 |
+| | 511010.SH | 国债 ETF | 短债 | ✅ | 现金替代 |
+| **Canary (哨兵)** | 513100.SH | (复用) 纳指 100 | 新兴市场代理 | - | 全球风险晴雨表 |
+| | 511260.SH | (复用) 十年国债 | 债券聚合代理 | - | 利率敏感度 |
+
+> **推荐起步池**: 黄金(518880) + 纳指(513100) + 创业板(159915) + 沪深300(510300) + 十年国债(511260) — 5 只 ETF 即可覆盖核心资产类别
+
+---
+
+#### 三、动量评分体系 (三种方法, 用户可选)
+
+##### 方法 A: 13612W 动量 (Keller, 2017) ⭐ 推荐
+
+Keller 在 VAA/DAA 论文中提出的加权动量公式，对近期价格变化赋予更高权重 (最近 1 月权重 40%，传统 12 月动量仅 8%):
+
+```
+momentum_13612W = (12 × r₁ + 4 × r₃ + 2 × r₆ + 1 × r₁₂) / 4
+
+其中 rₜ = p₀ / pₜ - 1 (t 月回望收益率)
+```
+
+特点: 响应速度最快，对趋势拐点灵敏，被 VAA/DAA/RAA 三大策略采用。
+
+##### 方法 B: 趋势质量评分 (BigQuant 社区, 广泛使用)
+
+动量不仅看涨幅，还看趋势稳定性 (R² 拟合优度):
+
+```
+1. 取近 N 日对数收盘价 ln(close)
+2. 线性回归: ln(close) = α + β × t + ε
+3. 年化收益率 = (e^(β×252) - 1) × 100
+4. R² = 拟合优度 (0~1)
+5. 动量评分 = 年化收益率 × R²
+```
+
+特点: 过滤高波动高涨幅但趋势不稳的 "毛刺行情"，对 A 股 ETF 特别有效。BigQuant 回测年化 27-35%。
+
+##### 方法 C: 双动量 (Antonacci, 2014)
+
+```
+1. 相对动量: 在 ETF 池中按近 N 月回报排名
+2. 绝对动量: 排名第一的 ETF 回报 > 无风险利率? (如十年国债收益率)
+3. 若是 → 买入; 若否 → 全仓切换至国债 ETF (防御)
+```
+
+特点: 最简单、最经典。Antonacci 回测 1974-2013 年化 17.4%，最大回撤 -19.6%。
+
+---
+
+#### 四、崩盘保护机制 (Crash Protection)
+
+这是 ETF 轮动区别于简单动量排序的 **核心差异化**。
+
+##### 机制 1: 广度动量 / 哨兵资产 (Keller VAA/DAA)
+
+```python
+# 计算哨兵资产 (canary) 的 13612W 动量
+canary_scores = {etf: calc_13612w(etf) for etf in canary_universe}
+
+# 统计动量为负的哨兵数量
+n_negative = sum(1 for s in canary_scores.values() if s <= 0)
+
+# 防御仓位比例 = n_negative / len(canary_universe)
+# 若 2 只哨兵全部为负 → 100% 切换至国债 ETF
+# 若 1 只为负 → 50% 国债 + 50% 最强风险 ETF
+# 若 0 只为负 → 100% 按动量选择风险 ETF
+cash_fraction = n_negative / len(canary_universe)
+```
+
+VAA 论文回测: 年化 >10%，最大回撤 <15%，成功规避 2008/2020 崩盘。
+
+##### 机制 2: 绝对动量门控
+
+```python
+# 所有风险 ETF 动量均为负 → 100% 国债
+# 只买动量 > 0 的 ETF
+eligible = [etf for etf in ranked_etfs if momentum[etf] > 0]
+if not eligible:
+    return {"511260.SH": 1.0}  # 全仓国债
+```
+
+##### 机制 3: 波动率门控 (zhangsensen 实战方案)
+
+```python
+# 基于波动率百分位动态调仓
+vol_pct = current_vol / rolling_vol_max
+if vol_pct > 0.9:    position_scale = 0.10  # 极端波动 → 90% 现金
+elif vol_pct > 0.7:  position_scale = 0.40
+elif vol_pct > 0.5:  position_scale = 0.70
+else:                position_scale = 1.00  # 正常 → 满仓
+```
+
+---
+
+#### 五、选择与调仓规则
+
+| 参数 | 推荐值 | 说明 |
+|------|--------|------|
+| **调仓频率** | 每月首个交易日 | 月度捕捉动量，避免过高换手 |
+| **持仓数量 K** | 1-3 只 | 集中持仓: K=1 收益最高但波动大; K=3 更稳健 |
+| **权重分配** | 等权 (1/K) 或 动量加权 | 简单等权即可，动量加权略有提升 |
+| **动量回望期** | 20 日 (方法 B) / 1-12 月 (方法 A) | 方法 B 推荐 20-25 日; 方法 A 自动多窗口 |
+| **安全区间** | 评分 ∈ (0, 5] | 避免过热 (>5) 和趋势消失 (≤0) |
+| **最小持有天数** | 9 个交易日 | 防止频繁换仓 (anti-whipsaw) |
+| **排名差异阈值** | ≥10% | 新 ETF 排名需比持仓高 10% 才触发换仓 |
+| **止损** | 单日跌 ≥5% 或 3 日累计 ≥8% | 极端事件快速离场 |
+
+---
+
+#### 六、与现有系统的集成设计
+
+##### 模块结构
+
+```
+src/strategy/etf_rotation/
+├── __init__.py
+├── universe.py          # ETF 池管理 (候选池/哨兵池/防御池)
+├── momentum.py          # 动量评分 (13612W / R²×Return / DualMomentum)
+├── crash_guard.py       # 崩盘保护 (广度动量/绝对动量/波动率门控)
+├── rotator.py           # 核心轮动引擎 (选择/调仓/信号生成)
+└── etf_rotation_strategy.py  # 继承 BaseStrategy, 接入 Orchestrator
+```
+
+##### 数据流
+
+```
+xtquant (ETF 日线下载)
+   ↓
+PostgreSQL (etf_daily 表)
+   ↓
+momentum.py (计算动量评分)
+   ↓
+crash_guard.py (崩盘保护门控)
+   ↓
+rotator.py (排名/选择/反转过滤/生成 Signal)
+   ↓
+Orchestrator → PositionSizer → Trading
+```
+
+##### 与 Orchestrator 集成
+
+```python
+class ETFRotationStrategy(BaseStrategy):
+    """ETF 全球资产轮动策略 — 月度调仓"""
+
+    def generate_signals(self, holdings, **kwargs) -> list[Signal]:
+        # 1. 从 DB 拉取 ETF 池近 12 个月日线
+        prices = self._load_etf_prices(lookback_months=12)
+
+        # 2. 计算动量评分
+        scores = self.scorer.score(prices, method=self.config.momentum_method)
+
+        # 3. 崩盘保护
+        cash_frac = self.crash_guard.evaluate(prices, self.config.canary_etfs)
+
+        # 4. 是否到调仓日?
+        if not self._is_rebalance_day(holdings):
+            return []  # 非调仓日, 持有不动
+
+        # 5. 选择 top-K ETF
+        selected = self._select_top_k(scores, holdings, k=self.config.top_k)
+
+        # 6. 应用 cash_frac 调整仓位
+        signals = []
+        risk_weight = (1 - cash_frac) / len(selected) if selected else 0
+        for etf in selected:
+            signals.append(Signal(
+                code=etf, direction="buy",
+                target_weight_pct=risk_weight * 100,
+                strategy_name="etf_rotation",
+            ))
+        if cash_frac > 0:
+            for def_etf in self.config.defensive_etfs:
+                signals.append(Signal(
+                    code=def_etf, direction="buy",
+                    target_weight_pct=cash_frac * 100 / len(self.config.defensive_etfs),
+                    strategy_name="etf_rotation",
+                ))
+
+        # 7. 对持仓中不在 selected 的 ETF 生成卖出信号
+        for h in holdings:
+            if h.code not in [s.code for s in signals]:
+                signals.append(Signal(code=h.code, direction="sell",
+                                      strategy_name="etf_rotation"))
+        return signals
+```
+
+##### 与情绪引擎联动 (可选增强)
+
+```python
+# 宏观状态 → 调整 ETF 轮动参数
+if macro_state == "极端恐慌":
+    cash_frac = max(cash_frac, 0.8)  # 至少 80% 防御
+elif macro_state == "牛市":
+    config.top_k = 1  # 集中持仓最强 ETF
+```
+
+##### 与 P1-05 CAA 优化器联动 (可选增强)
+
+当持仓 K ≥ 3 时，可用 CAAOptimizer 对选出的 ETF 做均值-方差优化分配权重，而非简单等权:
+
+```python
+if self.config.use_caa_weights and len(selected) >= 3:
+    weights = CAAOptimizer(
+        target_vol=self.config.caa_target_vol,
+        cap=self.config.caa_cap,
+    ).optimize(prices[selected])
+```
+
+---
+
+#### 七、`.env` 新增参数
+
+```bash
+# === ETF 轮动策略 ===
+ETF_ROTATION_ENABLED=true
+ETF_ROTATION_MOMENTUM_METHOD=13612w        # 13612w / r2_return / dual_momentum
+ETF_ROTATION_LOOKBACK_DAYS=25              # 方法B回望天数
+ETF_ROTATION_TOP_K=2                       # 每期持有ETF数
+ETF_ROTATION_REBALANCE_INTERVAL=20         # 调仓间隔(交易日), 约1个月
+ETF_ROTATION_MIN_HOLD_DAYS=9               # 最小持有天数(反转过滤)
+ETF_ROTATION_RANK_THRESHOLD=0.10           # 排名差异阈值(10%)
+ETF_ROTATION_SCORE_MIN=0.0                 # 动量评分下限
+ETF_ROTATION_SCORE_MAX=5.0                 # 动量评分上限(方法B)
+ETF_ROTATION_STOP_LOSS_DAILY=0.05          # 单日止损 5%
+ETF_ROTATION_STOP_LOSS_3D=0.08             # 3日累计止损 8%
+ETF_ROTATION_USE_CAA_WEIGHTS=false         # 是否使用CAA优化权重
+ETF_ROTATION_CAA_TARGET_VOL=0.10           # CAA目标波动率
+ETF_ROTATION_VOLATILITY_GATE=true          # 是否启用波动率门控
+# ETF 池 (JSON 数组)
+ETF_ROTATION_RISK_POOL=["510300.SH","159915.SZ","510500.SH","510880.SH","513180.SH","513100.SH","513500.SH","513880.SH","513030.SH","518880.SH","159985.SZ"]
+ETF_ROTATION_DEFENSIVE_POOL=["511260.SH","511010.SH"]
+ETF_ROTATION_CANARY_POOL=["513100.SH","511260.SH"]
+```
+
+---
+
+#### 八、回测验证方案
+
+| 维度 | 方案 |
+|------|------|
+| **数据源** | xtquant `download_history_data` 拉取 ETF 日线 (2015 至今, 约 10 年) |
+| **基准** | 沪深 300 ETF (510300.SH) Buy & Hold |
+| **对照组** | 等权持有全部 ETF、60/40 (沪深300 60% + 国债 40%) |
+| **核心指标** | 年化收益 ≥15%、Sharpe ≥1.0、最大回撤 ≤-20%、Calmar ≥0.5 |
+| **鲁棒性** | 参数敏感性 (K=1/2/3, lookback=15/20/25/60) |
+| **费率** | ETF 佣金万 0.5 + 0 印花税 (ETF 免印花税) |
+| **Walk-Forward** | 训练 3 年 + 测试 1 年滚动 |
+
+---
+
+**业界最佳实践:**
+
+| 策略名称 | 作者 | 年份 | 核心创新 | CAGR | MaxDD | Sharpe | 论文/来源 |
+|----------|------|------|----------|------|-------|--------|-----------|
+| **VAA** | Keller & Keuning | 2017 | 广度动量 + 13612W | >10% | <-15% | ~1.0 | SSRN 3002624 |
+| **DAA** | Keller & Keuning | 2018 | Canary 哨兵宇宙 | ~12% | <-13% | ~1.1 | SSRN 3212862 |
+| **RAA** | Keller | 2021 | 失业率 + 哨兵 + All-Weather | ~10% | <-15% | ~0.9 | SSRN 3752294 |
+| **ADM** | Engineered Portfolio | 2017 | 加速双动量 1/3/6 月 | ~15% | <-20% | ~1.0 | allocatesmartly.com |
+| **PAA** | Keller & Keuning | 2016 | 保护型多资产 | >10% | <-10% | ~1.2 | SSRN 2759734 |
+| **GTAA** | Faber | 2007 | 全球战术 + SMA 过滤 | ~11% | <-15% | ~0.8 | SSRN 962461 |
+| **R²×Return** | BigQuant 社区 | 2024 | 趋势质量加权 | 27-35% | -11~-20% | 1.2-1.5 | BigQuant 策略社区 |
+| **zhangsensen v8** | zhangsensen | 2026 | 49 ETF + 23 因子 + WFO | 53.9% (OOS) | - | 1.38 | GitHub |
+
+**技术选型:**
+
+| 技术 | 版本 | 最新状态 | 说明 |
+|------|------|---------|------|
+| xtquant | 随 QMT | ✅ | ETF 日线数据下载 (`download_history_data`) |
+| numpy | >=2.0 | ✅ | 动量计算 / 线性回归 |
+| scipy.stats | >=1.12 | ✅ | 线性回归 R² |
+| pandas | >=2.0 | ✅ | 时间序列处理 |
+| skfolio (可选) | >=0.5 | ✅ 2026 | 若启用 CAA 权重优化 |
+
+**参考文档:**
+- 📄 Keller & Keuning (2017): *Breadth Momentum and Vigilant Asset Allocation (VAA)*, [SSRN 3002624](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3002624)
+- 📄 Keller & Keuning (2018): *Defensive Asset Allocation (DAA)*, [SSRN 3212862](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3212862)
+- 📄 Keller (2021): *Resilient Asset Allocation (RAA)*, [SSRN 3752294](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3752294)
+- 📄 Keller & Keuning (2016): *Protective Asset Allocation (PAA)*, [SSRN 2759734](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2759734)
+- 📄 Antonacci (2014): *Dual Momentum Investing*, McGraw-Hill
+- 📄 Faber (2007): *A Quantitative Approach to Tactical Asset Allocation*, [SSRN 962461](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=962461)
+- 🔗 BigQuant ETF 动量轮动: [bigquant.com/wiki/doc/onmfWFbXGU](https://bigquant.com/wiki/doc/onmfWFbXGU)
+- 🔗 zhangsensen/etf-rotation-strategy: [github.com/zhangsensen/etf-rotation-strategy](https://github.com/zhangsensen/etf-rotation-strategy)
+- 🔗 oronimbus/tactical-asset-allocation: [github.com/oronimbus/tactical-asset-allocation](https://github.com/oronimbus/tactical-asset-allocation)
+- 🔗 迅投 QMT ETF 轮动复现: [xuntou.net/forum](https://www.xuntou.net/forum.php?mobile=2&mod=viewthread&tid=2429)
+- 🔗 Allocate Smartly (TAA 策略对比): [allocatesmartly.com](https://allocatesmartly.com/)
+- 🔗 跨境 ETF 完整清单 (2026): [163.com](https://www.163.com/dy/article/KKOLTIL40556A1IK.html)
+
+---
+
 ### P3-09 ~ P3-10: 远期扩展引擎
 
 | # | 引擎 | 描述 | 路径 | 工作量 |
@@ -1296,7 +1956,10 @@ LLM API 有成本和延迟。FinBERT 110M 参数，家用 GPU (GTX 1660+) 或 CP
 | **ML 工具** | shap | >=0.50 | ✅ 2026 | 可解释性 |
 | | mlflow | >=2.20 | ✅ 2026活跃 | 实验管理 |
 | | scikit-learn | >=1.5 | ✅ | CV/Pipeline |
-| **组合优化** | skfolio | >=0.5 | ✅ 2026 | 组合优化 (sklearn 兼容) |
+| **自动迭代** | Thompson Sampling (自研) | - | - | Bandit 因子/模型方向选择 (借鉴 RD-Agent) |
+| | Trace (自研) | - | - | 实验历史记忆链 + 智能过滤 (借鉴 RD-Agent) |
+| **组合优化** | CLA (自研) | - | - | CAA 核心: Critical Line Algorithm (Keller 2015) |
+| | skfolio | >=0.5 | ✅ 2026 | 组合优化 (sklearn 兼容，高级约束) |
 | | cvxpy | >=1.5 | ✅ | 凸优化求解 |
 | **数据采集** | curl_cffi | >=0.7.4 | ✅ 2026活跃 | TLS 指纹伪装 |
 | | Playwright | >=1.48 | ✅ 2026活跃 | 浏览器采集 |
@@ -1326,6 +1989,12 @@ LLM API 有成本和延迟。FinBERT 110M 参数，家用 GPU (GTX 1660+) 或 CP
 | **FinBERT2** | - | 最强中文金融 NLP 模型 | [github.com/valuesimplex/FinBERT](https://github.com/valuesimplex/FinBERT) |
 | **Tavily Market Researcher** | - | AI 搜索驱动金融研究 | [github.com/tavily-ai/market-researcher](https://github.com/tavily-ai/market-researcher) |
 | **Market Intelligence MVP** | - | MLflow+Airflow+FastAPI 金融 ML | [github.com/cdobratz/market-intelligence-mvp](https://github.com/cdobratz/market-intelligence-mvp) |
+| **CAA (Keller 2015)** | - | 动量+MVO 百年回测 Sharpe=1.0 | SSRN: Keller, Butler & Kipnis (2015) *Momentum and Markowitz* |
+| **CLA Python (Bailey 2013)** | - | Critical Line Algorithm 开源实现 | SSRN 2197616, Bailey & López de Prado (2013) |
+| **Microsoft RD-Agent** | 3.8k+ | LLM 驱动自主因子-模型联合进化 (Bandit+Trace+IC去重) | [github.com/microsoft/RD-Agent](https://github.com/microsoft/RD-Agent) |
+| **zhangsensen/etf-rotation** | - | A 股 ETF 轮动实盘 (WFO+VEC+BT 三层验证, OOS Sharpe=1.38) | [github.com/zhangsensen/etf-rotation-strategy](https://github.com/zhangsensen/etf-rotation-strategy) |
+| **Keller VAA/DAA/RAA** | - | 广度动量+哨兵资产 TAA 策略族 (SSRN 3002624/3212862/3752294) | [allocatesmartly.com](https://allocatesmartly.com/) |
+| **oronimbus/tactical-aa** | - | TAA 回测框架 (Dual Momentum + 多策略) | [github.com/oronimbus/tactical-asset-allocation](https://github.com/oronimbus/tactical-asset-allocation) |
 
 ---
 
@@ -1334,10 +2003,10 @@ LLM API 有成本和延迟。FinBERT 110M 参数，家用 GPU (GTX 1660+) 或 CP
 | 优先级 | 项目数 | 预估总工作量 | 核心价值 |
 |--------|--------|-------------|---------|
 | **P0** | 23 项 | ~20 天 | Bug 修复 + 三大新模块骨架 (datacollect/dataclean/sentiment) |
-| **P1** | 19 项 | ~30 天 | 量化核心提升 (CV/监控/组合优化) + 模块完善 |
-| **P2** | 17 项 | ~22 天 | 高级功能 + 扩展引擎 (个股雷达/资金流向/风险预警) |
-| **P3** | 10 项 | ~18 天 | 长期可选 (SHAP/事件总线/FinBERT/行业轮动/宏观经济) |
-| **合计** | **69 项** | **~90 天** | — |
+| **P1** | 20 项 | ~40 天 | 量化核心提升 (CV/监控/CAA组合优化) + 模块完善 + ETF 全球资产轮动 |
+| **P2** | 18 项 | ~27 天 | 高级功能 + 扩展引擎 + RD-Agent 式自动迭代 |
+| **P3** | 10 项 | ~19 天 | 长期可选 (SHAP/事件总线/FinBERT/行业轮动/宏观经济) |
+| **合计** | **71 项** | **~106 天** | — |
 
 ---
 
@@ -1350,13 +2019,14 @@ Phase 0 (第 1-3 周):
   P0-12~19  dataclean 核心 (LLM客户端/Schema/清洗器)
   P0-20~23  sentiment 核心 (ORM/量价情绪/Profile/API)
 
-Phase 1 (第 4-7 周):
+Phase 1 (第 4-8 周):
   P0-04     OrchestratorBacktester (回测统一)
   P1-01~02  Purged CV + Walk-Forward 重训练
   P1-05~06  组合优化 + 风险归因
   P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
   P1-12~15  dataclean 完善 (扩展Schema/注册表)
   P1-16~19  sentiment 完善 (合成指数/分类器/Profile集成)
+  P1-20     ETF 全球资产轮动策略 (池/动量/崩盘保护/回测)
 
 Phase 2 (第 8-11 周):
   P1-03~04  因子/模型监控
@@ -1364,6 +2034,7 @@ Phase 2 (第 8-11 周):
   P2-01~06  量化增强 (滑点/XGB/绩效/PIT/多周期)
   P2-07~14  采集+清洗+情绪高级功能
   P2-15~17  扩展引擎 (个股雷达/资金/风险)
+  P2-18     RD-Agent 式自动因子-模型联合迭代 (Bandit+Trace+IC去重)
 
 Phase 3 (第 12 周+):
   P3-01~10  按需选择实现
