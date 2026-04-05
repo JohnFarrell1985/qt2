@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (索引)
 
-> 最后更新: 2026-04-04
+> 最后更新: 2026-04-05
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -14,11 +14,11 @@
 
 | 优先级 | 文档 | 项目数 | 预估工作量 | 核心价值 |
 |--------|------|--------|-----------|---------|
-| **P0** | [TODO-P0.md](TODO-P0.md) | 23 项 | ~20 天 | Bug 修复 + 三大新模块骨架 (datacollect/dataclean/sentiment) |
-| **P1** | [TODO-P1.md](TODO-P1.md) | 20 项 | ~40 天 | 量化核心提升 (CV/监控/CAA组合优化) + 模块完善 + ETF 全球资产轮动 |
-| **P2** | [TODO-P2.md](TODO-P2.md) | 18 项 | ~27 天 | 高级功能 + 扩展引擎 + RD-Agent 式自动迭代 |
-| **P3** | [TODO-P3.md](TODO-P3.md) | 10 项 | ~19 天 | 长期可选 (SHAP/事件总线/FinBERT/行业轮动/宏观经济) |
-| **合计** | — | **71 项** | **~106 天** | — |
+| **P0** | [TODO-P0.md](TODO-P0.md) | 27 项 | ~26 天 | Bug 修复 + 三大新模块骨架 + **幸存者偏差/PIT + CI/CD + DB 迁移** |
+| **P1** | [TODO-P1.md](TODO-P1.md) | 26 项 | ~55 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + **DSR + 事件总线 + 数据质量 + 容错 + 可观测** |
+| **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + **TOML 配置** (P2-04→P0-24) |
+| **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济), P3-03→P1-23, P3-06→P2 |
+| **合计** | — | **82 项** (+8) | **~130 天** | — |
 
 ---
 
@@ -30,7 +30,7 @@
 |------|------|------|
 | 策略引擎 | `src/strategy/` | 10 策略 + orchestrator + monitor + arbiter + sizer |
 | 数据下载 | `src/data/` | QMT 数据下载引擎 + models |
-| 因子工程 | `src/factor/` | 因子计算 / 预处理 / IC 分析 |
+| 因子工程 | `src/factor/` | 11 个手工因子 / 预处理 / IC 分析 (待扩充至 Alpha158+迅投, 见 P1-21) |
 | 机器学习 | `src/ml/` | LGB + 自动迭代 + 评估 |
 | 回测引擎 | `src/backtest/` | 日线 / 分钟线回测 + 绩效 |
 | 交易模块 | `src/trading/` | QMT 交易 + 风控 + 模拟盘 |
@@ -50,6 +50,7 @@
 | 行业轮动 | `src/sectorwatch/` | doc/13 引擎扩展章节 |
 | 宏观经济 | `src/macrotrack/` | doc/13 引擎扩展章节 |
 | **ETF 轮动** | `src/strategy/etf_rotation/` | [TODO-P1.md P1-20](TODO-P1.md#p1-20-etf-全球资产轮动策略-tactical-asset-allocation) |
+| **知识蒸馏** | `src/distill/` | [TODO-P2.md P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型) |
 
 ---
 
@@ -62,7 +63,7 @@
 | P0-01 | ATR PositionSizer 未接入 | strategy | 0.5 天 |
 | P0-02 | 行业中性化未启用 | factor | 1 天 |
 | P0-03 | FactorDataset 预处理断路 + IC 去重 | ml | 0.5 天 |
-| P0-04 | 回测与实盘管道不一致 | backtest | 3-5 天 |
+| P0-04 | 回测与实盘管道不一致 (**含涨跌停/停牌模拟**) | backtest | 5-7 天 |
 | P0-05 | SmartHttpClient 反爬 HTTP 客户端 | datacollect | 1 天 |
 | P0-06 | TokenBucketLimiter 令牌桶限流器 | datacollect | 0.5 天 |
 | P0-07 | BaseCollector 采集器抽象基类 | datacollect | 0.5 天 |
@@ -82,6 +83,10 @@
 | P0-21 | 量价情绪 Layer 1 | sentiment | 1.5 天 |
 | P0-22 | 策略参数 Profile | sentiment | 1 天 |
 | P0-23 | 情绪 API 端点 | sentiment | 1 天 |
+| **P0-24** | **幸存者偏差 / PIT 数据管理 (从 P2-04 提升)** | **data** | **3 天** |
+| **P0-25** | **CI/CD 自动化测试管线** | **infra** | **2 天** |
+| **P0-26** | **Alembic 数据库迁移管理** | **infra** | **1 天** |
+| **P0-27** | **涨跌停/停牌数据采集** | **data** | **1 天** |
 
 ### P1: 重要 → [详见 TODO-P1.md](TODO-P1.md)
 
@@ -107,6 +112,12 @@
 | P1-18 | Orchestrator 集成 Profile | strategy | 1.5 天 |
 | P1-19 | 情绪 API 完整化 | sentiment | 1.5 天 |
 | **P1-20** | **ETF 全球资产轮动策略** | **strategy** | **7-10 天** |
+| **P1-21** | **多源因子管线 (Alpha158+迅投+自动筛选)** | **factor** | **4-5 天** |
+| **P1-22** | **Deflated Sharpe Ratio / 多重检验修正** | **backtest** | **1.5 天** |
+| **P1-23** | **轻量级事件总线 (从 P3-03 提升)** | **common** | **3 天** |
+| **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
+| **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
+| **P1-26** | **可观测性 (structlog + 飞书机器人告警)** | **monitoring** | **2 天** |
 
 ### P2: 增强 → [详见 TODO-P2.md](TODO-P2.md)
 
@@ -115,7 +126,7 @@
 | P2-01 | 滑点模型 | backtest | 1 天 |
 | P2-02 | XGBoost/CatBoost + Ensemble | ml | 2 天 |
 | P2-03 | 绩效分析增强 | backtest | 2 天 |
-| P2-04 | Survivorship Bias / PIT | data | 2 天 |
+| ~~P2-04~~ | ~~Survivorship Bias / PIT~~ → **已提升至 P0-24** | — | — |
 | P2-05 | 交易成本归因 | backtest | 1 天 |
 | P2-06 | 多周期标签 | ml | 1 天 |
 | P2-07 | TavilyCollector | datacollect | 1 天 |
@@ -130,6 +141,10 @@
 | P2-16 | 资金流向引擎 | fundflow | 3 天 |
 | P2-17 | 风险预警引擎 | riskmonitor | 2 天 |
 | P2-18 | LLM 驱动因子-模型联合迭代 (RD-Agent) | ml | 5 天 |
+| P2-19 | 多教师共识标注管线 (知识蒸馏) | distill | 2.5 天 |
+| P2-20 | 学生模型分层训练 (SetFit+LoRA+DPO) | distill | 3 天 |
+| P2-21 | 数据飞轮 + 生产部署 (ONNX) | distill | 2.5 天 |
+| **P2-22** | **配置管理迁移 (.env → TOML 分层)** | **common** | **2 天** |
 
 ### P3: 长期 → [详见 TODO-P3.md](TODO-P3.md)
 
@@ -137,10 +152,10 @@
 |---|------|------|--------|
 | P3-01 | SHAP 可解释性 | ml | 1 天 |
 | P3-02 | 实验管理 (MLflow + Trace) | ml | 2 天 |
-| P3-03 | 轻量级事件总线 | common | 3 天 |
+| ~~P3-03~~ | ~~轻量级事件总线~~ → **已提升至 P1-23** | — | — |
 | P3-04 | 数据版本化 | data | 2 天 |
 | P3-05 | ProxyPool 代理池 | datacollect | 1 天 |
-| P3-06 | 本地 FinBERT NLP | dataclean | 2 天 |
+| ~~P3-06~~ | ~~本地 FinBERT NLP~~ → 已合并至 P2-19~P2-21 | distill | — |
 | P3-07 | GenericExtraction Schema | dataclean | 0.5 天 |
 | P3-08 | 热门股/一日游识别 | ml | 2 天 |
 | P3-09 | 行业轮动引擎 | sectorwatch | 3 天 |
@@ -150,33 +165,46 @@
 
 ## 核心技术栈一览
 
-| 类别 | 技术 | 版本 | 最新状态 | 用途 |
+| 类别 | 技术 | 版本 | 最新状态 (2026.04审计) | 用途 |
 |------|------|------|---------|------|
-| **ML 框架** | LightGBM | >=4.5 | ✅ 2026活跃 | 主模型 |
-| | XGBoost | >=2.1 | ✅ 2026活跃 | Ensemble |
-| | CatBoost | >=1.2 | ✅ 2025 | Ensemble |
-| **ML 工具** | shap | >=0.50 | ✅ 2026 | 可解释性 |
-| | mlflow | >=2.20 | ✅ 2026活跃 | 实验管理 |
-| | scikit-learn | >=1.5 | ✅ | CV/Pipeline |
+| **ML 框架** | LightGBM | >=4.6 | ✅ 最新4.6.0 (2025.02) | 主模型 |
+| | XGBoost | **>=3.0** | ✅ 最新3.2.0 (2026.02) ⚠️ 2.x→3.x | Ensemble |
+| | CatBoost | >=1.2.10 | ✅ 最新1.2.10 (2026.02) | Ensemble |
+| **ML 工具** | shap | >=0.51 | ✅ 最新0.51.0 (2026.03) | 可解释性 |
+| | mlflow | **>=3.0** | ✅ 最新3.10.1 (2026.03) ⚠️ 2.x→3.x | 实验管理 |
+| | scikit-learn | >=1.7 | ✅ 最新1.8.0 (2025.12) | CV/Pipeline |
 | **自动迭代** | Thompson Sampling (自研) | - | - | Bandit 因子/模型方向选择 (借鉴 RD-Agent) |
 | | Trace (自研) | - | - | 实验历史记忆链 + 智能过滤 (借鉴 RD-Agent) |
 | **组合优化** | CLA (自研) | - | - | CAA 核心: Critical Line Algorithm (Keller 2015) |
-| | skfolio | >=0.5 | ✅ 2026 | 组合优化 (sklearn 兼容，高级约束) |
+| | skfolio | **>=0.15** | ✅ 最新0.15.7 (2026.03) | 组合优化 (sklearn 兼容, 100+模型) |
 | | cvxpy | >=1.5 | ✅ | 凸优化求解 |
-| **数据采集** | curl_cffi | >=0.7.4 | ✅ 2026活跃 | TLS 指纹伪装 |
-| | Playwright | >=1.48 | ✅ 2026活跃 | 浏览器采集 |
-| | akshare | >=1.14 | ✅ 持续更新 | A股免费数据 |
+| **数据采集** | curl_cffi | **>=0.14** | ✅ 最新0.15.0 (+HTTP/3指纹) | TLS 指纹伪装 |
+| | Playwright | **>=1.59** | ✅ 最新1.59.1 (2026.04) | 浏览器采集 |
+| | akshare | >=1.18 | ✅ 最新1.18.49 | A股免费数据 |
 | | tavily-python | >=0.5 | ✅ 2026.03 | 搜索 API |
-| **LLM** | openai SDK | >=1.60 | ✅ | DeepSeek/Qwen 统一客户端 |
+| **因子** | jqdatasdk | >=1.9 | ✅ | 聚宽因子库 (可选) |
+| | jqfactor_analyzer | >=2.4 | ✅ 2025 | 聚宽因子分析 (可选) |
+| **LLM** | openai SDK | **>=2.0** | ✅ 最新2.30.0 (2026.03) ⚠️ 1.x→2.x | DeepSeek/Qwen 统一客户端 |
 | | pydantic | >=2.6 | ✅ | Schema 定义 |
 | **NLP** | FinBERT2 | 2025 | ✅ 最新 | 中文金融情感 |
-| | transformers | >=4.46 | ✅ | HuggingFace 推理 |
-| **调度** | APScheduler | 3.10/4.0α | ✅ | 定时采集 |
-| **事件** | blinker | >=1.9 | ✅ | 模块解耦 |
+| | transformers | **>=5.0** | ✅ 最新5.5.0 (2026.04) ⚠️ 4.x→5.x | HuggingFace 推理 |
+| **蒸馏** | setfit | >=1.1 | ✅ 2026 | 冷启动 (8样本/类) |
+| | peft (LoRA) | **>=0.18** | ✅ 最新0.18.1 (2026.01) | 参数高效微调 (+EVA/hot-swap) |
+| | trl (DPO) | **>=1.0** | ✅ 最新1.0.0 (2026.03) ⚠️ 0.x→1.0 | 偏好对齐训练 (+GRPO/DPPO) |
+| | onnxruntime | >=1.21 | ✅ 最新1.21.1 (2025.04) | 跨平台推理部署 |
+| **调度** | APScheduler | >=3.11 (stable) | ✅ 稳定3.11.2 (4.0仍alpha) | 定时采集 |
+| **事件** | blinker | >=1.9 | ✅ | 模块解耦 (P1-23) |
+| **容错** | tenacity | >=9.0 | ✅ | 重试+熔断 (P1-25) |
+| **日志** | structlog | >=25.1 | ✅ | 结构化日志 (P1-26) |
+| **数据质量** | pandera | >=0.23 | ✅ | DataFrame schema 校验 (P1-24) |
 | **数据库** | PostgreSQL | >=16 | ✅ | JSONB 存储 |
-| | SQLAlchemy | >=2.0 | ✅ | ORM |
-| **统计** | statsmodels | >=0.14 | ✅ | 回归/中性化 |
-| | scipy | >=1.12 | ✅ | 统计检验 |
+| | SQLAlchemy | >=2.0 | ✅ 稳定2.0.48 (2.1.0b1已发布) | ORM |
+| | Alembic | >=1.15 | ✅ | DB schema 迁移 (P0-26) |
+| **统计** | statsmodels | >=0.14 | ✅ 最新0.14.6 | 回归/中性化 |
+| | scipy | >=1.15 | ✅ 最新1.17.1 (2026.02) | 统计检验 |
+| **基础** | pandas | **>=2.2 (兼容3.0)** | ✅ 最新3.0.2 (2026.03) ⚠️ 3.0需Python≥3.11 | 数据处理核心 |
+| | numpy | **>=2.0** | ✅ 最新2.4.4 (2026.03) ⚠️ 1.x→2.x | 向量化运算 |
+| | torch | >=2.8 | ✅ 最新2.9.1 (2026.02) | 深度学习训练 |
 
 ---
 
@@ -184,7 +212,7 @@
 
 | 项目 | Star | 说明 | 链接 |
 |------|------|------|------|
-| **Microsoft Qlib** | 39.8k | AI 量化投资平台，统一管道设计标杆 | [github.com/microsoft/qlib](https://github.com/microsoft/qlib) |
+| **Microsoft Qlib** | ~40k | AI 量化投资平台，统一管道设计标杆 (v0.9.7, 2025.08) | [github.com/microsoft/qlib](https://github.com/microsoft/qlib) |
 | **Barra-CNE5** | - | A 股风险模型 Python 实现 | [github.com/xinyue6688/Barra-CNE5](https://github.com/xinyue6688/Barra-CNE5) |
 | **Barra-CNE6-LightGBM** | - | Barra CNE6 + LGB 选股 | [github.com/finexsf/Barra-CNE6-LightGBM](https://github.com/finexsf/Barra-CNE6-LightGBM) |
 | **skfolio** | - | scikit-learn 原生组合优化 | [skfolio.org](https://skfolio.org/) |
@@ -197,35 +225,57 @@
 | **zhangsensen/etf-rotation** | - | A 股 ETF 轮动实盘 (WFO+VEC+BT 三层验证, OOS Sharpe=1.38) | [github.com/zhangsensen/etf-rotation-strategy](https://github.com/zhangsensen/etf-rotation-strategy) |
 | **Keller VAA/DAA/RAA** | - | 广度动量+哨兵资产 TAA 策略族 (SSRN 3002624/3212862/3752294) | [allocatesmartly.com](https://allocatesmartly.com/) |
 | **oronimbus/tactical-aa** | - | TAA 回测框架 (Dual Momentum + 多策略) | [github.com/oronimbus/tactical-asset-allocation](https://github.com/oronimbus/tactical-asset-allocation) |
+| **Qlib Alpha158** | (Qlib 内置) | 158 个 A 股量价因子, IC 0.02-0.04, 10+模型验证 | [github.com/microsoft/qlib (handler.py)](https://github.com/microsoft/qlib/blob/main/qlib/contrib/data/handler.py) |
+| **JoinQuant jqfactor_analyzer** | 130+ | 聚宽因子分析工具 (IC/分组回测/因子合成) | [github.com/JoinQuant/jqfactor_analyzer](https://github.com/JoinQuant/jqfactor_analyzer) |
+| **FactorEngine (2026.03)** | - | LLM 引导程序级因子挖掘, SOTA IC/ICIR | [arXiv:2603.16365](https://arxiv.org/abs/2603.16365) |
+| **NVIDIA Financial Distillation** | 41 | 生产级金融蒸馏蓝图 (Data Flywheel, 49-70B→1-8B, 98%降本) | [github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data](https://github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data) |
+| **ODA-Fin** | - | 难度感知金融蒸馏, 8B 超越同规模 SOTA (arXiv:2603.07223) | [arxiv.org/abs/2603.07223](https://arxiv.org/abs/2603.07223) |
+| **TensorZero** | 7.3k+ | LLMOps 平台, 程序化策展+微调 5-30x 降本 | [github.com/tensorzero/tensorzero](https://github.com/tensorzero/tensorzero) |
+| **SetFit** | 2.2k+ | 少样本学习框架, 8样本/类达 RoBERTa-Large 水平 | [github.com/SetFit/setfit](https://github.com/SetFit/setfit) |
+| **Bailey & López de Prado (2014)** | - | Deflated Sharpe Ratio, 多重检验修正标杆 | *Journal of Portfolio Management* 2014 |
+| **Pandera** | 3.5k+ | DataFrame schema 校验 (Pydantic 风格) | [pandera.readthedocs.io](https://pandera.readthedocs.io/) |
 
 ---
 
 ## 建议执行顺序
 
 ```
-Phase 0 (第 1-3 周):
+Phase 0 (第 1-4 周):
   P0-01~03  修复已有代码 bug (ATR/中性化/预处理)
-  P0-05~11  datacollect 核心 (HTTP客户端/限流/采集器/注册表)
+  P0-05~11  datacollect 核心 (HTTP客户端/限流/采集器/注册表, 含幂等性)
   P0-12~19  dataclean 核心 (LLM客户端/Schema/清洗器)
   P0-20~23  sentiment 核心 (ORM/量价情绪/Profile/API)
+  P0-24     幸存者偏差 / PIT 数据管理 (所有回测的前提!)
+  P0-25     CI/CD 自动化测试管线 (越早建越好)
+  P0-26     Alembic 数据库迁移 (schema 变更前必须有)
+  P0-27     涨跌停/停牌数据采集 (回测管道依赖)
 
-Phase 1 (第 4-8 周):
-  P0-04     OrchestratorBacktester (回测统一)
-  P1-01~02  Purged CV + Walk-Forward 重训练
+Phase 1 (第 5-9 周):
+  P0-04     OrchestratorBacktester (回测统一, 含涨跌停/停牌模拟)
+  P1-01~02  Purged CV + Walk-Forward 重训练 (含 Regime-Aware)
   P1-05~06  组合优化 + 风险归因
   P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
   P1-12~15  dataclean 完善 (扩展Schema/注册表)
   P1-16~19  sentiment 完善 (合成指数/分类器/Profile集成)
-  P1-20     ETF 全球资产轮动策略 (池/动量/崩盘保护/回测)
+  P1-20     ETF 全球资产轮动策略 (含幸存者偏差处理)
+  P1-21     多源因子管线 (Alpha158+迅投+自动筛选)
+  P1-22     Deflated Sharpe Ratio / 多重检验修正
+  P1-23     轻量级事件总线 (blinker, 模块解耦)
+  P1-24     数据质量监控 + Pandera Schema 校验
+  P1-25     系统级容错 & 降级 (Tenacity/熔断)
+  P1-26     可观测性 (structlog + 飞书机器人告警)
 
-Phase 2 (第 8-11 周):
-  P1-03~04  因子/模型监控
+Phase 2 (第 9-13 周):
+  P1-03~04  因子/模型监控 (含因子拥挤度检测)
   P1-07     换手率约束
-  P2-01~06  量化增强 (滑点/XGB/绩效/PIT/多周期)
+  P2-01~03  量化增强 (滑点/XGB/绩效)
+  P2-05~06  交易成本归因 + 多周期标签
   P2-07~14  采集+清洗+情绪高级功能
   P2-15~17  扩展引擎 (个股雷达/资金/风险)
   P2-18     RD-Agent 式自动因子-模型联合迭代 (Bandit+Trace+IC去重)
+  P2-19~21  知识蒸馏 (多教师共识标注/LoRA分层训练/数据飞轮部署)
+  P2-22     配置管理迁移 (.env → TOML 分层)
 
-Phase 3 (第 12 周+):
-  P3-01~10  按需选择实现
+Phase 3 (第 14 周+):
+  P3-01~10  按需选择实现 (SHAP/MLflow/数据版本化/行业轮动/宏观)
 ```

@@ -1,8 +1,8 @@
 # P3: 长期 (可选优化 + 远期规划)
 
-> 最后更新: 2026-04-04
+> 最后更新: 2026-04-05
 >
-> 10 项 | 预估工作量 ~19 天
+> 9 项 (P3-03 已提升至 P1-23, P3-06 已合并至 P2-19~P2-21) | 预估工作量 ~14 天
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -28,7 +28,7 @@ LGB 的 `feature_importance(gain)` 只告诉你 "哪个因子重要"，但不告
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
-| **shap** | >=0.50.0 | ✅ 2026最新 | `TreeExplainer` 对 LGB 有原生优化，O(TLD) 复杂度 |
+| **shap** | >=0.51 | ✅ 2026最新0.51.0 (+pandas 3.0兼容) | `TreeExplainer` 对 LGB 有原生优化，O(TLD) 复杂度 |
 
 **参考文档:**
 - SHAP 官方: [github.com/shap/shap](https://github.com/shap/shap)
@@ -104,7 +104,7 @@ class HypothesisFeedback:
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
-| **mlflow** | >=2.20 | ✅ 2026活跃 | 核心: tracking + model registry |
+| **mlflow** | >=3.0 | ✅ 2026最新3.10.1 (**2.x→3.x大版本**, +AI自动诊断/Pickle-free) | 核心: tracking + model registry |
 | **Trace (自研)** | - | - | 借鉴 RD-Agent 的轻量实验历史链 |
 | sqlite (轻量) 或 PostgreSQL | - | - | MLflow 后端存储 |
 
@@ -117,29 +117,10 @@ class HypothesisFeedback:
 
 ---
 
-### P3-03: 轻量级事件总线
+### ~~P3-03: 轻量级事件总线~~ → **已提升至 P1-23**
 
-| 属性 | 内容 |
-|------|------|
-| **模块** | common |
-| **文件** | 新增 `src/common/event_bus.py` |
-| **工作量** | 3 天 |
-
-**为什么要做:**
-当前模块间通过函数调用串联 (采集→清洗→情绪→策略→交易)。如果要新增一个 "数据采集完成后同时触发清洗+个股雷达+风险预警"，需要修改采集模块的代码。事件总线实现 "发布者不知道谁在监听"。
-
-**技术选型:**
-
-| 技术 | 版本 | 是否最新 | 说明 |
-|------|------|---------|------|
-| **blinker** | >=1.9 | ✅ 2024 | Flask 内部使用的信号库，轻量 |
-| **PyPubSub** | >=4.0.7 | ✅ 2025.12 | 话题式发布订阅 |
-| asyncio 自研 | Python 内置 | ✅ | 支持异步处理器 |
-
-**参考文档:**
-- Blinker: [blinker GitHub](https://github.com/pallets-eco/blinker) + [Python Signals for Decoupling](https://dev.to/recca0120/blinker-python-signals-for-decoupling-modules-441p)
-- PyPubSub: [pypubsub.readthedocs.io](https://pypubsub.readthedocs.io/)
-- [Event Bus with asyncio in Python (2026)](https://oneuptime.com/blog/post/2026-01-25-event-bus-asyncio-python/view)
+> 此任务因架构审查发现其为多模块协作的基础设施, 已提升至 P1-23。
+> 详见 [TODO-P1.md](TODO-P1.md) P1-23。
 
 ---
 
@@ -168,35 +149,14 @@ class HypothesisFeedback:
 
 ---
 
-### P3-06: 本地 FinBERT NLP
+### ~~P3-06: 本地 FinBERT NLP~~ → 已合并至 P2-19~P2-21
 
-| 属性 | 内容 |
-|------|------|
-| **文件** | `src/dataclean/cleaners/finbert_cleaner.py` |
-| **工作量** | 2 天 |
-
-**为什么要做:**
-LLM API 有成本和延迟。FinBERT 110M 参数，家用 GPU (GTX 1660+) 或 CPU 即可运行，替代 API 做高频情感分析。
-
-**2025 最新进展: FinBERT2**
-- 在 32B token 中文金融语料上预训练 — 最大的中文金融预训练模型
-- 分类任务: 比 GPT-4-turbo 和 Claude 3.5 Sonnet 高 9.7%-12.3%
-- 检索任务: 比 OpenAI text-embedding-3-large 高 4.2%
-- MIT 开源协议
-
-**技术选型:**
-
-| 技术 | 版本 | 是否最新 | 说明 |
-|------|------|---------|------|
-| **FinBERT2** | 2025 | ✅ 最新 | [valuesimplex/FinBERT](https://github.com/valuesimplex/FinBERT) |
-| transformers | >=4.46 | ✅ | HuggingFace 推理框架 |
-| torch | >=2.4 | ✅ | GPU/CPU 推理 |
-
-**参考文档:**
-- FinBERT2 论文: [arxiv.org/abs/2506.06335](https://arxiv.org/abs/2506.06335)
-- FinBERT2 代码: [github.com/valuesimplex/FinBERT](https://github.com/valuesimplex/FinBERT)
-- FinBERT 官网: [finbert.org](https://finbert.org/)
-- [FinBERT 金融情感分析完整指南 (2025)](https://blog.gitcode.com/573f7b1a41018f183b1d047a1a701979.html)
+> **状态: 已合并**
+>
+> 原 P3-06 设计为"直接部署 FinBERT 替代 LLM API"。该方案已升级为完整的知识蒸馏模块
+> (多教师共识标注 + LoRA 分层训练 + 数据飞轮)，编号 P2-19~P2-21，优先级从 P3 提升至 P2。
+>
+> 详见: [TODO-P2.md — P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型)
 
 ---
 

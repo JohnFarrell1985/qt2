@@ -1,8 +1,8 @@
 # P2: 增强 (高级功能 + 扩展引擎)
 
-> 最后更新: 2026-04-04
+> 最后更新: 2026-04-05
 >
-> 18 项 | 预估工作量 ~27 天
+> 22 项 | 预估工作量 ~35 天 (P2-04 已提升至 P0-24, 新增 P2-22)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -74,8 +74,8 @@ class SlippageModel:
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
-| **xgboost** | >=2.1 | ✅ 2026活跃 | `pip install xgboost` |
-| **catboost** | >=1.2 | ✅ 2025最新 | `pip install catboost` |
+| **xgboost** | >=3.0 | ✅ 2026最新3.2.0 (2.x→3.x大版本跳跃, 注意API变化) | `pip install xgboost` |
+| **catboost** | >=1.2.10 | ✅ 2026最新1.2.10 (+Spark4/Polars支持) | `pip install catboost` |
 | **penguinboost** | >=0.3.3 | ✅ 2025 | 金融专用 GBDT (可选) |
 
 **参考文档:**
@@ -106,32 +106,10 @@ class SlippageModel:
 
 ---
 
-### P2-04: Survivorship Bias / PIT 数据管理
+### ~~P2-04: Survivorship Bias / PIT 数据管理~~ → **已提升至 P0-24**
 
-| 属性 | 内容 |
-|------|------|
-| **模块** | data |
-| **文件** | 新增 `src/data/universe_manager.py` |
-| **工作量** | 2 天 |
-
-**为什么要做:**
-不处理幸存者偏差的回测结果是虚假的:
-- **年化收益虚高 1.5-4.5%** (累积 35-45%)
-- **Sharpe 虚高 20-30%**
-- **最大回撤低估 15-25%**
-
-原因: 只用当前存活股票回测，遗漏了退市 (往往暴跌 80%+) 和被剔除指数成分的股票。
-
-**业界最佳实践:**
-- **SCD Type 2 (缓慢变化维度)**: 记录每只股票的生命周期 (`start_date`, `end_date`, `status_at_end`)
-- **Point-in-Time 查询**: "T 日哪些股票是可交易的？" 而非 "今天的股票列表回溯到过去"
-- **财务数据用 `announce_date`**: 而非 `report_date`，避免使用尚未公布的财报数据
-
-**参考文档:**
-- [量化回测中的幸存者偏差 (长牛笔记)](https://stay-bullish.com/p/survivor-bias-in-quantitative-backtesting)
-- [破除量化回测中的幸存者偏差 (gs-quant)](https://blog.csdn.net/gitblog_00036/article/details/151534400)
-- [量化回测的致命陷阱：深入解析生存偏差](https://technologynova.org/%E9%87%8F%E5%8C%96%E5%9B%9E%E6%B5%8B%E7%9A%84%E8%87%B4%E5%91%BD%E9%99%B7%E9%98%B1)
-- [Historical Constituents of an Equity Index in Python](https://concretumgroup.com/historical-constituents-of-an-equity-index-in-python-norgate-data/)
+> 此任务因架构审查发现其为基础性依赖 (所有策略回测的准确性都依赖于此), 已提升至 P0-24。
+> 详见 [TODO-P0.md](TODO-P0.md) P0-24。
 
 ---
 
@@ -275,8 +253,8 @@ class SlippageModel:
 
 | 技术 | 版本 | 说明 |
 |------|------|------|
-| numpy | >=1.26 | Thompson Sampling 采样 |
-| openai SDK | >=1.60 | LLM 假设生成 (可选) |
+| numpy | >=2.0 | ✅ 2026最新2.4.4 | Thompson Sampling 采样 |
+| openai SDK | >=2.0 | ✅ 2026最新2.30.0 | LLM 假设生成 (可选) |
 | pickle | 内置 | Trace 序列化 |
 
 **参考文档:**
@@ -318,5 +296,493 @@ class SimpleRDLoop:
         self.bandit.update(action, reward, metrics)
         self.trace.append(action, metrics, result)
 ```
+
+---
+
+### P2-19 ~ P2-21: 知识蒸馏模块 (LLM 教师 → 轻量学生模型)
+
+> **升级自 P3-06 (本地 FinBERT NLP)**
+>
+> 原 P3-06 设计为"直接部署 FinBERT 替代 API"，这浪费了 LLM 已有的高质量输出能力。
+> 蒸馏方案利用双教师共识标注 + 难度感知训练 + 持续数据飞轮，将 LLM 知识"压缩"到本地小模型中。
+>
+> P3-06 已标记为 "已合并至 P2-19~P2-21"。
+
+**核心价值:**
+- API 成本归零 (从 ~2 元/百万 token 降至 0)
+- 推理延迟从 200-500ms 降至 <5ms
+- 离线可用，无网络依赖
+- 情绪因子质量接近 LLM 水平 (90-99% 保留率)
+
+**与豆包对话方案的 6 大升级 (基于 2026 全球最新实践):**
+
+| # | 豆包方案 (旧) | 2026 最佳实践 (新) | 来源 |
+|---|-------------|-------------------|------|
+| 1 | 单教师软标签 | **多模型共识标注 + 分歧挖掘** | EvasionBench (2026) |
+| 2 | 一次性蒸馏 | **持续数据飞轮 (Data Flywheel)** | NVIDIA Blueprint (2025) |
+| 3 | 均匀训练全部数据 | **难度感知分层训练 (SFT→DPO)** | ODA-Fin arXiv:2603.07223 |
+| 4 | KL 散度蒸馏损失 | **程序化策展 + LoRA 微调** (更简单同等效果) | TensorZero (2025) |
+| 5 | 从零标注 | **SetFit 冷启动** (8 样本/类即可) | HuggingFace SetFit |
+| 6 | 全量微调 (需 A800) | **LoRA 微调** (家用 GTX 1660+ 即可) | NVIDIA/HF 通用 |
+
+**系统架构:**
+
+```
+┌─────────────────── 蒸馏增强设计 ───────────────────────┐
+│                                                         │
+│  DeepSeek ──┐                                           │
+│             ├→ 共识仲裁器 → 难度分层 ─→ 学生模型(LoRA)  │
+│  Qwen ──────┘     │            │          │             │
+│              (分歧→Judge)  easy→SFT    本地推理<5ms      │
+│                            hard→DPO        │            │
+│                                       数据清洗          │
+│                                         │               │
+│  ┌──── 数据飞轮 ←── 低置信样本 ←─ 生产推理             │
+│  │                                                      │
+│  └→ 教师重标注 → 增量重训 → 热更新模型 → 生产推理 → ... │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+### P2-19: 多教师共识标注管线 (Multi-Teacher Consensus Labeling)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | distill |
+| **文件** | 新增 `src/distill/data_pipeline.py`, `src/distill/consensus.py`, `src/distill/models.py` |
+| **工作量** | 2.5 天 |
+
+**为什么要做:**
+传统蒸馏用单一教师模型生成软标签，存在两大问题:
+1. **教师偏差**: 单模型的系统性错误直接传递给学生
+2. **边界样本质量差**: 难以区分的样本 (如 "央行降准" → 利好还是利空？) 得到的标签噪声最大
+
+EvasionBench (2026) 证明: 用 2 个独立 LLM 标注 + 分歧挖掘，比单教师蒸馏提升 2.4%，且分歧样本作为 hard examples 训练后"起到隐式正则化作用"。
+
+**业界最佳实践:**
+- **Multi-Model Consensus (EvasionBench 2026)**: 双模型独立标注 + Judge 仲裁，Cohen's Kappa 达 0.835
+- **ODA-Fin (arXiv:2603.07223, 2026.03)**: 难度感知采样，>50% 失败率的样本单独做 RL，8B 模型超越同规模所有开源金融 LLM
+- **NVIDIA Data Flywheel Blueprint**: 生产级金融蒸馏框架，49-70B→1-8B，成本降低 98%
+
+**技术选型:**
+
+| 技术 | 版本 | 是否最新 | 说明 |
+|------|------|---------|------|
+| openai SDK | >=2.0 | ✅ 2026最新2.30.0 | DeepSeek/Qwen 统一调用 (复用 LLMClient) |
+| pydantic | >=2.6 | ✅ | 标注结果 Schema |
+| PostgreSQL JSONB | >=16 | ✅ | 标注存储 |
+
+**参考文档:**
+- EvasionBench (多模型共识): [arXiv:2601.09142](https://arxiv.org/abs/2601.09142) — 比单教师 +2.4%, 4B 模型 81.3% 准确率
+- ODA-Fin (难度感知): [arXiv:2603.07223](https://arxiv.org/abs/2603.07223) — 难度+可验证性感知采样
+- NVIDIA Blueprint: [github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data](https://github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data) — 生产级飞轮
+- TensorZero: [tensorzero.com/blog](https://www.tensorzero.com/blog/fine-tuned-small-llms-can-beat-large-ones-at-5-30x-lower-cost-with-programmatic-data-curation/) — 程序化策展 5-30x 降本
+
+**落地方案:**
+```python
+class ConsensusArbiter:
+    """双教师共识仲裁 + 难度评分"""
+
+    def __init__(self, llm_client, judge_model="deepseek-r1"):
+        self.llm = llm_client
+        self.judge_model = judge_model
+
+    async def label_batch(self, texts: list[str]) -> list[ConsensusLabel]:
+        results = []
+        for text in texts:
+            label_a = await self.llm.classify(text, model="deepseek")
+            label_b = await self.llm.classify(text, model="qwen")
+
+            if label_a == label_b:
+                results.append(ConsensusLabel(
+                    text=text, label=label_a,
+                    confidence=1.0, is_hard=False,
+                    teacher_agreement=True
+                ))
+            else:
+                judge_label = await self.llm.classify(
+                    text, model=self.judge_model,
+                    context=f"Teacher A: {label_a}, Teacher B: {label_b}"
+                )
+                results.append(ConsensusLabel(
+                    text=text, label=judge_label,
+                    confidence=0.6, is_hard=True,
+                    teacher_agreement=False
+                ))
+        return results
+
+    def score_difficulty(self, labels, base_student):
+        """ODA-Fin 风格: 用未训练学生预测，失败率>50%标记为hard"""
+        for label in labels:
+            pred = base_student.predict(label.text)
+            label.difficulty_score = 1.0 if pred != label.label else 0.0
+        failure_rate = sum(l.difficulty_score for l in labels) / len(labels)
+        hard_set = [l for l in labels if l.difficulty_score > 0]
+        easy_set = [l for l in labels if l.difficulty_score == 0]
+        return easy_set, hard_set
+```
+
+**数据库 Schema:**
+```sql
+CREATE TABLE distill_labels (
+    id SERIAL PRIMARY KEY,
+    text TEXT NOT NULL,
+    teacher_a_label VARCHAR(20),
+    teacher_b_label VARCHAR(20),
+    consensus_label VARCHAR(20) NOT NULL,
+    judge_model VARCHAR(50),
+    confidence FLOAT DEFAULT 1.0,
+    is_hard BOOLEAN DEFAULT FALSE,
+    difficulty_score FLOAT,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_distill_hard ON distill_labels (is_hard) WHERE is_hard = TRUE;
+CREATE INDEX idx_distill_confidence ON distill_labels (confidence);
+```
+
+---
+
+### P2-20: 学生模型分层训练 (Staged Student Training)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | distill |
+| **文件** | 新增 `src/distill/trainer.py`, `src/distill/lora_config.py`, `src/distill/student_registry.py` |
+| **工作量** | 3 天 |
+
+**为什么要做:**
+传统蒸馏的 KL 散度损失在金融领域效果并不稳定 (TensorZero 2025 实测: 程序化策展 + 标准微调 = 同等效果且更简单)。
+分层训练策略效果更优:
+- **Phase 0 冷启动**: 在极少数标注数据下快速出 baseline
+- **Phase 1 主训练**: 在海量共识标签上 LoRA 微调
+- **Phase 2 难样本强化**: 利用教师分歧信息做偏好对齐
+
+**三阶段训练:**
+
+| 阶段 | 方法 | 数据 | 耗时 | 效果 |
+|------|------|------|------|------|
+| Phase 0: 冷启动 | SetFit (对比学习) | 8-16 人工标注/类 | ~30 秒 | 快速 baseline (F1 ~75%) |
+| Phase 1: 主训练 | LoRA SFT | P2-19 的 `easy_set` (万级) | 1-3 小时 | 接近教师水平 (F1 ~90%) |
+| Phase 2: 强化 | DPO 偏好对齐 | P2-19 的 `hard_set` (千级) | 0.5-1 小时 | 边界样本提升 (+2-3%) |
+
+**学生模型选择 (3 档):**
+
+| 学生模型 | 参数量 | LoRA 训练显存 | 推理速度 | 适用场景 |
+|----------|--------|-------------|---------|---------|
+| FinBERT2-Base | 110M | ~4GB | ~15ms | 高精度情感 + 事件抽取 |
+| TinyFinBERT | 14.5M | ~2GB | ~2ms | 情感分类 (推荐默认) |
+| Qwen2.5-0.5B | 500M | ~6GB | ~20ms | 多任务 + 复杂结构化抽取 |
+
+**技术选型:**
+
+| 技术 | 版本 | 是否最新 | 说明 |
+|------|------|---------|------|
+| **setfit** | >=1.1 | ✅ 2026 | Phase 0 冷启动 (8样本/类) |
+| **peft** (LoRA) | >=0.18 | ✅ 2026最新0.18.1 (+EVA初始化/hot-swap/int8-LoRA) | Phase 1 参数高效微调 |
+| **trl** | >=1.0 | ✅ 2026最新1.0.0 (**0.x→1.0大版本**, +GRPO/DPPO/SDPO) | Phase 2 DPO 偏好对齐 |
+| **transformers** | >=5.0 | ✅ 2026最新5.5.0 (**4.x→5.x大版本**, 周更模式) | HuggingFace 模型加载 |
+| **torch** | >=2.8 | ✅ 2026最新2.9.1 (+Blackwell GPU/CUDA13) | 训练后端 |
+| **accelerate** | >=1.2 | ✅ | 混合精度 + 多卡 |
+
+**参考文档:**
+- SetFit 冷启动: [github.com/SetFit/setfit](https://github.com/SetFit/setfit) — 8 样本/类达到 RoBERTa-Large 水平
+- TinyFinBERT: [arXiv:2409.18999](https://arxiv.org/abs/2409.18999) — 14.5M 参数, GPT 增强蒸馏, 99% 保留率
+- TinyLoRA: [MarkTechPost 2026.03](https://www.marktechpost.com/2026/03/24/this-ai-paper-introduces-tinylora/) — 仅 13 参数微调达 91.8% GSM8K
+- FinBERT2: [github.com/valuesimplex/FinBERT](https://github.com/valuesimplex/FinBERT) — 最强中文金融 NLP (32B token 预训练)
+- TensorZero: [tensorzero.com](https://www.tensorzero.com/blog/fine-tuned-small-llms-can-beat-large-ones-at-5-30x-lower-cost-with-programmatic-data-curation/) — 程序化策展 5-30x 成本降低
+
+**落地方案:**
+```python
+class StagedTrainer:
+    """三阶段渐进式训练: SetFit冷启动 → LoRA SFT → DPO强化"""
+
+    def __init__(self, student_name="tinyfinbert", lora_rank=16):
+        self.student_name = student_name
+        self.lora_rank = lora_rank
+
+    def phase0_setfit(self, few_shot_examples: dict[str, list[str]]):
+        """Phase 0: 8样本/类冷启动 (30秒)"""
+        from setfit import SetFitModel, SetFitTrainer
+        model = SetFitModel.from_pretrained(self.student_name)
+        trainer = SetFitTrainer(model=model, train_dataset=few_shot_examples)
+        trainer.train()
+        return model
+
+    def phase1_lora_sft(self, easy_dataset, base_model=None):
+        """Phase 1: LoRA微调, 显存仅需4-6GB (GTX 1660+可用)"""
+        from peft import LoraConfig, get_peft_model
+        from transformers import AutoModelForSequenceClassification
+
+        model = AutoModelForSequenceClassification.from_pretrained(
+            self.student_name, num_labels=3
+        )
+        lora_config = LoraConfig(
+            r=self.lora_rank, lora_alpha=32,
+            target_modules=["query", "value"],
+            task_type="SEQ_CLS"
+        )
+        model = get_peft_model(model, lora_config)
+        # LoRA 仅训练 0.1-1% 参数, 显存需求降低 80%
+        trainer = Trainer(model=model, train_dataset=easy_dataset)
+        trainer.train()
+        return model
+
+    def phase2_dpo(self, hard_dataset, model):
+        """Phase 2: 利用教师分歧构造偏好对, DPO强化边界样本"""
+        from trl import DPOTrainer, DPOConfig
+        # 偏好对: (text, chosen=consensus_label, rejected=wrong_teacher_label)
+        dpo_config = DPOConfig(beta=0.1, learning_rate=5e-6)
+        trainer = DPOTrainer(model=model, train_dataset=hard_dataset, args=dpo_config)
+        trainer.train()
+        return model
+```
+
+---
+
+### P2-21: 数据飞轮 + 生产部署 (Data Flywheel + Deployment)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | distill |
+| **文件** | 新增 `src/distill/inference.py`, `src/distill/flywheel.py`, 修改 `src/dataclean/cleaners/` |
+| **工作量** | 2.5 天 |
+
+**为什么要做:**
+一次性蒸馏的学生模型会随市场风格变化逐渐"过时"。NVIDIA Data Flywheel Blueprint (2025) 证明:
+持续收集生产中低置信度样本 → 教师重标注 → 增量重训学生模型，可实现**模型自我进化**，保持与市场同步。
+
+**业界最佳实践:**
+- **NVIDIA Data Flywheel**: 生产数据→教师标注→训练学生→部署→收集反馈→迭代, 成本降低 98%
+- **模型导出**: PyTorch → ONNX Runtime (跨平台) → 可选 TensorRT (NVIDIA GPU 加速)
+- **量化**: INT8 量化体积再减 50%, 精度损失 <1%
+- **降级链**: 蒸馏模型(主路径) → LLM API(兜底) → 规则引擎(最后手段)
+
+**技术选型:**
+
+| 技术 | 版本 | 是否最新 | 说明 |
+|------|------|---------|------|
+| **onnxruntime** | >=1.21 | ✅ 2026最新1.21.1 (+TensorRT 10.8/ChatGLM/Baichuan2) | 跨平台推理 (CPU/GPU 通用) |
+| **optimum** | >=1.23 | ✅ 2026 | HuggingFace ONNX 导出工具 |
+| **tensorrt** | >=10.0 | ✅ 2026 | NVIDIA GPU 加速 (可选) |
+| **APScheduler** | >=3.11 (stable) | ✅ 2026最新稳定3.11.2 | 飞轮周期任务调度 |
+
+**参考文档:**
+- NVIDIA Data Flywheel: [build.nvidia.com/nvidia/ai-model-distillation-for-financial-data](https://build.nvidia.com/nvidia/ai-model-distillation-for-financial-data) — 49-70B→1-8B, 98% 降本
+- NVIDIA Technical Blog: [Build Efficient Financial Data Workflows](https://developer.nvidia.com/blog/build-efficient-financial-data-workflows-with-ai-model-distillation) — 完整工作流
+- ONNX Runtime + TensorRT 推理加速: [腾讯云开发者社区](https://cloud.tencent.com/developer/article/2593373)
+
+**落地方案:**
+
+**1. 模型导出与量化:**
+```python
+from optimum.onnxruntime import ORTModelForSequenceClassification, ORTQuantizer
+from optimum.onnxruntime.configuration import AutoQuantizationConfig
+
+model = ORTModelForSequenceClassification.from_pretrained(
+    "models/distilled/tinyfinbert-lora-merged", export=True
+)
+model.save_pretrained("models/distilled/onnx/")
+
+quantizer = ORTQuantizer.from_pretrained("models/distilled/onnx/")
+qconfig = AutoQuantizationConfig.avx512_vnni(is_static=False)
+quantizer.quantize(save_dir="models/distilled/onnx-int8/", quantization_config=qconfig)
+```
+
+**2. 降级链集成:**
+```python
+class DistilledCleaner(BaseCleaner):
+    """蒸馏模型清洗器: 本地推理为主, LLM API 为兜底"""
+
+    def __init__(self):
+        self.local_model = ORTModelForSequenceClassification.from_pretrained(
+            settings.distill_model_path
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(settings.distill_model_path)
+        self.llm_fallback = LLMClient()
+
+    async def clean(self, text: str) -> CleanResult:
+        inputs = self.tokenizer(text, return_tensors="np", truncation=True)
+        logits = self.local_model(**inputs).logits
+        probs = softmax(logits, axis=-1)
+        max_prob = probs.max()
+
+        if max_prob >= settings.distill_flywheel_low_conf_threshold:
+            label = ["negative", "neutral", "positive"][probs.argmax()]
+            return CleanResult(label=label, confidence=float(max_prob), source="distilled")
+        else:
+            # 低置信度: 记录到飞轮队列 + 回退 LLM
+            await self._enqueue_flywheel(text, probs)
+            return await self.llm_fallback.classify(text)
+```
+
+**3. 数据飞轮自动化:**
+```python
+class DataFlywheel:
+    """持续数据飞轮: 低置信样本 → 教师重标注 → 增量重训 → 热更新"""
+
+    def __init__(self, consensus: ConsensusArbiter, trainer: StagedTrainer):
+        self.consensus = consensus
+        self.trainer = trainer
+
+    async def weekly_iteration(self):
+        """APScheduler 周任务"""
+        # 1. 从飞轮队列取低置信样本
+        low_conf_texts = await db.fetch("SELECT text FROM flywheel_queue WHERE processed = FALSE")
+
+        # 2. 双教师重标注
+        new_labels = await self.consensus.label_batch([r.text for r in low_conf_texts])
+
+        # 3. 追加到训练集
+        await db.insert_many("distill_labels", new_labels)
+
+        # 4. 增量 LoRA 微调 (在全量数据上)
+        all_easy = await db.fetch("SELECT * FROM distill_labels WHERE is_hard = FALSE")
+        new_model = self.trainer.phase1_lora_sft(all_easy)
+
+        # 5. 评估: 新模型 vs 旧模型
+        new_f1 = evaluate(new_model, test_set)
+        old_f1 = evaluate(current_model, test_set)
+
+        if new_f1 > old_f1:
+            export_onnx(new_model, settings.distill_model_path)
+            reload_model()
+            log.info(f"Flywheel: model upgraded F1 {old_f1:.3f} → {new_f1:.3f}")
+
+        # 6. 标记已处理
+        await db.execute("UPDATE flywheel_queue SET processed = TRUE WHERE processed = FALSE")
+```
+
+**飞轮数据库 Schema:**
+```sql
+CREATE TABLE flywheel_queue (
+    id SERIAL PRIMARY KEY,
+    text TEXT NOT NULL,
+    predicted_probs JSONB,
+    max_confidence FLOAT,
+    processed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_flywheel_unprocessed ON flywheel_queue (processed) WHERE processed = FALSE;
+```
+
+**.env 新增参数:**
+```env
+# ===== 蒸馏模块 (P2-19~P2-21) =====
+DISTILL_TEACHER_A=deepseek                 # 教师 A 模型
+DISTILL_TEACHER_B=qwen                     # 教师 B 模型
+DISTILL_JUDGE_MODEL=deepseek-r1            # 分歧仲裁 Judge 模型
+DISTILL_CONSENSUS_THRESHOLD=0.7            # 共识置信度阈值
+DISTILL_HARD_EXAMPLE_FAILURE_RATE=0.5      # ODA-Fin 难度阈值 (失败率>此值=hard)
+DISTILL_STUDENT_MODEL=tinyfinbert          # 学生模型: tinyfinbert / finbert2-base / qwen-0.5b
+DISTILL_LORA_RANK=16                       # LoRA 秩 (越大越精准, 越大显存越多)
+DISTILL_LORA_ALPHA=32                      # LoRA alpha
+DISTILL_USE_ONNX=true                      # 是否导出 ONNX 推理
+DISTILL_INT8=false                         # 是否 INT8 量化
+DISTILL_FLYWHEEL_SCHEDULE=weekly           # 飞轮重训频率: weekly / biweekly
+DISTILL_FLYWHEEL_LOW_CONF_THRESHOLD=0.7    # 低于此置信度的样本进入飞轮队列
+DISTILL_MODEL_PATH=models/distilled/       # 蒸馏模型存储路径
+```
+
+**应用场景扩展:**
+
+| 场景 | 蒸馏应用 | 对应模块 | 学生模型推荐 |
+|------|---------|---------|-------------|
+| 金融情感分析 | 多教师共识 → LoRA SFT | sentiment (P2-13) | TinyFinBERT 14.5M |
+| 事件驱动量化 | 利好/利空/重组 → 多标签分类 | stockradar (P2-15) | FinBERT2-Base 110M |
+| 风险预警 | 黑天鹅/政策突变 → 二分类 | riskmonitor (P2-17) | TinyFinBERT 14.5M |
+| 结构化抽取 | 财报/公告 → JSON | dataclean | Qwen2.5-0.5B |
+| 语义 Alpha | 文本→768d 向量→LGB 特征 | ml/factor | FinBERT2-Base 110M |
+
+**关键参考文献 (全部 2025-2026):**
+
+| 文献 | 核心贡献 | 链接 |
+|------|---------|------|
+| EvasionBench (2026) | 多模型共识 + 分歧挖掘, 比单教师 +2.4% | [arXiv:2601.09142](https://arxiv.org/abs/2601.09142) |
+| ODA-Fin (2026.03) | 难度感知蒸馏, 8B 超越同规模 SOTA | [arXiv:2603.07223](https://arxiv.org/abs/2603.07223) |
+| NVIDIA Data Flywheel (2025) | 生产级金融蒸馏蓝图, 成本降 98% | [GitHub](https://github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data) |
+| TensorZero (2025.07) | 程序化策展 + 微调 = 5-30x 降本 | [Blog](https://www.tensorzero.com/blog/fine-tuned-small-llms-can-beat-large-ones-at-5-30x-lower-cost-with-programmatic-data-curation/) |
+| SetFit (HuggingFace) | 8 样本/类冷启动, 无需 prompt | [GitHub](https://github.com/SetFit/setfit) |
+| TinyFinBERT (2024) | 14.5M 参数, GPT 增强蒸馏, 99% 保留率 | [arXiv:2409.18999](https://arxiv.org/abs/2409.18999) |
+| FinBERT2 (2025) | 最强中文金融 NLP (32B token 预训练) | [GitHub](https://github.com/valuesimplex/FinBERT) |
+| TinyLoRA (2026.03) | 仅 13 参数微调达 91.8% GSM8K | [MarkTechPost](https://www.marktechpost.com/2026/03/24/this-ai-paper-introduces-tinylora/) |
+
+---
+
+### P2-22: 配置管理迁移 (.env → YAML/TOML 分层配置)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | common |
+| **文件** | 新增 `config/`, 修改 `src/common/config.py` |
+| **工作量** | 2 天 |
+
+**为什么要做:**
+当前所有参数 (60+ 项) 都堆在一个 `.env` 文件中, 随着 P0-P1 持续新增模块, 预计将膨胀到 100+ 行。`.env` 的局限:
+- 没有层级结构: 所有参数平铺, 不能按模块分组
+- 没有类型: 所有值都是字符串, 需要手动转换
+- 不支持默认值覆盖: 无法 `config.base.yaml` → `config.prod.yaml` 分层覆盖
+- 敏感参数 (API key) 和普通配置 (窗口大小) 混在一起
+
+**业界最佳实践:**
+- **12-Factor App**: 环境变量存密钥, 配置文件存非敏感参数
+- **TOML (pyproject.toml 风格)**: Python 3.11+ 内置 `tomllib`, 无需额外依赖
+- **Hydra (Meta/Facebook)**: 企业级配置管理框架 (可能过重, 备选)
+- **pydantic-settings**: 支持 YAML/TOML + env 混合加载
+
+**落地方案:**
+```
+config/
+├── base.toml        # 默认配置 (所有非敏感参数, 提交到 git)
+├── production.toml  # 生产环境覆盖 (可选)
+└── .env             # 仅存放敏感信息 (API keys, passwords, 不提交)
+```
+
+```toml
+# config/base.toml
+[data]
+lookback_years = 5
+akshare_rate = 0.15
+
+[ml]
+lgb_n_estimators = 1000
+lgb_learning_rate = 0.05
+cv_folds = 5
+
+[factor]
+alpha158_enabled = true
+alpha158_windows = [5, 10, 20, 30, 60]
+screen_ic_threshold = 0.03
+
+[etf]
+rebalance_day = "last_trading_day"
+top_n = 4
+```
+
+```python
+# src/common/config.py
+import tomllib
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    # 敏感参数从 .env 读取
+    xt_account: str
+    openai_api_key: str
+    
+    @classmethod
+    def from_toml(cls, path: str = "config/base.toml"):
+        with open(path, "rb") as f:
+            toml_config = tomllib.load(f)
+        # merge with env vars (env vars override toml)
+        return cls(**toml_config)
+```
+
+**参考文档:**
+- [Python tomllib (3.11+)](https://docs.python.org/3/library/tomllib.html)
+- [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
+- [12-Factor Config](https://12factor.net/config)
 
 ---

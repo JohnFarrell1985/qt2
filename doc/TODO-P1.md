@@ -1,8 +1,8 @@
-# P1: 重要 (量化核心 + 模块完善 + ETF 轮动)
+# P1: 重要 (量化核心 + 模块完善 + ETF 轮动 + 多源因子)
 
-> 最后更新: 2026-04-04
+> 最后更新: 2026-04-05
 >
-> 20 项 | 预估工作量 ~40 天
+> 26 项 | 预估工作量 ~55 天 (含 P3-03 提升 + 新增 4 项)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -33,7 +33,7 @@
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
-| **skfolio** | >=0.5 | ✅ 2025-2026活跃 | 提供 `WalkForward` 和 `CombinatorialPurgedCV`，scikit-learn 兼容 |
+| **skfolio** | >=0.15 | ✅ 2026最新0.15.7 | 提供 `WalkForward` 和 `CombinatorialPurgedCV`，scikit-learn 兼容 |
 | **mlfinlab** | >=2.0 | ✅ | Hudson & Thames 实现，`PurgedKFold` + `ml_cross_val_score` |
 | 自研 | - | - | 也可基于 scikit-learn `BaseCrossValidator` 自行实现 |
 
@@ -115,6 +115,12 @@ class EnvController:
 1. **Rolling Walk-Forward**: 24+6+6 月窗口，每 6 月前滚重新训练
 2. **Bandit 自动决策** (可选，P2 阶段细化): 每轮迭代结束后收集 8 维指标，更新 Thompson Sampling 后验，自动选择下轮做 "因子挖掘" 还是 "模型调优"
 3. 集成入 `auto_iterate.py` 的 `iterate()` 主循环
+4. **Regime-Aware 重训练 (架构审查新增)**:
+   - 使用 Hidden Markov Model (HMM, 2-3 状态) 检测当前市场 regime (牛/熊/震荡)
+   - **regime 切换时触发紧急重训练**, 而非等待固定 6 月窗口
+   - 训练时加入 regime 标签作为特征, 使模型学会"在不同环境下使用不同因子权重"
+   - 参考: [Regime Detection for Systematic Trading (Man AHL)](https://www.man.com/maninstitute/regime-based-asset-allocation)
+   - 技术: `hmmlearn>=0.3` (scikit-learn 兼容 HMM) 或 `pomegranate>=1.1` (GPU 加速)
 
 ---
 
@@ -140,14 +146,38 @@ class EnvController:
 
 | 技术 | 版本 | 说明 |
 |------|------|------|
-| scipy.stats | >=1.12 | `ks_2samp()` KS 检验 |
-| numpy | >=1.26 | PSI 计算 |
+| scipy.stats | >=1.15 | ✅ 2026最新1.17.1 | `ks_2samp()` KS 检验 |
+| numpy | >=2.0 | ✅ 2026最新2.4.4 | PSI 计算 |
 | Alphalens-reloaded | >=0.0.14 | 因子分析可视化 (可选) |
+
+**因子拥挤度检测 (Factor Crowding, 架构审查新增):**
+
+因子拥挤 = 过多资金追逐同一因子, 导致因子溢价消失甚至反转 (如 2020 年动量因子崩溃)。监控拥挤度可提前降权。
+
+检测指标:
+- **因子持仓集中度**: 因子 Top decile 的 Herfindahl Index > 阈值 → 拥挤
+- **因子 Short Interest**: 做空端集中度异常 → 反转风险
+- **成交量异常**: 因子 Top 组合近 20 日成交量 / 历史均值 > 2x → 过热
+- **因子间相关性突增**: 正常不相关的因子 (如 Value 和 Momentum) 相关性突升至 >0.5 → 系统性风险
+
+```python
+class CrowdingDetector:
+    def detect(self, factor_name: str, date: str) -> dict:
+        return {
+            "hhi": self._herfindahl(factor_name, date),
+            "volume_ratio": self._volume_anomaly(factor_name, date),
+            "cross_factor_corr": self._cross_corr_spike(date),
+            "crowding_score": ...,  # 加权综合分 0-1
+            "action": "reduce_weight" if score > 0.7 else "normal"
+        }
+```
 
 **参考文档:**
 - [Concept Drift Alarms for Quant Signals](https://stockalpha.ai/alpha-learning/concept-drift-alarms-for-quant-signals-detecting-when-alpha-decays)
 - [Signal Decay Analysis](https://microalphas.com/signal-decay-patterns/)
 - [Alphalens 因子评估指南](https://medium.com/@er.mananjain26/separating-signal-from-noise-a-practical-guide-to-evaluating-alpha-factors-with-alphalens-b883070aab14)
+- [Factor Crowding (AQR)](https://www.aqr.com/Insights/Research/White-Papers/How-Can-a-Strategy-Still-Be-Valuable-If-Everyone-Knows-About-It)
+- [Detecting Crowded Trades (JPM Quant)](https://www.pm-research.com/content/iijpormgmt/43/1/48)
 
 ---
 
@@ -255,11 +285,12 @@ CAA 的核心修正:
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
 | **自研 CLA** | - | - | 实现论文中的 Critical Line Algorithm (Python 版 Bailey & de Prado 2013 已开源) |
-| **skfolio** | >=0.5 | ✅ 2026活跃 | 基于 scikit-learn 的组合优化库，支持 MVO/Risk Parity/HRP/Black-Litterman，内置 WalkForward CV |
+| **skfolio** | >=0.15 | ✅ 2026最新0.15.7 | 基于 scikit-learn 的组合优化库，100+模型，支持 MVO/Risk Parity/HRP/Black-Litterman，内置 WalkForward CV |
 | **cvxpy** | >=1.5 | ✅ | 凸优化求解器，skfolio 底层依赖 |
 | **Riskfolio-Lib** | >=7.2 | ✅ | 另一选择，24+ 凸风险度量 |
 | **riskparity.py** | >=0.1 | ✅ | 专用风险平价库 |
-| numpy/pandas | >=2.0 | ✅ | 协方差矩阵 + 动量计算 |
+| numpy | >=2.0 | ✅ 2026最新2.4.4 | 协方差矩阵 + 向量化运算 |
+| pandas | >=2.2 (兼容 3.0) | ✅ 2026最新3.0.2 | 动量计算 + 时间序列 |
 
 **参考文档:**
 - 📄 **Keller, Butler & Kipnis (2015)**: *Momentum and Markowitz: a Golden Combination*, SSRN (34 页，含完整 CLA R 代码) — **最核心参考**
@@ -372,8 +403,9 @@ SIZER_CAA_CASH_ASSETS=["511010.SH","511260.SH"]  # 现金类资产代码 (国债
 
 | 技术 | 版本 | 说明 |
 |------|------|------|
-| statsmodels | >=0.14 | 截面 OLS 回归 |
-| numpy/pandas | - | 因子矩阵构建 |
+| statsmodels | >=0.14 | ✅ 2026最新0.14.6 | 截面 OLS 回归 |
+| numpy | >=2.0 | ✅ | 因子矩阵构建 |
+| pandas | >=2.2 (兼容 3.0) | ✅ | 截面操作 |
 
 **参考文档:**
 - Barra CNE5 Python: [github.com/xinyue6688/Barra-CNE5](https://github.com/xinyue6688/Barra-CNE5)
@@ -433,7 +465,7 @@ def attribute_returns(portfolio_returns, factor_exposures):
 
 | 技术 | 版本 | 是否最新 | 说明 |
 |------|------|---------|------|
-| **APScheduler** | >=4.0 (alpha) / 3.10 (stable) | ✅ 2025-2026 | 轻量级进程内调度，支持 cron/interval/date 三种触发器 |
+| **APScheduler** | >=3.11 (stable) / 4.0α (实验) | ✅ 2026最新稳定3.11.2 (4.0仍为alpha,不建议生产用) | 轻量级进程内调度，支持 cron/interval/date 三种触发器 |
 
 **为什么不用 Celery:** Celery 需要 Redis/RabbitMQ 消息中间件，架构过重。APScheduler 单进程内运行，适合日级低频采集 (4 个时段/天)。
 
@@ -494,6 +526,13 @@ def attribute_returns(portfolio_returns, factor_exposures):
 
 **不做的后果:**
 系统只能做个股，无法享受全球大类资产的动量溢价和危机对冲收益。黄金 2024-2025 年涨幅 40%+、纳指 2023-2024 年涨幅 80%+，纯做 A 股散户完全错过。
+
+> **ETF 幸存者偏差警告 (架构审查新增):**
+> ETF 同样存在幸存者偏差 — 过去 10 年退市/清盘的 A 股 ETF 约 200+ 只 (尤其小规模主题 ETF)。回测时:
+> 1. ETF 候选池必须使用 **Point-in-Time** 数据: 在每个回测日期, 仅包含当时已上市且未清盘的 ETF
+> 2. 对 `日均成交额 ≥ 1 亿元` 的筛选条件也要 PIT: 用回测日期前 N 日的历史成交额
+> 3. 清盘 ETF 的最后净值通常接近面值 (而非归零), 但流动性枯竭阶段可能导致显著滑点
+> 4. 建议: 仅选规模 ≥ 10 亿元的主流宽基/行业 ETF, 规避清盘风险
 
 ---
 
@@ -805,10 +844,10 @@ ETF_ROTATION_CANARY_POOL=["513100.SH","511260.SH"]
 | 技术 | 版本 | 最新状态 | 说明 |
 |------|------|---------|------|
 | xtquant | 随 QMT | ✅ | ETF 日线数据下载 (`download_history_data`) |
-| numpy | >=2.0 | ✅ | 动量计算 / 线性回归 |
-| scipy.stats | >=1.12 | ✅ | 线性回归 R² |
-| pandas | >=2.0 | ✅ | 时间序列处理 |
-| skfolio (可选) | >=0.5 | ✅ 2026 | 若启用 CAA 权重优化 |
+| numpy | >=2.0 | ✅ 2026最新2.4.4 | 动量计算 / 线性回归 |
+| scipy.stats | >=1.15 | ✅ 2026最新1.17.1 | 线性回归 R² |
+| pandas | >=2.2 (兼容 3.0) | ✅ 2026最新3.0.2 | 时间序列处理 |
+| skfolio (可选) | >=0.15 | ✅ 2026最新0.15.7 | 若启用 CAA 权重优化 |
 
 **参考文档:**
 - 📄 Keller & Keuning (2017): *Breadth Momentum and Vigilant Asset Allocation (VAA)*, [SSRN 3002624](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3002624)
@@ -823,5 +862,611 @@ ETF_ROTATION_CANARY_POOL=["513100.SH","511260.SH"]
 - 🔗 迅投 QMT ETF 轮动复现: [xuntou.net/forum](https://www.xuntou.net/forum.php?mobile=2&mod=viewthread&tid=2429)
 - 🔗 Allocate Smartly (TAA 策略对比): [allocatesmartly.com](https://allocatesmartly.com/)
 - 🔗 跨境 ETF 完整清单 (2026): [163.com](https://www.163.com/dy/article/KKOLTIL40556A1IK.html)
+
+---
+
+### P1-21: 多源因子管线 (Qlib Alpha158 + 迅投基本面 + 自动筛选)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | 新增 `src/factor/alpha158.py`, `src/factor/xt_factor_loader.py`, `src/factor/auto_screen.py`, 修改 `src/factor/factor_pool.py` |
+| **工作量** | 4-5 天 |
+
+**为什么要做:**
+
+当前 `src/factor/factor_calc.py` 仅有 **11 个手工技术因子** (动量/波动率/RSI/MACD 等)。这远远不够:
+- 微软 Qlib Alpha158 有 **158 个**经过 LGB/Transformer 广泛验证的量价因子
+- 因子数量少 → LGB 欠拟合 → 选股 IC 低 → 策略收益差
+- 迅投因子看板有约 100-200 个**基本面因子** (财务/质量/成长/每股)，是量价因子的重要补充，但尚未接入系统
+- 缺少自动化因子筛选管线: 目前 `factor_analysis.py` 只有单因子 IC/ICIR 计算，没有批量筛选、衰减检测、相关性去重
+
+**因子库来源对比分析:**
+
+| 来源 | 因子数 | 类型 | 获取方式 | 免费性 | IC 基准 | 适合角色 |
+|------|--------|------|---------|--------|---------|---------|
+| **Qlib Alpha158** (微软) | 158 | 量价二次加工 (6大类) | OHLCV 自算, 纯 pandas/numpy | 完全免费 | IC 0.02-0.04 (CSI300/500 公开验证) | **主力量价因子** |
+| **迅投因子看板** | ~100-200 | 基本面 (8大类: 成长/质量/每股/情绪/风险/动量/基础/技术) | `xtdata.download_metatable_data()`, 本地 feather | 内测免费 (正式收费待定) | 无公开基准 | **基本面补充** |
+| **聚宽 Alpha101** | 101 | WorldQuant 量价 | `jqdatasdk` API, 限频 30次/秒 | 试用版仅前15-3月数据 | 社区测评 IC ~0.02 | 可选验证 |
+| **聚宽 Alpha191** | 191 | 国泰君安短周期量价 | `jqdatasdk` API, 计算慢易超时 | 同上 | 社区测评 IC ~0.01-0.03 | 可选验证 |
+| **自研 (当前)** | 11 | 手工技术指标 | 已有 `factor_calc.py` | — | 未测 | 保留合并 |
+| **FactorEngine (2026 SOTA)** | 自动挖掘 | LLM 引导代码因子 | 已在 P2-18 覆盖 | — | SOTA | 远期增强 |
+
+**推荐结论:** 聚宽和迅投都不够单独依赖。最优策略是 **"Qlib Alpha158 自算 + 迅投基本面 + 自动筛选"**, 聚宽作为可选验证源。
+
+**业界最佳实践:**
+
+- **Qlib Alpha158** (微软, 39.8k Star): A 股量化标杆因子集，6 大类 158 个因子，经过 LightGBM, XGBoost, CatBoost, Transformer, Localformer 等 10+ 模型广泛验证。CSI300 上 IC 0.02-0.04, Sharpe 0.37-0.66。因子纯基于 OHLCV 数据计算，无外部 API 依赖
+- **因子预处理流水线 (标准三步)**: 去极值(MAD) → 行业/市值中性化(OLS) → Z-score 标准化。中性化后因子年化收益提升 ~3%
+- **自动筛选标准**: IC > 0.03 且 ICIR > 0.3 为有效因子; IC 正比例 > 55% 为稳定因子; Pearson 相关性 > 0.7 的因子组保留 IC 最高者
+- **因子衰减检测**: 滚动 60 日 IC 的半衰期, 若半衰期 < 20 日则标记为衰减因子, 降低权重或剔除
+- **FactorEngine (arXiv:2603.16365, 2026.03)**: LLM 引导的程序级因子挖掘，因子表达为可执行代码，IC/ICIR 达到 SOTA。已在 P2-18 (RD-Agent) 中部分覆盖
+
+**三层因子架构:**
+
+```
+Layer 1: Qlib Alpha158 自算 (OHLCV 量价因子, 158个, 无外部依赖)
+    ↓ calc_alpha158(daily_df) → 158 列
+Layer 2: 迅投因子看板 (基本面/财务/质量/成长, ~100个, xtdata API)
+    ↓ load_xt_factors(stock_list, factor_categories) → ~100 列
+Layer 3: (可选) 聚宽补充 (Alpha101/191 验证, jqdatasdk API)
+    ↓ load_jq_factors(stock_list, alpha_ids) → 验证用
+         ↓
+统一注册到 FactorPool (factor_name, source, category, ic_mean, ic_ir)
+         ↓
+自动预处理: MAD去极值 → 行业/市值中性化 → Z-score
+         ↓
+自动筛选: IC>0.03 & ICIR>0.3 & 衰减检测 & 相关性去重(<0.7)
+         ↓
+输出: 精选因子矩阵 → LGB/XGB/CatBoost 训练
+```
+
+**技术选型:**
+
+| 技术 | 版本 | 是否最新 | 说明 |
+|------|------|---------|------|
+| pandas | >=2.2 (兼容 3.0) | ✅ 2026最新3.0.2 | Alpha158 因子计算, 预处理 |
+| numpy | >=2.0 | ✅ 2026最新2.4.4 | 向量化运算 |
+| scipy | >=1.15 | ✅ 2026最新1.17.1 | 相关性矩阵, 统计检验 |
+| scikit-learn | >=1.7 | ✅ 2026最新1.8.0 | OLS 中性化 |
+| xtquant (xtdata) | 已集成 | ✅ | 迅投因子数据下载 |
+| jqdatasdk | >=1.9 | ✅ | 聚宽因子调用 (可选) |
+| jqfactor_analyzer | >=2.4 | ✅ 2025.02 | 聚宽因子分析工具 (可选) |
+
+**参考文档:**
+- Qlib Alpha158 数据集: [github.com/microsoft/qlib (Alpha158 handler)](https://github.com/microsoft/qlib/blob/main/qlib/contrib/data/handler.py)
+- Qlib Alpha158 详解: [158个量化因子如何提升策略收益](https://blog.gitcode.com/5d9a4f79559912ac9f7d1b83f61b59a4.html)
+- Qlib 模型基准 (IC/Sharpe 对比): [github.com/microsoft/qlib/blob/main/examples/benchmarks/README.md](https://github.com/microsoft/qlib/blob/main/examples/benchmarks/README.md)
+- 聚宽 Alpha101 因子库: [joinquant.com/data/dict/alpha101](https://www.joinquant.com/data/dict/alpha101)
+- 聚宽 Alpha191 因子库: [joinquant.com/data/dict/alpha191](https://joinquant.com/data/dict/alpha191)
+- 聚宽因子分析工具: [github.com/JoinQuant/jqfactor_analyzer](https://github.com/JoinQuant/jqfactor_analyzer)
+- 迅投因子数据文档: [dict.thinktrader.net/dictionary/xuntou_factor.html](https://dict.thinktrader.net/dictionary/xuntou_factor.html)
+- 迅投因子获取 API: [dict.thinktrader.net/nativeApi/xtdata.html](http://dict.thinktrader.net/nativeApi/xtdata.html)
+- FactorEngine (2026 SOTA): [arXiv:2603.16365](https://arxiv.org/abs/2603.16365) — LLM 引导的程序级因子挖掘
+- 因子预处理最佳实践: [聚宽因子预处理指南](https://iris.findtruman.io/ai/tool/ai-quantitative-trading/e/joinquant/factor-data-preprocessing)
+- LGB+158因子 A股十年实证: [年化24%, 回撤10%](http://www.360doc.com/content/23/1012/15/1099933775_1099933775.shtml)
+- 多因子选股工程化 Pipeline: [github.com/Parsnip77/Multi-factor-Model-for-Stock-Selection](https://github.com/Parsnip77/Multi-factor-Model-for-Stock-Selection)
+- 因子检验深度解析: [量化投资进阶：因子检验](https://cloud.baidu.com/article/3790846)
+
+**落地方案:**
+
+**子任务 1: Alpha158 因子计算器** (1.5 天)
+
+参考 Qlib `Alpha158` handler 实现 6 大类 158 个量价因子:
+
+| 类别 | 因子数 | 代表因子 | 说明 |
+|------|--------|---------|------|
+| KBAR (K线形态) | ~16 | `(close-open)/open`, `(high-low)/close` | 日内价格结构 |
+| PRICE (价格趋势) | ~18 | `close/close_5d`, `close/close_20d` | 多周期价格动量 |
+| VOLUME (成交量) | ~18 | `vol/vol_5d`, `vol_5d/vol_20d` | 量能变化 |
+| STD (波动率) | ~6 | `std_5d`, `std_20d`, `std_60d` | 多周期波动 |
+| RSRS (阻力支撑) | ~6 | `high_max_5d/close`, `low_min_5d/close` | 价格极值 |
+| CORR/COV/BETA | ~94 | `corr(close, vol, 5d)`, `beta(close, index, 20d)` | 量价相关性、市场 beta |
+
+```python
+class Alpha158Calculator:
+    """Qlib Alpha158 因子计算器 (纯 pandas/numpy, 不依赖 Qlib 框架)"""
+
+    WINDOWS = [5, 10, 20, 30, 60]
+
+    def calc(self, df: pd.DataFrame) -> pd.DataFrame:
+        """输入: 单股 OHLCV 日线, 输出: 附加 158 个因子列"""
+        result = df.copy()
+        c, o, h, l, v = df['close'], df['open'], df['high'], df['low'], df['volume']
+
+        # KBAR 因子
+        result['KBAR_open'] = (c - o) / o
+        result['KBAR_high'] = (h - l) / o
+        result['KBAR_close'] = (c - o) / (h - l + 1e-12)
+        result['KBAR_upper'] = (h - np.maximum(o, c)) / (h - l + 1e-12)
+        result['KBAR_lower'] = (np.minimum(o, c) - l) / (h - l + 1e-12)
+
+        for w in self.WINDOWS:
+            # PRICE 因子: 多周期动量
+            result[f'PRICE_mom_{w}'] = c / c.shift(w) - 1
+            result[f'PRICE_mean_{w}'] = c / c.rolling(w).mean()
+
+            # VOLUME 因子
+            result[f'VOL_mean_{w}'] = v.rolling(w).mean() / (v.rolling(w * 4).mean() + 1e-12)
+            result[f'VOL_std_{w}'] = v.rolling(w).std() / (v.rolling(w).mean() + 1e-12)
+
+            # STD 因子
+            ret = c.pct_change()
+            result[f'STD_{w}'] = ret.rolling(w).std()
+
+            # RSRS 因子
+            result[f'RSRS_high_{w}'] = h.rolling(w).max() / c
+            result[f'RSRS_low_{w}'] = l.rolling(w).min() / c
+
+            # CORR 因子: 量价相关性
+            result[f'CORR_cv_{w}'] = c.rolling(w).corr(v)
+            result[f'CORR_hv_{w}'] = h.rolling(w).corr(v)
+
+            # BETA 因子: 量变率 vs 价变率
+            result[f'COV_cv_{w}'] = c.pct_change().rolling(w).cov(
+                v.pct_change()
+            )
+
+        return result
+```
+
+**子任务 2: 迅投因子接入** (1 天)
+
+```python
+class XtFactorLoader:
+    """迅投因子看板数据加载器"""
+
+    FACTOR_CATEGORIES = [
+        'factor_growth',           # 成长类
+        'factor_base_derivative',  # 基础科目及衍生
+        'factor_metrics',          # 每股指标
+        'factor_quality',          # 质量类
+        'factor_momentum',         # 动量类
+        'factor_risk',             # 风险/风格类
+        'factor_sentiment',        # 情绪类
+        'factor_technical',        # 技术指标
+    ]
+
+    def __init__(self):
+        from xtquant import xtdata
+        self.xtdata = xtdata
+
+    def download_all(self):
+        """下载全部因子元数据和数据"""
+        self.xtdata.download_metatable_data()
+        metainfo = self.xtdata.get_metatable_list()
+        logger.info(f"迅投因子看板共 {len(metainfo)} 个因子")
+        return metainfo
+
+    def load_factor(self, stock_list: list[str], factor_category: str) -> pd.DataFrame:
+        """加载指定类别的因子数据"""
+        import os
+        datadir = os.path.join(self.xtdata.data_dir, factor_category)
+        frames = []
+        for factor_file in os.listdir(datadir):
+            if factor_file.endswith('_Xdat2'):
+                data_path = os.path.join(datadir, factor_file, 'data.fe')
+                if os.path.exists(data_path):
+                    df = pd.read_feather(data_path)
+                    frames.append(df)
+        if frames:
+            return pd.concat(frames, axis=1)
+        return pd.DataFrame()
+
+    def register_to_pool(self, pool: FactorPool, metainfo: dict):
+        """将迅投因子注册到 FactorPool"""
+        for en_name, zh_name in metainfo.items():
+            pool.register(
+                factor_name=en_name,
+                category=self._guess_category(en_name),
+                description=zh_name,
+                data_source='xuntou',
+            )
+```
+
+**子任务 3: 自动筛选管线** (1.5 天)
+
+```python
+class AutoFactorScreen:
+    """自动因子筛选: IC阈值 + ICIR + 衰减检测 + 相关性去重"""
+
+    def __init__(
+        self,
+        ic_threshold: float = 0.03,
+        icir_threshold: float = 0.3,
+        ic_positive_ratio: float = 0.55,
+        corr_threshold: float = 0.7,
+        decay_halflife_min: int = 20,
+    ):
+        self.ic_threshold = ic_threshold
+        self.icir_threshold = icir_threshold
+        self.ic_positive_ratio = ic_positive_ratio
+        self.corr_threshold = corr_threshold
+        self.decay_halflife_min = decay_halflife_min
+
+    def screen(
+        self,
+        factor_matrix: pd.DataFrame,
+        forward_returns: pd.Series,
+    ) -> list[str]:
+        """
+        输入: 截面因子矩阵 (index=日期x股票, columns=因子名)
+        输出: 通过筛选的因子名列表
+        """
+        # Step 1: IC/ICIR 阈值筛选
+        ic_results = {}
+        for col in factor_matrix.columns:
+            ic_series = calc_ic_series(factor_matrix, forward_returns, col)
+            ic_mean = abs(ic_series.mean())
+            icir = abs(calc_icir(ic_series))
+            pos_ratio = (ic_series > 0).mean() if len(ic_series) > 0 else 0
+
+            if (ic_mean >= self.ic_threshold
+                and icir >= self.icir_threshold
+                and pos_ratio >= self.ic_positive_ratio):
+                ic_results[col] = {
+                    'ic_mean': ic_mean, 'icir': icir,
+                    'pos_ratio': pos_ratio, 'ic_series': ic_series
+                }
+
+        passed = list(ic_results.keys())
+        logger.info(f"IC/ICIR 筛选: {len(factor_matrix.columns)} → {len(passed)}")
+
+        # Step 2: 因子衰减检测 (滚动 IC 半衰期)
+        non_decayed = []
+        for col in passed:
+            rolling_ic = ic_results[col]['ic_series'].rolling(60).mean()
+            if self._halflife(rolling_ic) >= self.decay_halflife_min:
+                non_decayed.append(col)
+        logger.info(f"衰减检测: {len(passed)} → {len(non_decayed)}")
+
+        # Step 3: 相关性去重 (Pearson > 0.7 保留 IC 高者)
+        if len(non_decayed) < 2:
+            return non_decayed
+
+        corr_matrix = factor_matrix[non_decayed].corr()
+        to_drop = set()
+        for i in range(len(non_decayed)):
+            if non_decayed[i] in to_drop:
+                continue
+            for j in range(i + 1, len(non_decayed)):
+                if non_decayed[j] in to_drop:
+                    continue
+                if abs(corr_matrix.iloc[i, j]) > self.corr_threshold:
+                    ic_i = ic_results[non_decayed[i]]['ic_mean']
+                    ic_j = ic_results[non_decayed[j]]['ic_mean']
+                    drop = non_decayed[j] if ic_i >= ic_j else non_decayed[i]
+                    to_drop.add(drop)
+
+        final = [f for f in non_decayed if f not in to_drop]
+        logger.info(f"相关性去重: {len(non_decayed)} → {len(final)}")
+        return final
+
+    @staticmethod
+    def _halflife(series: pd.Series) -> float:
+        """计算 IC 序列半衰期 (OLS 拟合指数衰减)"""
+        valid = series.dropna()
+        if len(valid) < 10:
+            return float('inf')
+        y = np.log(np.abs(valid) + 1e-12)
+        X = np.arange(len(y)).reshape(-1, 1)
+        from sklearn.linear_model import LinearRegression
+        model = LinearRegression().fit(X, y)
+        lam = model.coef_[0]
+        if lam >= 0:
+            return float('inf')
+        return -np.log(2) / lam
+```
+
+**子任务 4 (可选): 聚宽因子接入** (1 天)
+
+```python
+class JqFactorLoader:
+    """聚宽因子加载器 (可选验证源)"""
+
+    def __init__(self, username: str, password: str):
+        import jqdatasdk as jq
+        jq.auth(username, password)
+        self.jq = jq
+
+    def load_alpha101(self, date: str, stock_list: list[str], alpha_ids: list[int]) -> pd.DataFrame:
+        """加载指定 Alpha101 因子"""
+        from jqlib.alpha101 import alpha_001  # noqa: 动态导入
+        results = {}
+        for aid in alpha_ids:
+            fn = getattr(__import__(f'jqlib.alpha101', fromlist=[f'alpha_{aid:03d}']), f'alpha_{aid:03d}')
+            results[f'alpha101_{aid:03d}'] = fn(date, stock_list)
+        return pd.DataFrame(results)
+```
+
+**.env 新增参数:**
+```env
+# ===== 多源因子管线 (P1-21) =====
+FACTOR_ALPHA158_ENABLED=true               # 启用 Alpha158 自算因子
+FACTOR_ALPHA158_WINDOWS=5,10,20,30,60      # Alpha158 滚动窗口列表
+FACTOR_XT_ENABLED=true                     # 启用迅投因子看板
+FACTOR_XT_CATEGORIES=factor_growth,factor_base_derivative,factor_metrics,factor_quality,factor_momentum,factor_risk
+FACTOR_JQ_ENABLED=false                    # 启用聚宽因子 (可选, 需账号)
+FACTOR_JQ_USERNAME=                        # 聚宽账号
+FACTOR_JQ_PASSWORD=                        # 聚宽密码
+FACTOR_SCREEN_IC_THRESHOLD=0.03            # IC 筛选阈值
+FACTOR_SCREEN_ICIR_THRESHOLD=0.3           # ICIR 筛选阈值
+FACTOR_SCREEN_IC_POSITIVE_RATIO=0.55       # IC 正比例阈值
+FACTOR_SCREEN_CORR_THRESHOLD=0.7           # 相关性去重阈值
+FACTOR_SCREEN_DECAY_HALFLIFE_MIN=20        # 因子衰减半衰期最低天数
+```
+
+---
+
+### P1-22: Deflated Sharpe Ratio / 多重检验修正
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | backtest |
+| **文件** | `src/backtest/performance.py` 扩展 |
+| **工作量** | 1.5 天 |
+
+**为什么要做:**
+当系统积累了 10+ 策略 (当前已有 10 个规则策略 + ML 策略), 每个都跑回测选 "最好的", 本质上就是多重假设检验。即使策略全部随机, 10 个里也有 ~40% 概率出现 Sharpe > 1。不做修正 = "选到的好策略"可能只是运气。
+
+**业界最佳实践:**
+- **Deflated Sharpe Ratio (DSR)**: Bailey & López de Prado (2014) 提出, 根据尝试次数和策略空间调整 Sharpe
+- **Probability of Backtest Overfitting (PBO)**: CSCV (Combinatorially Symmetric Cross-Validation) 方法
+- **Bonferroni / Holm-Sidak 修正**: 经典统计多重检验修正
+
+**落地方案:**
+```python
+def deflated_sharpe_ratio(
+    observed_sharpe: float,
+    num_trials: int,
+    variance_of_sharpe_estimates: float,
+    skewness: float,
+    kurtosis: float,
+    T: int  # 回测天数
+) -> float:
+    """
+    返回 p-value: 在给定尝试次数下, 观察到的 Sharpe 有多大概率仅源于运气。
+    p < 0.05 → 策略大概率有真实 alpha (而非过拟合)。
+    """
+    # E[max(SR)] under null, from Bailey & López de Prado (2014)
+    expected_max_sr = expected_max_sharpe(num_trials, variance_of_sharpe_estimates)
+    # Adjust for non-normal returns
+    adjusted_sr = observed_sharpe * (1 - skewness * observed_sharpe / (4 * T)
+                                      + (kurtosis - 3) * observed_sharpe**2 / (24 * T))
+    return 1 - norm.cdf((adjusted_sr - expected_max_sr) / (1 / sqrt(T)))
+```
+
+**参考文档:**
+- Bailey & López de Prado, "The Deflated Sharpe Ratio", *Journal of Portfolio Management* 2014
+- [Advances in Financial Machine Learning, Ch.11 (Backtesting)](https://www.wiley.com/en-us/Advances+in+Financial+Machine+Learning-p-9781119482086)
+- [PBO: Probability of Backtest Overfitting](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253)
+
+---
+
+### P1-23: 轻量级事件总线 (从 P3-03 提升)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | common |
+| **文件** | 新增 `src/common/event_bus.py` |
+| **工作量** | 3 天 |
+| **原优先级** | P3-03, 因审查发现其为多模块协作的基础设施, 提升至 P1 |
+
+**为什么提升到 P1:**
+当前模块间通过函数调用串联 (采集→清洗→情绪→策略→交易)。P0 阶段将新增 4 个数据采集器、P1 阶段新增多个监控/优化模块, 如果不引入事件总线, 每次新增模块都要修改调用方代码, 违反开闭原则。事件总线是后续"数据采集完成后同时触发清洗+个股雷达+风险预警"等多播场景的前提。
+
+**技术选型:**
+
+| 技术 | 版本 | 是否最新 | 说明 |
+|------|------|---------|------|
+| **blinker** | >=1.9 | ✅ | Flask 内部使用的信号库, 轻量 |
+| **PyPubSub** | >=4.0.7 | ✅ 2025.12 | 话题式发布订阅 |
+| asyncio 自研 | Python 内置 | ✅ | 支持异步处理器 |
+
+**落地方案:**
+```python
+from blinker import Namespace
+
+events = Namespace()
+
+# 定义事件
+data_collected = events.signal("data_collected")
+data_cleaned = events.signal("data_cleaned")
+factor_computed = events.signal("factor_computed")
+model_predicted = events.signal("model_predicted")
+signal_generated = events.signal("signal_generated")
+
+# 订阅 (解耦: 采集模块不知道谁在监听)
+@data_collected.connect
+def on_data_collected(sender, **kwargs):
+    # 触发清洗
+    cleaner.process(kwargs["data"])
+    # 触发情绪更新
+    sentiment_engine.update(kwargs["data"])
+```
+
+**参考文档:**
+- Blinker: [blinker GitHub](https://github.com/pallets-eco/blinker)
+- [Event Bus with asyncio in Python (2026)](https://oneuptime.com/blog/post/2026-01-25-event-bus-asyncio-python/view)
+
+---
+
+### P1-24: 数据质量监控 + Schema 校验
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | data / monitoring |
+| **文件** | 新增 `src/data/quality.py`, `src/data/schemas.py` |
+| **工作量** | 2 天 |
+
+**为什么要做:**
+"Garbage in, garbage out" — 数据质量直接决定模型和策略的有效性。当前系统无任何数据校验: 如果 akshare 返回缺失字段、类型错误或异常值 (如价格为负), 会静默流入 ML 训练, 导致不可预期的错误。
+
+**业界最佳实践:**
+- **Great Expectations / Pandera**: 数据质量框架, 定义 "期望" 并自动验证
+- **Pandera** (推荐, 更轻量): 基于 pandas 的 schema 校验, 与 Pydantic 风格类似
+- **分层校验**:
+  1. **Schema 层**: 字段类型、非空、唯一约束
+  2. **业务规则层**: `open > 0`, `high >= low`, `volume >= 0`, `date 连续`
+  3. **统计层**: 日涨幅 |pct_change| < 22% (科创板), Z-score |z| < 10 → 异常值
+
+**技术选型:**
+
+| 技术 | 版本 | 说明 |
+|------|------|------|
+| **Pandera** | >=0.23 (2026 最新) | 轻量 DataFrame schema 校验 |
+| pandas | >=2.2 | ✅ |
+
+**落地方案:**
+```python
+import pandera as pa
+from pandera import Column, Check
+
+stock_daily_schema = pa.DataFrameSchema({
+    "code": Column(str, Check.str_matches(r"^\d{6}\.(SH|SZ|BJ)$")),
+    "date": Column("datetime64[ns]", nullable=False),
+    "open": Column(float, Check.gt(0)),
+    "high": Column(float, Check.gt(0)),
+    "low": Column(float, Check.gt(0)),
+    "close": Column(float, Check.gt(0)),
+    "volume": Column(float, Check.ge(0)),
+}, checks=[
+    Check(lambda df: (df["high"] >= df["low"]).all(), error="high < low detected"),
+    Check(lambda df: (df["high"] >= df["open"]).all(), error="high < open detected"),
+])
+```
+
+**参考文档:**
+- [Pandera](https://pandera.readthedocs.io/) — DataFrame schema validation
+- [Great Expectations](https://docs.greatexpectations.io/) — 企业级数据质量
+- [Data Quality for ML (Google)](https://developers.google.com/machine-learning/data-prep/construct/collect/data-size-quality)
+
+---
+
+### P1-25: 系统级容错 & 降级
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | common |
+| **文件** | `src/common/resilience.py` |
+| **工作量** | 2 天 |
+
+**为什么要做:**
+量化系统在实盘中面临多种故障源: QMT 断连、数据源超时、数据库宕机、LLM API 429。当前没有统一的容错机制, 任何一个环节故障都可能导致整个交易管道中断, 错过交易窗口或产生不一致的持仓状态。
+
+**业界最佳实践:**
+- **Circuit Breaker 模式** (熔断): 连续 N 次调用失败 → 自动熔断, 快速失败而非阻塞
+- **Retry with Exponential Backoff**: 已部分实现 (SmartHttpClient), 需要推广到所有外部调用
+- **降级策略**: LLM 不可用 → 降级到规则清洗; QMT 断连 → 停止下单但继续监控
+- **Tenacity**: Python 重试库, 比自研更健壮
+
+**落地方案:**
+```python
+from tenacity import retry, stop_after_attempt, wait_exponential, CircuitBreaker
+
+breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=60)
+
+@breaker
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=30))
+def call_external_api(url: str):
+    ...
+
+class DegradationManager:
+    """统一降级管理"""
+    LEVELS = {
+        "normal": "全功能运行",
+        "degraded_llm": "LLM 不可用, 降级到规则清洗",
+        "degraded_data": "数据源异常, 使用缓存数据",
+        "degraded_trade": "QMT 断连, 停止下单, 继续监控",
+        "emergency": "全部暂停, 仅告警",
+    }
+```
+
+**参考文档:**
+- [Tenacity](https://tenacity.readthedocs.io/) — Python 重试库
+- [Circuit Breaker Pattern (Martin Fowler)](https://martinfowler.com/bliki/CircuitBreaker.html)
+- [Resilience4j Design Patterns](https://resilience4j.readme.io/docs/circuitbreaker)
+
+---
+
+### P1-26: 可观测性 (结构化日志 + 告警)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | common / monitoring |
+| **文件** | `src/common/logging_config.py`, `src/monitoring/alerter.py` |
+| **工作量** | 2 天 |
+
+**为什么要做:**
+系统有 20+ 模块, 实盘环境下出了问题需要快速定位。当前使用基础 `logging`, 没有结构化字段, 无法按 strategy/factor/trade_id 过滤, 无法自动告警。
+
+**业界最佳实践:**
+- **structlog**: 结构化日志库, 每条日志自动携带上下文 (strategy_name, factor, stock_code)
+- **JSON 格式**: 便于 ELK/Grafana Loki 等后端解析
+- **分级告警**: WARNING/ERROR/CRITICAL → 飞书机器人 (复用已有 OpenClaw 飞书 Bot)
+- **Sentry**: 异常自动收集 (Python SDK, 免费 5000 events/月)
+
+**落地方案:**
+```python
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+)
+
+log = structlog.get_logger()
+log.info("signal_generated", strategy="lgb_multi_factor", stock="600519.SH", score=0.85)
+# → {"timestamp":"2026-04-05T10:30:00","level":"info","event":"signal_generated","strategy":"lgb_multi_factor","stock":"600519.SH","score":0.85}
+```
+
+**告警集成 (飞书机器人, 复用 OpenClaw 已有 Bot):**
+```python
+import base64, hashlib, hmac, time, json, requests
+
+class FeishuAlerter:
+    """飞书自定义机器人告警 (HMAC-SHA256 签名校验)"""
+    def __init__(self, webhook_url: str, secret: str):
+        self.webhook_url = webhook_url  # https://open.feishu.cn/open-apis/bot/v2/hook/xxx
+        self.secret = secret
+
+    def _sign(self) -> tuple[str, str]:
+        timestamp = str(int(time.time()))
+        key = f"{timestamp}\n{self.secret}".encode()
+        sign = base64.b64encode(hmac.new(key, b"", hashlib.sha256).digest()).decode()
+        return timestamp, sign
+
+    def send(self, level: str, title: str, details: dict):
+        timestamp, sign = self._sign()
+        color = {"CRITICAL": "red", "ERROR": "orange", "WARNING": "yellow"}.get(level, "blue")
+        card = {
+            "header": {"template": color, "title": {"tag": "plain_text", "content": f"[{level}] {title}"}},
+            "elements": [{"tag": "div", "text": {
+                "tag": "lark_md",
+                "content": "\n".join(f"**{k}**: {v}" for k, v in details.items()),
+            }}],
+        }
+        payload = {"timestamp": timestamp, "sign": sign, "msg_type": "interactive", "card": json.dumps(card)}
+        requests.post(self.webhook_url, json=payload, timeout=5)
+
+class AlertRouter:
+    """根据级别路由告警"""
+    def __init__(self, feishu: FeishuAlerter):
+        self.feishu = feishu
+
+    def route(self, level: str, title: str, details: dict | None = None):
+        if level in ("WARNING", "ERROR", "CRITICAL"):
+            self.feishu.send(level, title, details or {})
+        log.log(level.lower(), title, **(details or {}))
+```
+
+**参考文档:**
+- [structlog](https://www.structlog.org/) — 结构化日志
+- [Sentry for Python](https://docs.sentry.io/platforms/python/)
+- [飞书自定义机器人 Webhook](https://open.feishu.cn/document/common-capabilities/message-card/getting-started/send-message-cards-with-a-custom-bot)
+- [飞书消息卡片搭建工具](https://open.feishu.cn/tool/cardbuilder)
 
 ---
