@@ -185,6 +185,53 @@ class SlippageModel:
 - 差分: 捕捉变化速度
 - 分位数分类 (恐慌/正常/过热): LGB 对分类特征更友好
 
+**P2-13 蒸馏模型 → news_sentiment_score 集成路径:**
+
+P2-19~P2-21 蒸馏模型训练完成后, `feature_builder.py` 需要对接本地推理:
+
+```
+news_sentiment_score 数据来源降级链:
+
+TinyFinBERT / FinBERT2 本地 ONNX (Phase 2-3 目标态, 95% 流量)
+    │ 置信度 < 0.7 → 飞轮队列 + API 兜底
+    ▼
+DeepSeek V3 API (低置信样本 + Phase 1 全量)
+    │ 失败/超时
+    ▼
+Qwen3.5-Plus API (备选)
+    │ 失败
+    ▼
+RuleCleaner 关键词匹配 → score = ±0.3 (粗粒度)
+```
+
+`feature_builder.py` 中对接蒸馏模型输出:
+
+```python
+def build_news_sentiment_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    """构建新闻情绪特征, 自动选择本地蒸馏或 API"""
+    if settings.distill_enabled:
+        from dataclean.cleaners.distilled_cleaner import DistilledCleaner
+        cleaner = DistilledCleaner()
+        df["news_mood"] = df["raw_news"].apply(
+            lambda x: cleaner.clean(x).cleaned_data["news_sentiment_score"]
+        )
+    else:
+        df["news_mood"] = df["news_sentiment_score"]  # API 清洗结果
+
+    df["news_mood_ma5"] = df["news_mood"].rolling(5).mean()
+    df["news_mood_zscore"] = (
+        (df["news_mood"] - df["news_mood"].rolling(20).mean())
+        / df["news_mood"].rolling(20).std()
+    )
+    df["news_mood_diff"] = df["news_mood"].diff()
+    return df
+```
+
+**情绪因子效果评估 (与 doc/11 联动):**
+- 新增 IC/ICIR 日监控: `news_mood` 与 `forward_return_t+1` 的 20 日滚动相关性
+- 自动降权: 连续 30 天 IC < 0.01 → `SENTIMENT_W_NEWS` 降至 0
+- 消融实验: 每月对比有/无新闻情绪因子的 Sharpe 差异
+
 **P2-14:** 用 LGB 的 `feature_importance` 自动学习 6 维权重，替代 `.env` 手动配置。
 
 ---

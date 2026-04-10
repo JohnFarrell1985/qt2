@@ -83,7 +83,7 @@ import json, logging
 logger = logging.getLogger(__name__)
 
 class LLMClient:
-    """DeepSeek / Qwen 统一客户端 — 全平台共享"""
+    """DeepSeek (主) / Qwen (备) 统一客户端 — 全平台共享, 自动降级"""
     
     def __init__(self, settings):
         self.providers = {}
@@ -138,40 +138,129 @@ class LLMClient:
         raise AllProvidersFailedError("所有 LLM 提供商均失败")
 ```
 
-### LLM 选型与成本
+### LLM 选型策略: 三层模型分工
 
-| 模型 | 输入价格 | 输出价格 | JSON 模式 | 推荐场景 |
-|------|---------|---------|----------|---------|
-| **DeepSeek V3** | ¥2/百万 token | ¥8/百万 token | 支持 `json_object` | **首选: 最便宜** |
-| Qwen-Turbo | ¥0.3/百万 token | ¥0.6/百万 token | 支持 | 备选: 阿里云生态 |
-| Qwen-Max | ¥2/百万 token | ¥6/百万 token | 支持 | 复杂分析 |
-| Qwen3.5-Omni | <¥0.8/百万 token | — | 支持 | 最新最便宜 |
+> **机构实践**: 头部量化机构 (九坤/幻方/Two Sigma) 均不依赖云端 LLM API 做生产推理。
+> 生产级情绪分类偏好 encoder 模型 (FinBERT/ModernBERT), 而非 decoder 模型 (Qwen-Max)。
+> LLM 的定位是**标注教师**, 而非生产推理引擎。最终目标: 本地推理 95% + API 兜底 5%。
 
-**每日成本估算**:
+**三阶段演进路线**:
+
+```
+Phase 1 (当前)              Phase 2 (P2 阶段)           Phase 3 (P2-P3)
+───────────────            ──────────────────          ──────────────────
+DeepSeek API (主)          双教师标注                    全本地推理
+Qwen API (备)       →      蒸馏 TinyFinBERT     →      数据飞轮
+规则清洗 (兜底)             ONNX 本地部署                API 仅兜底 5%
+```
+
+**模型选型对比 (2026 年 4 月最新价格)**:
+
+| 层级 | 模型 | 用途 | 输入价格 | 输出价格 | JSON 模式 |
+|------|------|------|---------|---------|----------|
+| **Phase 1: 主力 API** | **DeepSeek V3** | 情绪打分 + 事件抽取 + 蒸馏标注 | ¥1/百万 token | ¥2/百万 token | 支持 `json_object` |
+| Phase 1: 备选 API | Qwen3.5-Plus (百炼) | DeepSeek 不可用时降级 | ¥2/百万 token | ¥12/百万 token | 支持 |
+| Phase 1: 复杂任务 | DeepSeek R1 | 研报精读, 长逻辑链, 蒸馏 Judge | ¥4/百万 token | ¥16/百万 token | 支持 |
+| **Phase 2-3: 本地推理** | **TinyFinBERT 14.5M (ONNX)** | 情绪分类 (-1/0/+1), 95% 流量 | 0 元 | 0 元 | — |
+| Phase 2-3: 本地推理 | FinBERT2-Base 110M (ONNX) | 高精度情绪 + 事件抽取 | 0 元 | 0 元 | — |
+
+**为什么 DeepSeek 是主力而非百炼 Qwen**:
+- DeepSeek V3 价格仅 Qwen-Plus 的 **1/6** (输出 ¥2 vs ¥12)
+- DeepSeek 在逻辑推理和低幻觉方面更强, 适合金融结构化抽取
+- Qwen 的优势 (函数调用、长上下文) 在情绪分析场景中不是刚需
+- 两者均兼容 OpenAI SDK, 切换零成本
+
+**每日成本估算 (Phase 1)**:
 
 ```
 每次采集: ~5000 字原始文本 ≈ 3000 tokens
 每日 4 次采集 = 12000 input tokens + 3000 output tokens
-DeepSeek V3 费用 = 12000/1M × ¥2 + 3000/1M × ¥8 = ¥0.048/天
-每月费用 ≈ ¥1.5 (基本免费)
+DeepSeek V3 费用 = 12000/1M × ¥1 + 3000/1M × ¥2 = ¥0.018/天
+每月费用 ≈ ¥0.5 (基本免费)
 ```
 
 ### 降级策略
 
 ```
-LLM 清洗失败时的降级路径 (统一管理):
+Phase 1 (API 清洗) 的降级路径:
 
 DeepSeek V3 (首选)
-    │ 失败/超时
+    │ 失败/超时/限流
     ▼
-Qwen-Turbo (备选)
+Qwen3.5-Plus (备选, 百炼)
     │ 失败/超时
     ▼
 RuleCleaner (规则清洗 — cleaners/rule_cleaner.py)
     │ 关键词匹配: 情绪正/负/中性 + 股票代码正则
     ▼
 标记 is_fallback=True, status="partial"
+
+
+Phase 2-3 (本地推理 + API 兜底) 的降级路径:
+
+TinyFinBERT / FinBERT2 本地 ONNX (95% 流量)
+    │ 置信度 < 0.7 → 进入飞轮队列
+    ▼
+DeepSeek V3 API (低置信样本兜底)
+    │ 失败
+    ▼
+Qwen3.5-Plus API (备选)
+    │ 失败
+    ▼
+RuleCleaner (最终兜底)
 ```
+
+### 本地蒸馏模型集成 (Phase 2-3)
+
+蒸馏模型 (P2-19~P2-21) 训练完成后, 通过 `DistilledCleaner` 集成到清洗管线:
+
+```python
+# src/dataclean/cleaners/distilled_cleaner.py
+
+class DistilledCleaner(BaseCleaner):
+    """本地蒸馏模型清洗器 — Phase 2-3 的主力清洗器"""
+
+    def __init__(self):
+        self.local_model = ORTModelForSequenceClassification.from_pretrained(
+            settings.distill_model_path  # models/distilled/onnx-int8/
+        )
+        self.tokenizer = AutoTokenizer.from_pretrained(settings.distill_model_path)
+        self.llm_fallback = LLMClient(settings)
+
+    def clean(self, raw_data: str) -> CleanResult:
+        inputs = self.tokenizer(raw_data, return_tensors="np", truncation=True)
+        logits = self.local_model(**inputs).logits
+        probs = softmax(logits, axis=-1)
+        max_prob = float(probs.max())
+
+        if max_prob >= settings.distill_flywheel_low_conf_threshold:
+            label = ["negative", "neutral", "positive"][probs.argmax()]
+            score = [-0.8, 0.0, 0.8][probs.argmax()] * max_prob
+            return CleanResult(
+                engine="sentiment",
+                schema_name="DistilledSentiment",
+                cleaned_data={"news_sentiment_score": score, "label": label},
+                raw_input=raw_data,
+                llm_usage={"provider": "local_distilled",
+                           "model": settings.distill_student_model,
+                           "tokens_in": 0, "tokens_out": 0},
+                is_fallback=False,
+            )
+        else:
+            enqueue_flywheel(raw_data, probs)
+            return self.llm_fallback_clean(raw_data)
+```
+
+**已验证可用的蒸馏基座模型**:
+
+| 模型 | 参数 | 推理速度 | 适用场景 | 来源 |
+|------|------|---------|---------|------|
+| TinyFinBERT | 14.5M | ~2ms (CPU) | 情绪分类 (推荐默认) | arXiv:2409.18999 |
+| FinBERT2-Base | 110M | ~15ms (GPU) | 高精度情绪 + 事件抽取 | github.com/valuesimplex/FinBERT |
+| Qwen3.5-0.8B | 800M | ~20ms (GPU) | 多任务 + 复杂结构化抽取 | 官方小模型, 可 LoRA 微调 |
+| DeepSeek-R1-Distill-Qwen-1.5B | 1.5B | ~30ms (GPU) | 长文本理解, 研报分析 | 官方发布 |
+
+> ⚠️ 网络上流传的 "Qwen3.5-Distill-8B" "FinQwen-Distill-2B" "NewsDistill-3B" 等型号经核实**不存在**, 不可作为选型依据。
 
 ---
 
@@ -532,7 +621,13 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat            # DeepSeek V3
 QWEN_API_KEY=                           # https://dashscope.console.aliyun.com
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-QWEN_MODEL=qwen-turbo                   # qwen-turbo (便宜) / qwen-max (强)
+QWEN_MODEL=qwen-plus                    # qwen-plus (备选) / qwen-max (复杂任务)
+
+# ── 蒸馏模型 (Phase 2-3) ──
+DISTILL_ENABLED=false                   # Phase 2 启用后改为 true
+DISTILL_MODEL_PATH=models/distilled/onnx-int8/  # 本地蒸馏模型路径
+DISTILL_STUDENT_MODEL=TinyFinBERT       # TinyFinBERT / FinBERT2
+DISTILL_FLYWHEEL_LOW_CONF_THRESHOLD=0.7 # 低于此置信度 → 飞轮队列 + API 兜底
 
 # ── LLM 调用参数 ──
 LLM_TEMPERATURE=0.1                     # 低温度=高确定性
@@ -561,7 +656,7 @@ pydantic>=2.0           # Schema 校验 (已有)
 DeepSeek V3 处理 5000 字约 1-3 秒。每日 4 次采集，总 LLM 调用时间 < 15 秒。日频策略完全足够。
 
 ### Q: LLM 清洗会不会太贵?
-DeepSeek V3 每日 4 次采集约 ¥0.048/天，**每月约 ¥1.5**。通过 clean_log 表可精确追踪。
+DeepSeek V3 每日 4 次采集约 ¥0.018/天，**每月约 ¥0.5**。Phase 2-3 蒸馏模型本地推理成本降至 0。通过 clean_log 表可精确追踪。
 
 ### Q: LLM 返回的 JSON 格式不对怎么办?
 三层保障: ① `response_format: json_object` 强制 JSON; ② Pydantic Schema 校验; ③ 失败自动重试+降级到 RuleCleaner。
@@ -573,4 +668,10 @@ OpenClaw 端 (C1) 优先: 它自带 LLM，收集完直接结构化推送。qt-qu
 不需要。P0 只做情绪引擎。其他按优先级逐步添加。三层架构保证后续扩展零重构。
 
 ### Q: 家用显卡能跑本地 NLP 吗?
-FinBERT (110M 参数) < 2GB 显存，GTX 1060 都够。但 DeepSeek/Qwen API (¥1.5/月) 更方便。P3 可选。
+TinyFinBERT (14.5M) 纯 CPU 即可, 推理 <2ms; FinBERT2 (110M) < 2GB 显存, GTX 1060 够用。ONNX INT8 量化后体积再减半。Phase 1 可先用 DeepSeek API (¥0.5/月), Phase 2-3 切到本地推理后成本归零。
+
+### Q: 为什么不用百炼作为主力 LLM?
+DeepSeek V3 价格仅 Qwen-Plus 的 1/6 (输出 ¥2 vs ¥12/百万 token), 且在逻辑推理和低幻觉方面更强。头部量化机构 (九坤/幻方) 均不依赖云端 API, 自建模型+蒸馏是主线。百炼 Qwen 作为备选教师和降级方案保留, 但不建议作为主力。详见"LLM 选型策略"章节。
+
+### Q: 蒸馏模型什么时候可用?
+P2-19~P2-21 覆盖完整蒸馏管线 (标注 → 训练 → 评估 → 部署 → 飞轮)。在此之前, Phase 1 的 DeepSeek API 清洗方案已经可以满足日频策略的需要, 成本极低。
