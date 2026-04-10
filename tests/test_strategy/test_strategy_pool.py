@@ -22,10 +22,14 @@ def _make_strategy_obj(
     backtest_sharpe=None, backtest_annual_return=None,
     backtest_max_drawdown=None, ic_mean=None, icir=None,
     status="active", applicable_macro="", created_at=None, updated_at=None,
+    strategy_tier="ml", strategy_class="", config=None,
 ):
     s = MagicMock()
     s.id = id
     s.strategy_name = name
+    s.strategy_tier = strategy_tier
+    s.strategy_class = strategy_class
+    s.config_json = json.dumps(config or {})
     s.description = description
     s.factor_names_json = json.dumps(factor_names or ["momentum", "value"])
     s.factor_weights_json = json.dumps(factor_weights or {"momentum": 0.6})

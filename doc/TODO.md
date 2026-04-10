@@ -14,12 +14,12 @@
 
 | 优先级 | 文档 | 项目数 | 预估工作量 | 核心价值 |
 |--------|------|--------|-----------|---------|
-| **P0** | [TODO-P0.md](TODO-P0.md) | 12 项 | ~16.5 天 | **Bug 修复 + 核心量化 + 基础设施** (PIT/CI/CD/Alembic/涨跌停) |
+| ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
 | **P0.1** | [TODO-P01.md](TODO-P01.md) | 15 项 | ~9.5 天 | **数据采集 + 数据清洗** (爬虫攻防, 从 P0 拆出, 暂缓) |
 | **P1** | [TODO-P1.md](TODO-P1.md) | 26 项 | ~55 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 + 可观测 |
 | **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
-| **合计** | — | **82 项** | **~130 天** | — |
+| **合计** | — | **72 项** (剩余) | **~113.5 天** | P0 已完成, 其余待实施 |
 
 ---
 
@@ -29,14 +29,16 @@
 
 | 模块 | 路径 | 状态 |
 |------|------|------|
-| 策略引擎 | `src/strategy/` | 10 策略 + orchestrator + monitor + arbiter + sizer |
-| 数据下载 | `src/data/` | QMT 数据下载引擎 + models |
-| 因子工程 | `src/factor/` | 11 个手工因子 / 预处理 / IC 分析 (待扩充至 Alpha158+迅投, 见 P1-21) |
-| 机器学习 | `src/ml/` | LGB + 自动迭代 + 评估 |
-| 回测引擎 | `src/backtest/` | 日线 / 分钟线回测 + 绩效 |
+| 策略引擎 | `src/strategy/` | 10 策略 + orchestrator + monitor + arbiter + sizer (ATR 已接入) |
+| 数据下载 | `src/data/` | QMT 数据下载引擎 + models + universe_manager (PIT) + limit_status |
+| 因子工程 | `src/factor/` | 11 个手工因子 / 预处理 / IC 分析 / 行业中性化已启用 (待扩充至 Alpha158+迅投, 见 P1-21) |
+| 机器学习 | `src/ml/` | LGB + 自动迭代 + 评估 + 预处理已接通 |
+| 回测引擎 | `src/backtest/` | OrchestratorBacktester (统一管道) + 涨跌停/停牌模拟 + 绩效 |
+| 情绪引擎 | `src/sentiment/` | ORM (JSONB) + Layer 1 量价情绪 + 策略 Profile + API |
 | 交易模块 | `src/trading/` | QMT 交易 + 风控 + 模拟盘 |
-| API 服务 | `src/api/` | FastAPI 路由 |
-| 公共基础 | `src/common/` | 配置 / 数据库 / 日志 |
+| API 服务 | `src/api/` | FastAPI 路由 (依赖注入) |
+| 公共基础 | `src/common/` | 配置 / 数据库 (DeclarativeBase) / 日志 |
+| 基础设施 | `.github/`, `alembic/` | CI/CD (GitHub Actions) + Alembic 数据库迁移 |
 
 **仅有文档设计、代码未创建** (待办):
 
@@ -44,7 +46,6 @@
 |------|------|---------|
 | 数据采集 | `src/datacollect/` | [doc/12-数据采集模块.md](12-数据采集模块.md) |
 | 数据清洗 | `src/dataclean/` | [doc/13-数据清洗与LLM.md](13-数据清洗与LLM.md) |
-| 情绪引擎 | `src/sentiment/` | [doc/11-市场情绪引擎.md](11-市场情绪引擎.md) |
 | 个股雷达 | `src/stockradar/` | doc/13 引擎扩展章节 |
 | 资金流向 | `src/fundflow/` | doc/13 引擎扩展章节 |
 | 风险预警 | `src/riskmonitor/` | doc/13 引擎扩展章节 |
@@ -57,22 +58,11 @@
 
 ## 任务速查表
 
-### P0: 紧急 Bug 修复 + 核心量化 + 基础设施 → [详见 TODO-P0.md](TODO-P0.md)
+### ~~P0: 紧急 Bug 修复 + 核心量化 + 基础设施~~ — ✅ 全部完成
 
-| # | 任务 | 模块 | 工作量 |
-|---|------|------|--------|
-| P0-01 | ATR PositionSizer 未接入 | strategy | 0.5 天 |
-| P0-02 | 行业中性化未启用 | factor | 1 天 |
-| P0-03 | FactorDataset 预处理断路 + IC 去重 | ml | 0.5 天 |
-| P0-04 | 回测与实盘管道不一致 (**含涨跌停/停牌模拟**) | backtest | 5-7 天 |
-| P0-20 | SentimentDaily ORM (JSONB) | sentiment | 1 天 |
-| P0-21 | 量价情绪 Layer 1 | sentiment | 1.5 天 |
-| P0-22 | 策略参数 Profile | sentiment | 1 天 |
-| P0-23 | 情绪 API 端点 | sentiment | 1 天 |
-| P0-24 | 幸存者偏差 / PIT 数据管理 | data | 3 天 |
-| P0-25 | CI/CD 自动化测试管线 | infra | 2 天 |
-| P0-26 | Alembic 数据库迁移管理 | infra | 1 天 |
-| P0-27 | 涨跌停/停牌数据采集 | data | 1 天 |
+> P0 全部 12 项已实现并通过 642 个单元测试验证 (2026-04-10)。
+> 包括: ATR 仓位接入、行业中性化、预处理接通、OrchestratorBacktester 统一回测管道、
+> 情绪引擎 (ORM/量价/Profile/API)、PIT 数据管理、CI/CD、Alembic、涨跌停模拟。
 
 ### P0.1: 数据采集 + 数据清洗 (暂缓) → [详见 TODO-P01.md](TODO-P01.md)
 
@@ -126,7 +116,7 @@
 | P2-01 | 滑点模型 | backtest | 1 天 |
 | P2-02 | XGBoost/CatBoost + Ensemble | ml | 2 天 |
 | P2-03 | 绩效分析增强 | backtest | 2 天 |
-| ~~P2-04~~ | ~~Survivorship Bias / PIT~~ → **已提升至 P0-24** | — | — |
+| ~~P2-04~~ | ~~Survivorship Bias / PIT~~ → ✅ 已完成 (原 P0-24) | — | — |
 | P2-05 | 交易成本归因 | backtest | 1 天 |
 | P2-06 | 多周期标签 | ml | 1 天 |
 | P2-07 | TavilyCollector | datacollect | 1 天 |
@@ -199,7 +189,7 @@
 | **数据质量** | pandera | >=0.23 | ✅ | DataFrame schema 校验 (P1-24) |
 | **数据库** | PostgreSQL | >=16 | ✅ | JSONB 存储 |
 | | SQLAlchemy | >=2.0 | ✅ 稳定2.0.48 (2.1.0b1已发布) | ORM |
-| | Alembic | >=1.15 | ✅ | DB schema 迁移 (P0-26) |
+| | Alembic | >=1.15 | ✅ | DB schema 迁移 (已部署) |
 | **统计** | statsmodels | >=0.14 | ✅ 最新0.14.6 | 回归/中性化 |
 | | scipy | >=1.15 | ✅ 最新1.17.1 (2026.02) | 统计检验 |
 | **基础** | pandas | **>=2.2 (兼容3.0)** | ✅ 最新3.0.2 (2026.03) ⚠️ 3.0需Python≥3.11 | 数据处理核心 |
@@ -240,16 +230,9 @@
 ## 建议执行顺序
 
 ```
-Phase 0 — Bug 修复 + 基础设施 (第 1-3 周):
-  P0-01~03  修复已有代码 bug (ATR/中性化/预处理)
-  P0-25     CI/CD 自动化测试管线 (越早建越好)
-  P0-26     Alembic 数据库迁移 (schema 变更前必须有)
-  P0-24     幸存者偏差 / PIT 数据管理 (所有回测的前提!)
-  P0-27     涨跌停/停牌数据采集 (回测管道依赖)
-  P0-20~23  sentiment 核心 (ORM/量价情绪/Profile/API, Layer 1 用已有行情)
-  P0-04     OrchestratorBacktester (回测统一, 含涨跌停/停牌模拟)
+Phase 0 — ✅ 已完成 (Bug 修复 + 基础设施)
 
-Phase 0.1 — 数据采集 + 清洗 (穿插进行, 第 3-5 周):
+Phase 0.1 — 数据采集 + 清洗 (下一步):
   P0-05~11  datacollect 核心 (HTTP客户端/限流/采集器/注册表, 含幂等性)
   P0-12~19  dataclean 核心 (LLM客户端/Schema/清洗器)
 

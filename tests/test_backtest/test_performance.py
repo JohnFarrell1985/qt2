@@ -191,12 +191,13 @@ class TestSortinoRatio:
         curve = [{"date": "2025-01-01", "capital": 100}, {"date": "2025-01-02", "capital": 101}]
         assert sortino_ratio(curve) == 0.0
 
-    def test_all_positive_returns_inf(self):
+    def test_all_positive_returns_zero(self):
+        """No downside returns → 0.0 (safe for JSON serialization)."""
         dates = pd.date_range("2025-01-01", periods=30, freq="B")
         capitals = [1e6 * (1.001 ** i) for i in range(30)]
         curve = [{"date": str(d.date()), "capital": c} for d, c in zip(dates, capitals)]
         sr = sortino_ratio(curve)
-        assert sr == float("inf")
+        assert sr == 0.0
 
     def test_declining_curve(self, declining_curve):
         sr = sortino_ratio(declining_curve)

@@ -272,7 +272,7 @@ class TestModuleName:
 ### 设计文档 (实现时参考)
 | 文档 | 对应模块 |
 |------|---------|
-| `doc/TODO-P0.md` | P0 紧急任务细节 |
+| ~~`doc/TODO-P0.md`~~ | P0 已全部完成 |
 | `doc/TODO-P1.md` | P1 重要任务细节 (ETF/因子/监控) |
 | `doc/TODO-P2.md` | P2 增强功能 (蒸馏/RD-Agent) |
 | `doc/12-数据采集模块.md` | `src/datacollect/` |

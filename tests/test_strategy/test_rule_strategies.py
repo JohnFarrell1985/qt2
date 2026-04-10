@@ -25,7 +25,7 @@ def _make_price_df(n=30, base=10.0, trend=0.01):
 
 
 class TestMomentumStrategy:
-    @patch("src.strategy.rules.momentum.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.momentum import MomentumStrategy
 
@@ -45,7 +45,7 @@ class TestMomentumStrategy:
 
 
 class TestReversalStrategy:
-    @patch("src.strategy.rules.reversal.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.reversal import ReversalStrategy
 
@@ -65,7 +65,7 @@ class TestReversalStrategy:
 
 
 class TestMovingAverageStrategy:
-    @patch("src.strategy.rules.moving_average.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.moving_average import MovingAverageStrategy
 
@@ -89,7 +89,7 @@ class TestMovingAverageStrategy:
 
 
 class TestGridTradingStrategy:
-    @patch("src.strategy.rules.grid_trading.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.grid_trading import GridTradingStrategy
 
@@ -114,7 +114,7 @@ class TestGridTradingStrategy:
 
 
 class TestCBDualLowStrategy:
-    @patch("src.strategy.rules.cb_dual_low.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.cb_dual_low import CBDualLowStrategy
 
@@ -138,7 +138,7 @@ class TestCBDualLowStrategy:
 
 
 class TestLowVolDividendStrategy:
-    @patch("src.strategy.rules.low_vol_dividend.QMTClient")
+    @patch("src.data.qmt_client.QMTClient")
     def test_basic(self, MockClient):
         from src.strategy.rules.low_vol_dividend import LowVolDividendStrategy
 
@@ -147,7 +147,7 @@ class TestLowVolDividendStrategy:
         mock_client = MockClient.return_value
         mock_client.get_market_data_ex.return_value = {"000001.SZ": df}
 
-        with patch("src.strategy.rules.low_vol_dividend.get_session") as mock_sess:
+        with patch("src.common.db.get_session") as mock_sess:
             mock_stock = MagicMock()
             mock_stock.code = "000001.SZ"
             mock_stock.pe_ttm = 8.0

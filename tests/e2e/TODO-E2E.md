@@ -520,7 +520,7 @@ e2e-test:
 |------|------|
 | 4.1 | 更新 `README.md` 中的测试章节 |
 | 4.2 | 更新 `.github/workflows/ci.yml` 新增 E2E job |
-| 4.3 | 更新 `TODO-P0.md` P0-25 CI/CD 任务标记 E2E 已覆盖 |
+| 4.3 | ~~更新 `TODO-P0.md`~~ P0 已全部完成并删除 |
 
 ---
 

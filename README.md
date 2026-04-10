@@ -286,7 +286,7 @@ docker compose up -d
 
 ## 配置
 
-- 环境变量: `.env` (项目根目录, 已加入 .gitignore)
+- 环境变量: `.env` (项目根目录, 已加入 .gitignore; 新用户可复制 `.env.example` 模板)
 - 宏观环境: `macro_env.json` (项目根目录)
 
 ## License

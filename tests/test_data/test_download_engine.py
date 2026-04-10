@@ -86,14 +86,21 @@ class TestSplitBatches:
 class TestGetDefaultStart:
 
     def test_known_period(self, mock_settings):
-        with patch("src.data.download_engine._dl_cfg", mock_settings.download):
+        mock_map = {
+            "1d": "20200101", "1w": "20200101", "1mon": "20200101",
+            "5m": "20230101", "15m": "20230101", "30m": "20230101",
+            "1h": "20230101", "1m": "20250101", "tick": "20260301",
+        }
+        with patch("src.data.download_engine._dl_cfg", mock_settings.download), \
+             patch("src.data.download_engine.PERIOD_DEFAULT_START", mock_map):
             from src.data.download_engine import get_default_start
             assert get_default_start("1m") == "20250101"
             assert get_default_start("1d") == "20200101"
             assert get_default_start("5m") == "20230101"
 
     def test_unknown_period_uses_1d_default(self, mock_settings):
-        with patch("src.data.download_engine._dl_cfg", mock_settings.download):
+        with patch("src.data.download_engine._dl_cfg", mock_settings.download), \
+             patch("src.data.download_engine.PERIOD_DEFAULT_START", {}):
             from src.data.download_engine import get_default_start
             assert get_default_start("unknown") == "20200101"
 

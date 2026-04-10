@@ -2,7 +2,7 @@
 
 > 最后更新: 2026-04-05
 >
-> 22 项 | 预估工作量 ~35 天 (P2-04 已提升至 P0-24, 新增 P2-22)
+> 22 项 | 预估工作量 ~35 天 (P2-04 已完成, 新增 P2-22)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -106,10 +106,9 @@ class SlippageModel:
 
 ---
 
-### ~~P2-04: Survivorship Bias / PIT 数据管理~~ → **已提升至 P0-24**
+### ~~P2-04: Survivorship Bias / PIT 数据管理~~ → ✅ 已完成
 
-> 此任务因架构审查发现其为基础性依赖 (所有策略回测的准确性都依赖于此), 已提升至 P0-24。
-> 详见 [TODO-P0.md](TODO-P0.md) P0-24。
+> 已实现: `src/data/universe_manager.py` — `StockUniverse` ORM (SCD Type 2) + `UniverseManager.get_tradable()` PIT 查询。
 
 ---
 

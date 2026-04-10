@@ -118,19 +118,28 @@ class TestGetActiveAllocations:
         alloc.is_active = is_active
         return alloc
 
-    def test_returns_allocations(self, orchestrator, mock_session):
-        alloc = self._make_alloc()
-
+    def _make_strat_mock(self, name="momentum_v1"):
         strat = MagicMock()
         strat.id = 1
-        strat.strategy_name = "momentum_v1"
+        strat.strategy_name = name
+        strat.strategy_tier = "rule"
+        strat.strategy_class = name
+        strat.config_json = "{}"
         strat.factor_names_json = json.dumps(["momentum"])
         strat.model_path = "/models/m.pkl"
+        return strat
 
+    def _make_pool_mock(self, name="hs300"):
         pool = MagicMock()
         pool.id = 10
-        pool.pool_name = "hs300"
+        pool.pool_name = name
         pool.codes_json = json.dumps(["600519.SH"])
+        return pool
+
+    def test_returns_allocations(self, orchestrator, mock_session):
+        alloc = self._make_alloc()
+        strat = self._make_strat_mock()
+        pool = self._make_pool_mock()
 
         with patch("src.strategy.orchestrator.get_session") as mock_gs:
             session = MagicMock()
@@ -139,9 +148,8 @@ class TestGetActiveAllocations:
             mock_gs.return_value = session
 
             q = session.query.return_value
-            q.filter_by.return_value.all.return_value = [alloc]
-            session.query.return_value.filter_by.return_value.first.side_effect = [
-                strat, pool,
+            q.join.return_value.join.return_value.filter.return_value.all.return_value = [
+                (alloc, strat, pool),
             ]
 
             result = orchestrator.get_active_allocations(macro_state="bull")
@@ -151,6 +159,8 @@ class TestGetActiveAllocations:
 
     def test_filters_by_macro_state(self, orchestrator, mock_session):
         alloc = self._make_alloc(macro_state="bull")
+        strat = self._make_strat_mock()
+        pool = self._make_pool_mock()
 
         with patch("src.strategy.orchestrator.get_session") as mock_gs:
             session = MagicMock()
@@ -159,7 +169,9 @@ class TestGetActiveAllocations:
             mock_gs.return_value = session
 
             q = session.query.return_value
-            q.filter_by.return_value.all.return_value = [alloc]
+            q.join.return_value.join.return_value.filter.return_value.all.return_value = [
+                (alloc, strat, pool),
+            ]
 
             result = orchestrator.get_active_allocations(macro_state="bear")
 
@@ -167,17 +179,8 @@ class TestGetActiveAllocations:
 
     def test_empty_macro_matches_all(self, orchestrator, mock_session):
         alloc = self._make_alloc(macro_state="")
-
-        strat = MagicMock()
-        strat.id = 1
-        strat.strategy_name = "s1"
-        strat.factor_names_json = json.dumps(["x"])
-        strat.model_path = ""
-
-        pool = MagicMock()
-        pool.id = 10
-        pool.pool_name = "p1"
-        pool.codes_json = json.dumps(["600519.SH"])
+        strat = self._make_strat_mock("s1")
+        pool = self._make_pool_mock("p1")
 
         with patch("src.strategy.orchestrator.get_session") as mock_gs:
             session = MagicMock()
@@ -186,9 +189,8 @@ class TestGetActiveAllocations:
             mock_gs.return_value = session
 
             q = session.query.return_value
-            q.filter_by.return_value.all.return_value = [alloc]
-            session.query.return_value.filter_by.return_value.first.side_effect = [
-                strat, pool,
+            q.join.return_value.join.return_value.filter.return_value.all.return_value = [
+                (alloc, strat, pool),
             ]
 
             result = orchestrator.get_active_allocations(macro_state="bear")
