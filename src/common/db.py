@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker, declarative_base
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .config import settings
@@ -17,7 +17,10 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """ORM 模型基类 — SQLAlchemy 2.x DeclarativeBase"""
+    pass
 
 _engine = None
 _SessionLocal = None
@@ -73,6 +76,15 @@ def check_db_connection() -> bool:
         return True
     except Exception:
         return False
+
+
+def get_db() -> Generator[Session, None, None]:
+    """FastAPI 依赖注入 — 桥接 get_session 上下文管理器为 Depends 生成器.
+
+    patch get_session 即可同时影响 get_db, 便于测试替换.
+    """
+    with get_session() as session:
+        yield session
 
 
 def init_database():

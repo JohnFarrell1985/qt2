@@ -9,7 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-_SHARED_CFG = SettingsConfigDict(populate_by_name=True, extra="ignore")
+_SHARED_CFG = SettingsConfigDict(
+    populate_by_name=True,
+    extra="ignore",
+    env_file=str(PROJECT_ROOT / ".env"),
+    env_file_encoding="utf-8",
+)
 
 
 # ================================================================
@@ -19,7 +24,7 @@ _SHARED_CFG = SettingsConfigDict(populate_by_name=True, extra="ignore")
 class DatabaseConfig(BaseSettings):
     model_config = _SHARED_CFG
     url: str = Field(
-        default="postgresql://game_agents:1234+asdf@123.60.11.74:5432/qt_quant",
+        default="postgresql://localhost:5432/qt_quant",
         alias="DATABASE_URL",
     )
     pool_size: int = Field(default=5, alias="DB_POOL_SIZE")
@@ -148,6 +153,7 @@ class SizerConfig(BaseSettings):
     max_total_pct: float = Field(default=80.0, alias="SIZER_MAX_TOTAL_PCT")
     min_trade_amount: float = Field(default=5000.0, alias="SIZER_MIN_TRADE_AMOUNT")
     lot_size: int = Field(default=100, alias="SIZER_LOT_SIZE")
+    atr_lookback: int = Field(default=14, alias="SIZER_ATR_LOOKBACK")
 
 
 # ================================================================
@@ -251,6 +257,25 @@ class LowVolDividendStratConfig(BaseSettings):
 
 
 # ================================================================
+# 情绪引擎
+# ================================================================
+
+class SentimentConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    enabled: bool = Field(default=True, alias="SENTIMENT_ENABLED")
+    auto_apply: bool = Field(default=False, alias="SENTIMENT_AUTO_APPLY")
+    collect_schedule: str = Field(
+        default="09:00,12:00,15:30,20:00", alias="SENTIMENT_COLLECT_SCHEDULE",
+    )
+    w_earning: float = Field(default=0.25, alias="SENTIMENT_W_EARNING")
+    w_capital: float = Field(default=0.25, alias="SENTIMENT_W_CAPITAL")
+    w_volatility: float = Field(default=0.15, alias="SENTIMENT_W_VOLATILITY")
+    w_sector: float = Field(default=0.10, alias="SENTIMENT_W_SECTOR")
+    w_news: float = Field(default=0.15, alias="SENTIMENT_W_NEWS")
+    w_global: float = Field(default=0.10, alias="SENTIMENT_W_GLOBAL")
+
+
+# ================================================================
 # Tier 2 打分策略参数
 # ================================================================
 
@@ -314,6 +339,7 @@ class Settings(BaseSettings):
     strat_grid_trading: GridTradingStratConfig = GridTradingStratConfig()
     strat_cb_dual_low: CBDualLowStratConfig = CBDualLowStratConfig()
     strat_low_vol_dividend: LowVolDividendStratConfig = LowVolDividendStratConfig()
+    sentiment: SentimentConfig = SentimentConfig()
     strat_scoring: ScoringStratConfig = ScoringStratConfig()
     strat_ml: MLStratConfig = MLStratConfig()
 

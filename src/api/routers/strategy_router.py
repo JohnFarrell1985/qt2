@@ -2,7 +2,7 @@
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from src.common.logger import get_logger
@@ -15,10 +15,21 @@ from src.strategy.registry import registry
 logger = get_logger(__name__)
 router = APIRouter(prefix="/strategy", tags=["策略管理"])
 
-pool_mgr = StrategyPool()
-instrument_mgr = InstrumentPoolManager()
-macro_env = MacroEnvironment()
-orchestrator = StrategyOrchestrator()
+
+def get_strategy_pool() -> StrategyPool:
+    return StrategyPool()
+
+
+def get_instrument_mgr() -> InstrumentPoolManager:
+    return InstrumentPoolManager()
+
+
+def get_macro_env() -> MacroEnvironment:
+    return MacroEnvironment()
+
+
+def get_orchestrator() -> StrategyOrchestrator:
+    return StrategyOrchestrator()
 
 
 # ================================================================
@@ -38,7 +49,7 @@ class StrategyCreate(BaseModel):
 
 
 @router.post("/strategies")
-def create_strategy(req: StrategyCreate):
+def create_strategy(req: StrategyCreate, pool_mgr: StrategyPool = Depends(get_strategy_pool)):
     sid = pool_mgr.create_strategy(
         name=req.name,
         strategy_tier=req.strategy_tier,
@@ -54,7 +65,7 @@ def create_strategy(req: StrategyCreate):
 
 
 @router.get("/strategies")
-def list_strategies(status: Optional[str] = None, tier: Optional[str] = None):
+def list_strategies(pool_mgr: StrategyPool = Depends(get_strategy_pool), status: Optional[str] = None, tier: Optional[str] = None):
     strats = pool_mgr.list_strategies(status=status)
     if tier:
         strats = [s for s in strats if s.get("strategy_tier") == tier]
@@ -62,7 +73,7 @@ def list_strategies(status: Optional[str] = None, tier: Optional[str] = None):
 
 
 @router.get("/strategies/{name}")
-def get_strategy(name: str):
+def get_strategy(name: str, pool_mgr: StrategyPool = Depends(get_strategy_pool)):
     s = pool_mgr.get_strategy(name)
     if not s:
         raise HTTPException(404, f"策略 {name} 不存在")
@@ -70,13 +81,13 @@ def get_strategy(name: str):
 
 
 @router.put("/strategies/{name}/status")
-def set_strategy_status(name: str, status: str):
+def set_strategy_status(name: str, status: str, pool_mgr: StrategyPool = Depends(get_strategy_pool)):
     pool_mgr.set_status(name, status)
     return {"ok": True}
 
 
 @router.get("/strategies/rank/{metric}")
-def rank_strategies(metric: str = "backtest_sharpe"):
+def rank_strategies(metric: str = "backtest_sharpe", pool_mgr: StrategyPool = Depends(get_strategy_pool)):
     df = pool_mgr.rank_strategies(metric)
     return df.to_dict(orient="records") if not df.empty else []
 
@@ -109,7 +120,7 @@ class SignalRequest(BaseModel):
 
 
 @router.post("/signals/generate")
-def generate_signals(req: SignalRequest):
+def generate_signals(req: SignalRequest, instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr)):
     """直接调用指定策略类生成信号"""
     td = date.fromisoformat(req.trade_date) if req.trade_date else date.today()
 
@@ -153,7 +164,7 @@ class ExecuteRequest(BaseModel):
 
 
 @router.post("/execute")
-def execute_plan(req: ExecuteRequest):
+def execute_plan(req: ExecuteRequest, orch: StrategyOrchestrator = Depends(get_orchestrator)):
     """完整执行: 策略信号 → 持仓监控 → 仲裁 → 仓位 → 操作清单
 
     输入当前持仓和资金, 输出今日操作指令。
@@ -176,7 +187,7 @@ def execute_plan(req: ExecuteRequest):
             can_sell=h.get("can_sell", True),
         ))
 
-    result = orchestrator.execute(
+    result = orch.execute(
         trade_date=td,
         holdings=holdings,
         total_capital=req.total_capital,
@@ -214,7 +225,7 @@ class PoolCreate(BaseModel):
 
 
 @router.post("/pools")
-def create_pool(req: PoolCreate):
+def create_pool(req: PoolCreate, instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr)):
     pid = instrument_mgr.create_pool(
         name=req.name,
         codes=req.codes,
@@ -225,12 +236,12 @@ def create_pool(req: PoolCreate):
 
 
 @router.get("/pools")
-def list_pools(status: Optional[str] = None):
+def list_pools(instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr), status: Optional[str] = None):
     return instrument_mgr.list_pools(status=status)
 
 
 @router.get("/pools/{name}")
-def get_pool(name: str):
+def get_pool(name: str, instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr)):
     p = instrument_mgr.get_pool(name)
     if not p:
         raise HTTPException(404, f"标的池 {name} 不存在")
@@ -238,13 +249,13 @@ def get_pool(name: str):
 
 
 @router.post("/pools/{name}/refresh")
-def refresh_pool(name: str):
+def refresh_pool(name: str, instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr)):
     codes = instrument_mgr.refresh_dynamic_pool(name)
     return {"pool_name": name, "n_stocks": len(codes)}
 
 
 @router.post("/pools/init-builtin")
-def init_builtin_pools():
+def init_builtin_pools(instrument_mgr: InstrumentPoolManager = Depends(get_instrument_mgr)):
     count = instrument_mgr.init_builtin_pools()
     return {"initialized": count}
 
@@ -254,17 +265,17 @@ def init_builtin_pools():
 # ================================================================
 
 @router.get("/macro/summary")
-def macro_summary():
+def macro_summary(macro_env: MacroEnvironment = Depends(get_macro_env)):
     return macro_env.summary()
 
 
 @router.get("/macro/states")
-def macro_states():
+def macro_states(macro_env: MacroEnvironment = Depends(get_macro_env)):
     return macro_env.get_all_states()
 
 
 @router.put("/macro/state")
-def set_macro_state(state_key: str, determined_by: str = "manual"):
+def set_macro_state(state_key: str, macro_env: MacroEnvironment = Depends(get_macro_env), determined_by: str = "manual"):
     try:
         macro_env.set_current_state(state_key, determined_by=determined_by)
     except ValueError as e:
@@ -273,12 +284,12 @@ def set_macro_state(state_key: str, determined_by: str = "manual"):
 
 
 @router.get("/macro/history")
-def macro_history(limit: int = 30):
+def macro_history(macro_env: MacroEnvironment = Depends(get_macro_env), limit: int = 30):
     return macro_env.get_state_history(limit)
 
 
 @router.get("/macro/mapping")
-def macro_strategy_mapping():
+def macro_strategy_mapping(macro_env: MacroEnvironment = Depends(get_macro_env)):
     return macro_env.get_strategy_macro_mapping()
 
 
@@ -294,9 +305,9 @@ class AllocationCreate(BaseModel):
 
 
 @router.post("/allocations")
-def create_allocation(req: AllocationCreate):
+def create_allocation(req: AllocationCreate, orch: StrategyOrchestrator = Depends(get_orchestrator)):
     try:
-        aid = orchestrator.create_allocation(
+        aid = orch.create_allocation(
             strategy_name=req.strategy_name,
             pool_name=req.pool_name,
             macro_state=req.macro_state,
@@ -308,17 +319,17 @@ def create_allocation(req: AllocationCreate):
 
 
 @router.get("/allocations")
-def list_allocations(macro_state: Optional[str] = None):
-    return orchestrator.get_active_allocations(macro_state)
+def list_allocations(orch: StrategyOrchestrator = Depends(get_orchestrator), macro_state: Optional[str] = None):
+    return orch.get_active_allocations(macro_state)
 
 
 @router.get("/plan")
-def current_plan():
+def current_plan(orch: StrategyOrchestrator = Depends(get_orchestrator)):
     """获取基于当前宏观环境的策略执行计划"""
-    return orchestrator.get_current_plan()
+    return orch.get_current_plan()
 
 
 @router.delete("/allocations/{allocation_id}")
-def deactivate_allocation(allocation_id: int):
-    orchestrator.deactivate_allocation(allocation_id)
+def deactivate_allocation(allocation_id: int, orch: StrategyOrchestrator = Depends(get_orchestrator)):
+    orch.deactivate_allocation(allocation_id)
     return {"ok": True}

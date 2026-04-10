@@ -14,6 +14,7 @@ from src.common.logger import get_logger
 from src.api.routers import (
     data_router, factor_router, ml_router, backtest_router,
     trading_router, strategy_router, iterate_router, webhook_router,
+    sentiment_router,
 )
 from src.api.scheduler import start_scheduler, stop_scheduler
 
@@ -27,6 +28,7 @@ TAG_METADATA = [
     {"name": "交易管理", "description": "QMT 模拟盘/实盘交易、持仓查询、委托管理"},
     {"name": "策略管理", "description": "策略池 CRUD、标的池管理、宏观环境状态、策略编排"},
     {"name": "自动迭代", "description": "ML 因子组合自动搜索优化、收敛分析、最佳因子权重"},
+    {"name": "情绪引擎", "description": "市场情绪指标、量价计算、策略参数Profile、宏观状态"},
     {"name": "Webhook推送", "description": "OpenClaw/飞书事件推送: 风控告警、迭代完成、同步异常"},
     {"name": "系统", "description": "系统信息、健康检查"},
 ]
@@ -82,6 +84,7 @@ app.include_router(trading_router.router)
 app.include_router(strategy_router.router)
 app.include_router(iterate_router.router)
 app.include_router(webhook_router.router)
+app.include_router(sentiment_router.router)
 
 
 @app.get("/", tags=["系统"])

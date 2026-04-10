@@ -111,6 +111,18 @@ class TestDatabase:
             init_database()
             mock_create_all.assert_called_once()
 
+    def test_get_db_yields_session(self, patched_settings):
+        """get_db generator (FastAPI DI) delegates to get_session."""
+        from src.common.db import get_db, get_engine
+        get_engine()
+        gen = get_db()
+        session = next(gen)
+        assert isinstance(session, Session)
+        try:
+            gen.send(None)
+        except StopIteration:
+            pass
+
     def test_check_db_connection(self, patched_settings):
         from src.common.db import check_db_connection, get_engine
         get_engine()

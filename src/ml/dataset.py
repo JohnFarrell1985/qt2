@@ -55,6 +55,17 @@ class FactorDataset:
 
         returns = self._calc_forward_returns(stock_pool, start_date, end_date, label_period)
 
+        for dt, group in factor_df.groupby(level="trade_date"):
+            idx = group.index
+            codes_in_section = idx.get_level_values("code")
+            industry, mcap = self._load_industry_data(codes_in_section.tolist())
+            factor_df.loc[idx] = preprocess_cross_section(
+                group.droplevel("trade_date"),
+                neutralize_industry=True,
+                industry_series=industry,
+                market_cap_series=mcap,
+            ).values
+
         common_idx = factor_df.index.intersection(returns.index)
         if len(common_idx) == 0:
             logger.warning("因子与收益率无交集")
@@ -70,6 +81,7 @@ class FactorDataset:
 
         self.X = X
         self.y = y
+        self.dates = X.index.get_level_values("trade_date") if "trade_date" in X.index.names else None
         logger.info(f"数据集: {X.shape[0]} 样本, {X.shape[1]} 因子")
         return X, y
 
@@ -97,6 +109,81 @@ class FactorDataset:
             "X_test": self.X[test_mask], "y_test": self.y[test_mask],
             "train_end": train_end, "val_end": val_end,
         }
+
+    @staticmethod
+    def deduplicate_factors(
+        sota_factors: pd.DataFrame,
+        new_factors: pd.DataFrame,
+        threshold: float = 0.99,
+    ) -> pd.DataFrame:
+        """RD-Agent 式因子去重: 丢弃与已有 SOTA 因子高度相关的新因子
+
+        按日期截面计算新旧因子相关性, 若新因子与任一 SOTA 因子
+        的平均截面相关系数 >= threshold, 则丢弃该新因子。
+
+        Args:
+            sota_factors: 已有因子池, MultiIndex=(trade_date, code)
+            new_factors: 待评估新因子, 同 index
+            threshold: 去重阈值, 默认 0.99
+
+        Returns:
+            筛选后的 new_factors (仅保留非冗余因子)
+        """
+        if sota_factors.empty or new_factors.empty:
+            return new_factors
+
+        keep_cols = []
+        for new_col in new_factors.columns:
+            max_avg_corr = 0.0
+            for sota_col in sota_factors.columns:
+                corrs = []
+                combined = pd.concat(
+                    [sota_factors[sota_col], new_factors[new_col]], axis=1,
+                ).dropna()
+                if "trade_date" in combined.index.names:
+                    for _, grp in combined.groupby(level="trade_date"):
+                        if len(grp) >= 10:
+                            corrs.append(grp.iloc[:, 0].corr(grp.iloc[:, 1]))
+                elif len(combined) >= 10:
+                    corrs.append(combined.iloc[:, 0].corr(combined.iloc[:, 1]))
+
+                if corrs:
+                    avg_corr = abs(float(np.mean(corrs)))
+                    max_avg_corr = max(max_avg_corr, avg_corr)
+
+            if max_avg_corr < threshold:
+                keep_cols.append(new_col)
+            else:
+                logger.info(
+                    f"[去重] 因子 {new_col} 与 SOTA 最大相关 {max_avg_corr:.4f} >= {threshold}, 丢弃"
+                )
+
+        if not keep_cols:
+            logger.warning("[去重] 所有新因子均被去重, 返回空 DataFrame")
+            return pd.DataFrame(index=new_factors.index)
+
+        logger.info(f"[去重] 保留 {len(keep_cols)}/{len(new_factors.columns)} 个新因子")
+        return new_factors[keep_cols]
+
+    @staticmethod
+    def _load_industry_data(
+        codes: List[str],
+    ) -> tuple:
+        """加载行业分类和市值数据, 用于中性化"""
+        from src.data.models import Stock
+        with get_session() as session:
+            rows = session.query(
+                Stock.code, Stock.industry, Stock.market_cap,
+            ).filter(Stock.code.in_(codes)).all()
+        if not rows:
+            return pd.Series(dtype=str), pd.Series(dtype=float)
+        industry = pd.Series(
+            {r.code: r.industry or "未知" for r in rows},
+        )
+        mcap = pd.Series(
+            {r.code: r.market_cap or 0.0 for r in rows},
+        )
+        return industry, mcap
 
     def _calc_forward_returns(
         self,

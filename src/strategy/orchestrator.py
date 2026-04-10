@@ -14,9 +14,13 @@
   - 单票 10%~20% 仓位
 """
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Optional
 
+import pandas as pd
+from sqlalchemy import text
+
+from src.common.config import settings
 from src.common.db import get_session
 from src.common.logger import get_logger
 from src.data.models import StrategyAllocation, Strategy, InstrumentPool
@@ -116,6 +120,12 @@ class StrategyOrchestrator:
         buy_actions = [a for a in actions if a.direction == "buy"]
         sell_actions = [a for a in actions if a.direction == "sell"]
 
+        # Step 4a: 计算 ATR (供 ATR 模式仓位分配)
+        atr_map: Dict[str, float] = {}
+        if buy_actions and self.sizer.cfg["mode"] == "atr":
+            buy_codes = [a.code for a in buy_actions]
+            atr_map = self._calc_atr_map(trade_date, buy_codes)
+
         sell_value = sum(
             _estimate_sell_value(a, holdings, price_map) for a in sell_actions
         )
@@ -131,6 +141,7 @@ class StrategyOrchestrator:
                 total_capital=total_capital,
                 available_cash=cash_after_sells,
                 current_position_pct=current_pct,
+                atr_map=atr_map or None,
                 price_map=price_map,
             )
 
@@ -199,6 +210,45 @@ class StrategyOrchestrator:
                 logger.error(f"[编排] 策略 {sname} 执行失败: {e}")
 
         return all_signals
+
+    def _calc_atr_map(
+        self, trade_date: date, codes: List[str],
+    ) -> Dict[str, float]:
+        """计算标的 ATR (Average True Range), 用于波动率反比仓位分配"""
+        lookback = settings.sizer.atr_lookback
+        start = trade_date - timedelta(days=lookback * 3)
+
+        with get_session() as session:
+            sql = text("""
+                SELECT code, trade_date, high, low, close, pre_close
+                FROM stock_daily
+                WHERE code = ANY(:codes)
+                  AND trade_date BETWEEN :start AND :td
+                ORDER BY code, trade_date
+            """)
+            rows = session.execute(sql, {
+                "codes": codes, "start": start, "td": trade_date,
+            }).fetchall()
+
+        if not rows:
+            return {}
+
+        df = pd.DataFrame(rows, columns=["code", "trade_date", "high", "low", "close", "pre_close"])
+        atr_map: Dict[str, float] = {}
+        for code, grp in df.groupby("code"):
+            grp = grp.sort_values("trade_date")
+            prev_close = grp["pre_close"].fillna(grp["close"].shift(1))
+            tr = pd.concat([
+                grp["high"] - grp["low"],
+                (grp["high"] - prev_close).abs(),
+                (grp["low"] - prev_close).abs(),
+            ], axis=1).max(axis=1)
+            atr_val = tr.tail(lookback).mean()
+            if pd.notna(atr_val) and atr_val > 0:
+                atr_map[str(code)] = float(atr_val)
+
+        logger.debug(f"[ATR] 计算 {len(atr_map)}/{len(codes)} 只标的 ATR")
+        return atr_map
 
     # ---- 以下保留原有 CRUD 方法 ----
 

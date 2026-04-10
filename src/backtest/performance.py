@@ -83,7 +83,7 @@ def sortino_ratio(equity_curve: List[Dict], risk_free_rate: float = 0.03) -> flo
     ann_ret = returns.mean() * 252
     downside = returns[returns < 0]
     if len(downside) == 0:
-        return float("inf")
+        return 0.0
     downside_vol = downside.std() * np.sqrt(252)
     if downside_vol == 0:
         return 0.0
@@ -128,18 +128,25 @@ def monthly_returns(equity_curve: List[Dict]) -> pd.DataFrame:
     return result
 
 
+def _safe_float(v: float) -> float:
+    """Replace inf/nan with 0.0 for JSON serialization safety."""
+    if isinstance(v, float) and (np.isinf(v) or np.isnan(v)):
+        return 0.0
+    return v
+
+
 def full_performance_report(equity_curve: List[Dict], trades: List[Dict] = None) -> Dict[str, Any]:
     """完整绩效报告"""
     report = {
-        "annualized_return_pct": round(annualized_return(equity_curve), 2),
+        "annualized_return_pct": _safe_float(round(annualized_return(equity_curve), 2)),
         "max_drawdown": max_drawdown(equity_curve),
-        "sharpe_ratio": sharpe_ratio(equity_curve),
-        "sortino_ratio": sortino_ratio(equity_curve),
-        "calmar_ratio": calmar_ratio(equity_curve),
+        "sharpe_ratio": _safe_float(sharpe_ratio(equity_curve)),
+        "sortino_ratio": _safe_float(sortino_ratio(equity_curve)),
+        "calmar_ratio": _safe_float(calmar_ratio(equity_curve)),
     }
     if trades:
-        report["win_rate"] = win_rate(trades)
-        report["profit_loss_ratio"] = profit_loss_ratio(trades)
+        report["win_rate"] = _safe_float(win_rate(trades))
+        report["profit_loss_ratio"] = _safe_float(profit_loss_ratio(trades))
         report["total_trades"] = len(trades)
 
     return report

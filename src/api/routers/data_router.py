@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 
-from src.common.db import get_session
+from src.api.deps import SessionDep
 from src.common.logger import get_logger
 from src.data.models import (
     Stock, StockDaily, StockMinute, MarketIndex,
@@ -27,33 +27,32 @@ router = APIRouter(prefix="/api/data", tags=["数据查询"])
 
 @router.get("/stocks", summary="获取股票列表")
 def list_stocks(
+    session: SessionDep,
     exchange: Optional[str] = Query(None, description="交易所: SH/SZ/BJ"),
     industry: Optional[str] = Query(None, description="所属行业"),
     keyword: Optional[str] = Query(None, description="代码或名称模糊搜索"),
     limit: int = Query(default=100, le=5000),
     offset: int = 0,
 ):
-    with get_session() as session:
-        q = session.query(Stock)
-        if exchange:
-            q = q.filter(Stock.exchange == exchange)
-        if industry:
-            q = q.filter(Stock.industry == industry)
-        if keyword:
-            q = q.filter(
-                (Stock.code.contains(keyword)) | (Stock.name.contains(keyword))
-            )
-        stocks = q.offset(offset).limit(limit).all()
-        return {"total": q.count(), "items": [s.to_dict() for s in stocks]}
+    q = session.query(Stock)
+    if exchange:
+        q = q.filter(Stock.exchange == exchange)
+    if industry:
+        q = q.filter(Stock.industry == industry)
+    if keyword:
+        q = q.filter(
+            (Stock.code.contains(keyword)) | (Stock.name.contains(keyword))
+        )
+    stocks = q.offset(offset).limit(limit).all()
+    return {"total": q.count(), "items": [s.to_dict() for s in stocks]}
 
 
 @router.get("/stock/{code}/info", summary="股票基本信息")
-def get_stock_info(code: str):
-    with get_session() as session:
-        stock = session.query(Stock).filter_by(code=code).first()
-        if not stock:
-            raise HTTPException(status_code=404, detail=f"股票 {code} 不存在")
-        return stock.to_dict()
+def get_stock_info(code: str, session: SessionDep):
+    stock = session.query(Stock).filter_by(code=code).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"股票 {code} 不存在")
+    return stock.to_dict()
 
 
 # ================================================================
@@ -63,18 +62,18 @@ def get_stock_info(code: str):
 @router.get("/stock/{code}/daily", summary="股票日线行情")
 def get_stock_daily(
     code: str,
+    session: SessionDep,
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     limit: int = Query(default=60, le=2000),
 ):
-    with get_session() as session:
-        q = session.query(StockDaily).filter(StockDaily.code == code)
-        if start_date:
-            q = q.filter(StockDaily.trade_date >= start_date)
-        if end_date:
-            q = q.filter(StockDaily.trade_date <= end_date)
-        rows = q.order_by(StockDaily.trade_date.desc()).limit(limit).all()
-        return [r.to_dict() for r in rows]
+    q = session.query(StockDaily).filter(StockDaily.code == code)
+    if start_date:
+        q = q.filter(StockDaily.trade_date >= start_date)
+    if end_date:
+        q = q.filter(StockDaily.trade_date <= end_date)
+    rows = q.order_by(StockDaily.trade_date.desc()).limit(limit).all()
+    return [r.to_dict() for r in rows]
 
 
 # ================================================================
@@ -84,28 +83,28 @@ def get_stock_daily(
 @router.get("/stock/{code}/minute", summary="股票分钟线行情")
 def get_stock_minute(
     code: str,
+    session: SessionDep,
     period: str = Query(default="5m", description="周期: 1m/5m/15m/30m/1h"),
     start_date: Optional[str] = Query(None, description="起始日期 YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="结束日期 YYYY-MM-DD"),
     limit: int = Query(default=200, le=5000),
 ):
-    with get_session() as session:
-        q = session.query(StockMinute).filter(
-            StockMinute.code == code,
-            StockMinute.period == period,
-        )
-        if start_date:
-            q = q.filter(StockMinute.trade_time >= start_date)
-        if end_date:
-            q = q.filter(StockMinute.trade_time <= end_date + " 23:59:59")
-        rows = q.order_by(StockMinute.trade_time.desc()).limit(limit).all()
-        return [{
-            "code": r.code,
-            "trade_time": r.trade_time.isoformat() if r.trade_time else None,
-            "period": r.period,
-            "open": r.open, "high": r.high, "low": r.low, "close": r.close,
-            "volume": r.volume, "amount": r.amount,
-        } for r in rows]
+    q = session.query(StockMinute).filter(
+        StockMinute.code == code,
+        StockMinute.period == period,
+    )
+    if start_date:
+        q = q.filter(StockMinute.trade_time >= start_date)
+    if end_date:
+        q = q.filter(StockMinute.trade_time <= end_date + " 23:59:59")
+    rows = q.order_by(StockMinute.trade_time.desc()).limit(limit).all()
+    return [{
+        "code": r.code,
+        "trade_time": r.trade_time.isoformat() if r.trade_time else None,
+        "period": r.period,
+        "open": r.open, "high": r.high, "low": r.low, "close": r.close,
+        "volume": r.volume, "amount": r.amount,
+    } for r in rows]
 
 
 # ================================================================
@@ -113,39 +112,38 @@ def get_stock_minute(
 # ================================================================
 
 @router.get("/indices", summary="可用指数列表")
-def list_indices():
-    with get_session() as session:
-        from sqlalchemy import distinct, func
-        rows = session.query(
-            MarketIndex.index_code,
-            MarketIndex.index_name,
-            func.count(MarketIndex.id).label("data_points"),
-        ).group_by(MarketIndex.index_code, MarketIndex.index_name).all()
-        return [{"index_code": r[0], "index_name": r[1], "data_points": r[2]} for r in rows]
+def list_indices(session: SessionDep):
+    from sqlalchemy import func
+    rows = session.query(
+        MarketIndex.index_code,
+        MarketIndex.index_name,
+        func.count(MarketIndex.id).label("data_points"),
+    ).group_by(MarketIndex.index_code, MarketIndex.index_name).all()
+    return [{"index_code": r[0], "index_name": r[1], "data_points": r[2]} for r in rows]
 
 
 @router.get("/index/{index_code}/daily", summary="指数日线行情")
 def get_index_daily(
     index_code: str,
+    session: SessionDep,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = Query(default=60, le=2000),
 ):
-    with get_session() as session:
-        q = session.query(MarketIndex).filter(MarketIndex.index_code == index_code)
-        if start_date:
-            q = q.filter(MarketIndex.trade_date >= start_date)
-        if end_date:
-            q = q.filter(MarketIndex.trade_date <= end_date)
-        rows = q.order_by(MarketIndex.trade_date.desc()).limit(limit).all()
-        if not rows:
-            raise HTTPException(404, f"指数 {index_code} 无数据")
-        return [{
-            "index_code": r.index_code, "index_name": r.index_name,
-            "trade_date": r.trade_date.isoformat() if r.trade_date else None,
-            "open": r.open, "high": r.high, "low": r.low, "close": r.close,
-            "volume": r.volume, "amount": r.amount,
-        } for r in rows]
+    q = session.query(MarketIndex).filter(MarketIndex.index_code == index_code)
+    if start_date:
+        q = q.filter(MarketIndex.trade_date >= start_date)
+    if end_date:
+        q = q.filter(MarketIndex.trade_date <= end_date)
+    rows = q.order_by(MarketIndex.trade_date.desc()).limit(limit).all()
+    if not rows:
+        raise HTTPException(404, f"指数 {index_code} 无数据")
+    return [{
+        "index_code": r.index_code, "index_name": r.index_name,
+        "trade_date": r.trade_date.isoformat() if r.trade_date else None,
+        "open": r.open, "high": r.high, "low": r.low, "close": r.close,
+        "volume": r.volume, "amount": r.amount,
+    } for r in rows]
 
 
 # ================================================================
@@ -155,44 +153,44 @@ def get_index_daily(
 @router.get("/stock/{code}/financial/report", summary="财务报表数据")
 def get_financial_report(
     code: str,
+    session: SessionDep,
     limit: int = Query(default=20, le=200),
 ):
-    with get_session() as session:
-        rows = (
-            session.query(StockFinancialReport)
-            .filter(StockFinancialReport.code == code)
-            .order_by(StockFinancialReport.report_date.desc())
-            .limit(limit)
-            .all()
-        )
-        return [{
-            "code": r.code, "report_date": r.report_date.isoformat() if r.report_date else None,
-            "total_assets": r.total_assets, "total_liabilities": r.total_liabilities,
-            "total_equity": r.total_equity, "total_revenue": r.total_revenue,
-            "net_profit": r.net_profit, "operating_cash_flow": r.operating_cash_flow,
-        } for r in rows]
+    rows = (
+        session.query(StockFinancialReport)
+        .filter(StockFinancialReport.code == code)
+        .order_by(StockFinancialReport.report_date.desc())
+        .limit(limit)
+        .all()
+    )
+    return [{
+        "code": r.code, "report_date": r.report_date.isoformat() if r.report_date else None,
+        "total_assets": r.total_assets, "total_liabilities": r.total_liabilities,
+        "total_equity": r.total_equity, "total_revenue": r.total_revenue,
+        "net_profit": r.net_profit, "operating_cash_flow": r.operating_cash_flow,
+    } for r in rows]
 
 
 @router.get("/stock/{code}/financial/indicator", summary="财务指标数据")
 def get_financial_indicator(
     code: str,
+    session: SessionDep,
     limit: int = Query(default=20, le=200),
 ):
-    with get_session() as session:
-        rows = (
-            session.query(StockFinancialIndicator)
-            .filter(StockFinancialIndicator.code == code)
-            .order_by(StockFinancialIndicator.report_date.desc())
-            .limit(limit)
-            .all()
-        )
-        return [{
-            "code": r.code, "report_date": r.report_date.isoformat() if r.report_date else None,
-            "eps_basic": r.eps_basic, "bps": r.bps,
-            "roe_weighted": r.roe_weighted,
-            "net_profit_margin": r.net_profit_margin,
-            "gross_profit_margin": r.gross_profit_margin,
-        } for r in rows]
+    rows = (
+        session.query(StockFinancialIndicator)
+        .filter(StockFinancialIndicator.code == code)
+        .order_by(StockFinancialIndicator.report_date.desc())
+        .limit(limit)
+        .all()
+    )
+    return [{
+        "code": r.code, "report_date": r.report_date.isoformat() if r.report_date else None,
+        "eps_basic": r.eps_basic, "bps": r.bps,
+        "roe_weighted": r.roe_weighted,
+        "net_profit_margin": r.net_profit_margin,
+        "gross_profit_margin": r.gross_profit_margin,
+    } for r in rows]
 
 
 # ================================================================
@@ -202,21 +200,21 @@ def get_financial_indicator(
 @router.get("/index/{index_code}/weight", summary="指数成分权重")
 def get_index_weight(
     index_code: str,
+    session: SessionDep,
     limit: int = Query(default=500, le=2000),
 ):
-    with get_session() as session:
-        rows = (
-            session.query(IndexWeight)
-            .filter(IndexWeight.index_code == index_code)
-            .order_by(IndexWeight.weight.desc())
-            .limit(limit)
-            .all()
-        )
-        return [{
-            "index_code": r.index_code,
-            "stock_code": r.stock_code,
-            "weight": r.weight,
-        } for r in rows]
+    rows = (
+        session.query(IndexWeight)
+        .filter(IndexWeight.index_code == index_code)
+        .order_by(IndexWeight.weight.desc())
+        .limit(limit)
+        .all()
+    )
+    return [{
+        "index_code": r.index_code,
+        "stock_code": r.stock_code,
+        "weight": r.weight,
+    } for r in rows]
 
 
 # ================================================================

@@ -66,11 +66,18 @@ def neutralize(
 def preprocess_cross_section(
     factor_df: pd.DataFrame,
     winsorize_std: float = 3.0,
+    neutralize_industry: bool = False,
+    industry_series: Optional[pd.Series] = None,
+    market_cap_series: Optional[pd.Series] = None,
 ) -> pd.DataFrame:
     """对截面因子数据做标准预处理流水线
 
     Args:
         factor_df: index=stock_code, columns=factor_names
+        winsorize_std: MAD 去极值倍数
+        neutralize_industry: 是否启用行业/市值中性化
+        industry_series: 行业分类 (申万一级), index=stock_code
+        market_cap_series: 总市值, index=stock_code
     """
     result = factor_df.copy()
     for col in result.columns:
@@ -80,4 +87,15 @@ def preprocess_cross_section(
         series = winsorize(series, winsorize_std)
         series = standardize(series)
         result[col] = series
+
+    if neutralize_industry and industry_series is not None:
+        common = result.index.intersection(industry_series.index)
+        if len(common) >= 10:
+            for col in result.columns:
+                result.loc[common, col] = neutralize(
+                    result.loc[common, col],
+                    industry_series.loc[common],
+                    market_cap_series.loc[common] if market_cap_series is not None else None,
+                )
+
     return result

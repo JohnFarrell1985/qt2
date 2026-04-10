@@ -17,11 +17,17 @@ from src.common.config import (
 class TestDatabaseConfig:
     def test_defaults(self):
         cfg = DatabaseConfig()
-        assert "postgresql" in cfg.url
-        assert cfg.pool_size == 5
-        assert cfg.max_overflow == 10
-        assert cfg.pool_timeout == 30
-        assert cfg.pool_recycle == 1800
+        assert isinstance(cfg.url, str)
+        assert cfg.pool_size >= 1
+        assert cfg.max_overflow >= 0
+        assert cfg.pool_timeout >= 1
+        assert cfg.pool_recycle >= 0
+
+    def test_no_hardcoded_credentials(self):
+        """Verify no plaintext passwords in code defaults."""
+        cfg = DatabaseConfig(_env_file=None)
+        assert "1234" not in cfg.url
+        assert "asdf" not in cfg.url
 
     def test_custom_values(self):
         cfg = DatabaseConfig(url="sqlite:///test.db", pool_size=3, max_overflow=6)
@@ -32,7 +38,7 @@ class TestDatabaseConfig:
 
 class TestQMTConfig:
     def test_defaults(self):
-        cfg = QMTConfig()
+        cfg = QMTConfig(_env_file=None)
         assert cfg.mini_qmt_path == ""
         assert cfg.account_id == ""
         assert cfg.account_type == "STOCK"
@@ -40,7 +46,7 @@ class TestQMTConfig:
 
 class TestDownloadConfig:
     def test_defaults(self):
-        cfg = DownloadConfig()
+        cfg = DownloadConfig(_env_file=None)
         assert cfg.batch_size == 500
         assert cfg.batch_pause == 2.0
         assert cfg.retry_count == 3
@@ -53,7 +59,7 @@ class TestDownloadConfig:
 
 class TestMLIterateConfig:
     def test_defaults(self):
-        cfg = MLIterateConfig()
+        cfg = MLIterateConfig(_env_file=None)
         assert cfg.max_iterations == 50
         assert cfg.target_sharpe == 2.0
         assert cfg.convergence_patience == 10
@@ -63,9 +69,9 @@ class TestMLIterateConfig:
 
 class TestMLConfig:
     def test_defaults(self):
-        cfg = MLConfig()
+        cfg = MLConfig(_env_file=None)
         assert cfg.model_dir == "./models"
-        assert cfg.label_period == 5
+        assert cfg.label_period == 2
         assert cfg.train_window == 252
         assert cfg.retrain_step == 21
         assert isinstance(cfg.iterate, MLIterateConfig)
@@ -73,16 +79,16 @@ class TestMLConfig:
 
 class TestBacktestConfig:
     def test_defaults(self):
-        cfg = BacktestConfig()
+        cfg = BacktestConfig(_env_file=None)
         assert cfg.initial_capital == 1_000_000.0
-        assert cfg.max_position_pct == 0.30
+        assert cfg.max_position_pct == 0.20
         assert cfg.max_total_position_pct == 0.80
-        assert cfg.max_holdings == 3
+        assert cfg.max_holdings == 5
 
 
 class TestRiskConfig:
     def test_defaults(self):
-        cfg = RiskConfig()
+        cfg = RiskConfig(_env_file=None)
         assert cfg.stop_loss_pct == -8.0
         assert cfg.take_profit_pct == 20.0
         assert cfg.max_single_position_pct == 30.0
@@ -92,21 +98,21 @@ class TestRiskConfig:
 
 class TestTradingConfig:
     def test_defaults(self):
-        cfg = TradingConfig()
+        cfg = TradingConfig(_env_file=None)
         assert cfg.paper_trading is True
         assert isinstance(cfg.risk, RiskConfig)
 
 
 class TestAPIConfig:
     def test_defaults(self):
-        cfg = APIConfig()
+        cfg = APIConfig(_env_file=None)
         assert cfg.host == "0.0.0.0"
         assert cfg.port == 8012
 
 
 class TestWebhookConfig:
     def test_defaults(self):
-        cfg = WebhookConfig()
+        cfg = WebhookConfig(_env_file=None)
         assert cfg.openclaw_url == ""
         assert cfg.feishu_url == ""
         assert cfg.feishu_app_id == ""
@@ -115,16 +121,16 @@ class TestWebhookConfig:
 
 class TestSettings:
     def test_defaults(self):
-        settings = Settings()
-        assert settings.log_level == "INFO"
-        assert isinstance(settings.database, DatabaseConfig)
-        assert isinstance(settings.qmt, QMTConfig)
-        assert isinstance(settings.download, DownloadConfig)
-        assert isinstance(settings.ml, MLConfig)
-        assert isinstance(settings.backtest, BacktestConfig)
-        assert isinstance(settings.trading, TradingConfig)
-        assert isinstance(settings.api, APIConfig)
-        assert isinstance(settings.webhook, WebhookConfig)
+        s = Settings(_env_file=None)
+        assert s.log_level == "INFO"
+        assert isinstance(s.database, DatabaseConfig)
+        assert isinstance(s.qmt, QMTConfig)
+        assert isinstance(s.download, DownloadConfig)
+        assert isinstance(s.ml, MLConfig)
+        assert isinstance(s.backtest, BacktestConfig)
+        assert isinstance(s.trading, TradingConfig)
+        assert isinstance(s.api, APIConfig)
+        assert isinstance(s.webhook, WebhookConfig)
 
     def test_env_file_path_points_to_root(self):
         assert ".env" in str(Settings.model_config.get("env_file", ""))

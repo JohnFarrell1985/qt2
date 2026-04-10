@@ -110,7 +110,17 @@ def _generate_scoring_signals(
         logger.warning(f"[{strategy.name}] 因子数据为空")
         return []
 
-    normed = factor_df.apply(_zscore, axis=0)
+    if cfg.get("neutralize_industry", False):
+        from src.factor.factor_preprocess import preprocess_cross_section
+        industry, mcap = _load_industry_mcap(factor_df.index.tolist())
+        normed = preprocess_cross_section(
+            factor_df,
+            neutralize_industry=True,
+            industry_series=industry,
+            market_cap_series=mcap,
+        )
+    else:
+        normed = factor_df.apply(_zscore, axis=0)
 
     if cfg["weight_mode"] == "ic":
         weights = _load_ic_weights(trade_date, factor_names, cfg["ic_window"])
@@ -168,6 +178,22 @@ def _generate_scoring_signals(
         f"{len(factor_names)}因子, {len(factor_df)}只股, 信号{len(signals)}只"
     )
     return signals
+
+
+def _load_industry_mcap(
+    codes: List[str],
+) -> tuple:
+    """加载行业分类和市值, 用于中性化"""
+    from src.common.db import get_session
+    from src.data.models import Stock
+
+    with get_session() as session:
+        rows = session.query(Stock.code, Stock.industry, Stock.market_cap).filter(
+            Stock.code.in_(codes),
+        ).all()
+    industry = pd.Series({r.code: r.industry or "未知" for r in rows})
+    mcap = pd.Series({r.code: r.market_cap or 0.0 for r in rows})
+    return industry, mcap
 
 
 def _load_factor_data(
