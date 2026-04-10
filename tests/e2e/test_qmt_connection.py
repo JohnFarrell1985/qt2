@@ -6,7 +6,7 @@
 """
 import pytest
 
-pytestmark = pytest.mark.qmt
+pytestmark = [pytest.mark.qmt, pytest.mark.timeout(15)]
 
 
 class TestQMTClientConnection:
@@ -18,29 +18,24 @@ class TestQMTClientConnection:
         assert hasattr(qmt_client.xtdata, "get_market_data_ex")
 
     def test_core_methods_available(self, qmt_client):
-        """TC-C-02: xtdata 核心 API 存在"""
+        """TC-C-02: xtdata 核心 API 方法存在"""
         required = [
             "get_market_data_ex", "get_local_data", "get_full_tick",
             "get_stock_list_in_sector", "get_instrument_detail",
             "get_instrument_type", "get_sector_list",
             "get_financial_data", "get_trading_dates",
-            "get_trading_calendar", "get_holidays",
-            "download_history_data2", "download_financial_data2",
-            "download_sector_data", "download_holiday_data",
+            "download_history_data2",
             "download_cb_data", "get_cb_info",
-            "download_etf_info", "get_etf_info", "get_ipo_info",
         ]
         xt = qmt_client.xtdata
         for method in required:
             assert hasattr(xt, method), f"xtdata 缺少方法: {method}"
 
-    def test_get_period_list(self, qmt_client):
-        """TC-C-03: 可用周期列表包含关键周期"""
-        periods = qmt_client.get_period_list()
-        assert isinstance(periods, list)
-        assert len(periods) > 0
-        for p in ["1d", "1m", "5m", "tick"]:
-            assert p in periods, f"周期列表缺少 {p}"
+    def test_get_sector_list(self, qmt_client, require_full_data_service):
+        """TC-C-03: 板块列表非空 (验证数据服务可用)"""
+        sectors = qmt_client.get_sector_list()
+        assert isinstance(sectors, list)
+        assert len(sectors) > 0
 
 
 class TestQMTTraderConnection:

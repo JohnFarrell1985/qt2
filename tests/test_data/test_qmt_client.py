@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 @pytest.fixture
 def mock_settings():
     with patch("src.data.qmt_client.settings") as m:
-        m.qmt.mini_qmt_path = "/fake/qmt"
+        m.qmt.qmt_path = "/fake/qmt"
         yield m
 
 

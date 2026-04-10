@@ -1,6 +1,6 @@
 """可转债数据同步模块
 
-数据来源: xtdata (MiniQMT 免费版)
+数据来源: xtdata (QMT 终端)
   - download_cb_data()  → 下载全部可转债基础信息
   - get_cb_info(code)   → 获取指定转债详情
   - download_history_data2 + get_market_data_ex → 转债日线行情

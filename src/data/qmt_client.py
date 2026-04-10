@@ -1,8 +1,12 @@
 """迅投QMT数据客户端封装
 
-完整封装 xtquant.xtdata 免费版 (MiniQMT) 全部数据接口。
+完整封装 xtquant.xtdata 行情数据接口。
 API 参考: http://dict.thinktrader.net/nativeApi/xtdata.html
-使用前须启动 MiniQMT 客户端。
+
+支持标准 QMT 终端和 MiniQMT 极简版两种模式:
+  - 标准 QMT: 启动交易终端 (行情+交易) 后外部 Python 通过 xtquant 连接
+  - MiniQMT: 启动极简客户端 (XtMiniQmt.exe) 后连接
+两种模式使用相同 xtquant API, 本模块自动探测并连接。
 """
 from typing import List, Dict, Any, Optional, Callable
 
@@ -13,7 +17,7 @@ logger = get_logger(__name__)
 
 
 class QMTClient:
-    """迅投QMT/MiniQMT 数据客户端
+    """迅投QMT数据客户端
 
     所有方法按官方文档分类:
     1. 行情接口 (订阅/获取/下载)
@@ -22,8 +26,8 @@ class QMTClient:
     4. 特色数据接口 (可转债/ETF/IPO)
     """
 
-    def __init__(self, mini_qmt_path: str = ""):
-        self._path = mini_qmt_path or settings.qmt.mini_qmt_path
+    def __init__(self, qmt_path: str = ""):
+        self._path = qmt_path or settings.qmt.qmt_path
         self._xtdata = None
 
     @property
@@ -32,15 +36,37 @@ class QMTClient:
             try:
                 import xtquant.xtdata as xtdata
                 self._xtdata = xtdata
+                xtdata.enable_hello = False
                 if self._path:
                     xtdata.data_dir = self._path
                 logger.info("xtquant.xtdata 模块加载成功")
+                self._connect(xtdata)
             except ImportError:
                 raise ImportError(
-                    "xtquant未安装。请从MiniQMT客户端目录安装，"
-                    "或 pip install XtQuant-pro"
+                    "xtquant 未安装。请 pip install xtquant 或从 QMT 客户端目录复制"
                 )
         return self._xtdata
+
+    @staticmethod
+    def _connect(xtdata):
+        """连接 QMT 数据服务, 自动探测可用端口.
+
+        端口优先级:
+          1. 自动扫描 (xtdata.connect() 默认行为)
+          2. 58610 — MiniQMT / 独立交易模式
+          3. 58600 — 标准 QMT 主终端
+        """
+        for port in (None, 58610, 58600):
+            try:
+                if port is None:
+                    xtdata.connect()
+                else:
+                    xtdata.connect(port=port)
+                logger.info("xtdata 连接成功 (port=%s)", port or "auto")
+                return
+            except Exception:
+                continue
+        logger.warning("xtdata 未能连接到任何 QMT 服务端, 部分 API 可能不可用")
 
     # ================================================================
     # 1. 行情接口
@@ -57,8 +83,6 @@ class QMTClient:
     ) -> int:
         """订阅单股行情
 
-        官方签名: subscribe_quote(stock_code, period='1d',
-                  start_time='', end_time='', count=0, callback=None)
         返回订阅号, >0 成功, -1 失败。单股订阅数量建议不超过50。
         """
         seq = self.xtdata.subscribe_quote(
@@ -66,7 +90,7 @@ class QMTClient:
             start_time=start_time, end_time=end_time,
             count=count, callback=callback,
         )
-        logger.info(f"已订阅 {stock_code} ({period}), seq={seq}")
+        logger.info("已订阅 %s (%s), seq=%s", stock_code, period, seq)
         return seq
 
     def subscribe_whole_quote(
@@ -74,14 +98,12 @@ class QMTClient:
         code_list: List[str],
         callback: Optional[Callable] = None,
     ) -> int:
-        """订阅全推行情 — 高效批量方案
+        """订阅全推行情
 
-        官方签名: subscribe_whole_quote(code_list, callback=None)
         code_list 可传市场代码 ['SH','SZ'] 或合约代码列表。
-        回调格式: {stock1: data1, stock2: data2, ...}
         """
         seq = self.xtdata.subscribe_whole_quote(code_list, callback=callback)
-        logger.info(f"已订阅全推行情, {len(code_list)}个标的, seq={seq}")
+        logger.info("已订阅全推行情, %d 个标的, seq=%s", len(code_list), seq)
         return seq
 
     def unsubscribe_quote(self, seq: int) -> None:
@@ -228,13 +250,10 @@ class QMTClient:
         callback: Optional[Callable] = None,
         incrementally: Optional[bool] = None,
     ) -> None:
-        """批量下载历史行情到本地 (同步阻塞, 带进度回调)
-
-        callback 格式: {'finished': 1, 'total': 50, 'stockcode': '000001.SZ', 'message': ''}
-        """
+        """批量下载历史行情到本地 (同步阻塞, 带进度回调)"""
         logger.info(
-            f"开始下载历史数据: {len(stock_list)}只, period={period}, "
-            f"{start_time}~{end_time}"
+            "开始下载历史数据: %d 只, period=%s, %s~%s",
+            len(stock_list), period, start_time, end_time,
         )
         self.xtdata.download_history_data2(
             stock_list=stock_list,
@@ -246,11 +265,7 @@ class QMTClient:
         )
 
     def download_history_contracts(self) -> None:
-        """下载过期(退市)合约信息
-
-        下载后可通过 get_stock_list_in_sector 获取退市标的列表,
-        通过 get_instrument_detail 查看退市合约信息。
-        """
+        """下载过期(退市)合约信息"""
         logger.info("下载退市合约信息...")
         self.xtdata.download_history_contracts()
 
@@ -301,7 +316,7 @@ class QMTClient:
         """
         if table_list is None:
             table_list = []
-        logger.info(f"下载财务数据: {len(stock_list)}只, tables={table_list or '全部'}")
+        logger.info("下载财务数据: %d 只, tables=%s", len(stock_list), table_list or "全部")
         self.xtdata.download_financial_data(stock_list, table_list)
 
     def download_financial_data2(
@@ -312,13 +327,10 @@ class QMTClient:
         end_time: str = "",
         callback: Optional[Callable] = None,
     ) -> None:
-        """批量下载财务数据 (带进度回调)
-
-        按 m_anntime 披露日期筛选 [start_time, end_time] 范围。
-        """
+        """批量下载财务数据 (带进度回调)"""
         if table_list is None:
             table_list = []
-        logger.info(f"批量下载财务数据: {len(stock_list)}只, {start_time}~{end_time}")
+        logger.info("批量下载财务数据: %d 只, %s~%s", len(stock_list), start_time, end_time)
         self.xtdata.download_financial_data2(
             stock_list, table_list,
             start_time=start_time, end_time=end_time,
@@ -332,8 +344,7 @@ class QMTClient:
     def get_instrument_detail(self, stock_code: str, iscomplete: bool = False) -> Dict[str, Any]:
         """获取合约基础信息
 
-        iscomplete=True 返回全部字段 (含期货期权细节), False 返回基础字段。
-        找不到合约返回空 dict。
+        iscomplete=True 返回全部字段, False 返回基础字段。
         """
         result = self.xtdata.get_instrument_detail(stock_code, iscomplete)
         return result if result else {}
@@ -360,10 +371,7 @@ class QMTClient:
         return self.xtdata.get_stock_list_in_sector(sector_name)
 
     def download_sector_data(self) -> None:
-        """下载板块分类信息 (按周/按日定期下载即可)
-
-        下载后 get_sector_list / get_stock_list_in_sector 才能获取到数据。
-        """
+        """下载板块分类信息"""
         logger.info("下载板块分类信息...")
         self.xtdata.download_sector_data()
 
@@ -387,10 +395,7 @@ class QMTClient:
         end_time: str = "",
         count: int = -1,
     ) -> List:
-        """获取交易日列表
-
-        Returns: list of timestamps
-        """
+        """获取交易日列表"""
         return self.xtdata.get_trading_dates(
             market, start_time=start_time, end_time=end_time, count=count,
         )
@@ -401,10 +406,7 @@ class QMTClient:
         start_time: str = "",
         end_time: str = "",
     ) -> List:
-        """获取交易日历 (完整交易日列表)
-
-        end_time 可填未来日期 (需先 download_holiday_data)。
-        """
+        """获取交易日历 (完整交易日列表)"""
         return self.xtdata.get_trading_calendar(
             market, start_time=start_time, end_time=end_time,
         )
@@ -417,10 +419,7 @@ class QMTClient:
         return self.xtdata.get_holidays()
 
     def download_holiday_data(self) -> None:
-        """下载节假日数据
-
-        下载后 get_trading_calendar 可获取未来交易日。
-        """
+        """下载节假日数据"""
         logger.info("下载节假日数据...")
         self.xtdata.download_holiday_data()
 
@@ -453,7 +452,6 @@ class QMTClient:
     def get_ipo_info(self, start_time: str = "", end_time: str = "") -> List[Dict[str, Any]]:
         """获取新股申购信息
 
-        start_time/end_time 为空则返回全部。
         Returns: [{'securityCode':..., 'codeName':..., 'publishPrice':..., ...}]
         """
         return self.xtdata.get_ipo_info(start_time, end_time)
@@ -463,12 +461,10 @@ class QMTClient:
     # ================================================================
 
     def reconnect(self, ip: str = "", port: int = 0) -> None:
-        """重连到指定 ip:port 的 MiniQMT 实例
-
-        不传参则尝试自动选择。
-        """
+        """重连到指定 ip:port 的 QMT 数据服务"""
         if ip and port:
             self.xtdata.reconnect(ip, port)
+            logger.info("已重连 QMT (%s:%s)", ip, port)
         else:
             self.xtdata.reconnect()
-        logger.info(f"已重连 MiniQMT ({ip}:{port})" if ip else "已重连 MiniQMT (自动)")
+            logger.info("已重连 QMT (自动)")

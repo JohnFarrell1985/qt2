@@ -35,7 +35,7 @@ class DatabaseConfig(BaseSettings):
 
 class QMTConfig(BaseSettings):
     model_config = _SHARED_CFG
-    mini_qmt_path: str = Field(default="", alias="QMT_MINI_PATH")
+    qmt_path: str = Field(default="", alias="QMT_PATH")
     account_id: str = Field(default="", alias="QMT_ACCOUNT_ID")
     account_type: str = Field(default="STOCK", alias="QMT_ACCOUNT_TYPE")
 

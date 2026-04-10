@@ -39,7 +39,7 @@ class TestDatabaseConfig:
 class TestQMTConfig:
     def test_defaults(self):
         cfg = QMTConfig(_env_file=None)
-        assert cfg.mini_qmt_path == ""
+        assert cfg.qmt_path == ""
         assert cfg.account_id == ""
         assert cfg.account_type == "STOCK"
 

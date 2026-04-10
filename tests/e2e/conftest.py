@@ -210,14 +210,64 @@ SAMPLE_INDEX = "000300.SH"
 
 @pytest.fixture(scope="session")
 def qmt_client():
-    """真实 QMTClient — 触发 xtquant 加载, 若未安装则跳过"""
+    """真实 QMTClient — 触发 xtquant 加载 + 连接, 若不可用则跳过"""
     try:
         from src.data.qmt_client import QMTClient
         client = QMTClient()
-        _ = client.xtdata
+        xt = client.xtdata
+        stocks = xt.get_stock_list_in_sector("沪深A股")
+        if not stocks:
+            pytest.skip("xtdata 已连接但无法获取股票列表, QMT 数据服务不可用")
         return client
     except (ImportError, Exception) as exc:
         pytest.skip(f"QMTClient 不可用: {exc}")
+
+
+@pytest.fixture(scope="session")
+def has_full_data_service(qmt_client):
+    """检测是否为 MiniQMT / 独立交易模式 (支持 get_sector_list 等完整数据 API).
+
+    标准 QMT 主终端 (58600) 仅支持 get_stock_list_in_sector 等少量 API;
+    MiniQMT / 独立交易模式 (58610) 支持大部分 xtdata API.
+    用 get_sector_list 做探测: 标准 QMT 上必 FAIL, MiniQMT 上必 OK.
+    """
+    try:
+        sectors = qmt_client.xtdata.get_sector_list()
+        return len(sectors) > 0
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def require_full_data_service(has_full_data_service):
+    """依赖此 fixture 的测试在标准 QMT 主终端模式下自动 skip"""
+    if not has_full_data_service:
+        pytest.skip("需要 MiniQMT / 独立交易模式 (当前为标准 QMT 主终端, 功能受限)")
+
+
+@pytest.fixture(scope="session")
+def has_broker_extended_api(qmt_client, has_full_data_service):
+    """检测券商是否开放扩展 API (get_trading_dates / get_holidays 等).
+
+    部分券商 (如华泰) 限制了 get_trading_dates, get_holidays,
+    download_index_weight, download_etf_info, get_ipo_info 等 API,
+    返回 ErrorID 300000 '当前客户端未支持此功能'。
+    用 get_trading_dates 做探测。
+    """
+    if not has_full_data_service:
+        return False
+    try:
+        dates = qmt_client.xtdata.get_trading_dates("SH", "20250101", "20250110", -1)
+        return isinstance(dates, list) and len(dates) > 0
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def require_broker_extended_api(has_broker_extended_api):
+    """依赖此 fixture 的测试在券商限制 API 时自动 skip"""
+    if not has_broker_extended_api:
+        pytest.skip("券商限制: 当前 QMT 版本未开放此扩展 API (ErrorID 300000)")
 
 
 @pytest.fixture(scope="session")

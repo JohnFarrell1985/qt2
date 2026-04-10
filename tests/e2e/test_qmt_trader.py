@@ -7,7 +7,7 @@
 """
 import pytest
 
-pytestmark = pytest.mark.qmt
+pytestmark = [pytest.mark.qmt, pytest.mark.timeout(15)]
 
 
 class TestQueryAsset:

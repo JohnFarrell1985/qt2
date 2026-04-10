@@ -2,7 +2,7 @@
 
 核心设计 (基于社区实测经验):
 - download_history_data2 实际是异步执行, 需通过 callback 判断完成
-- 每批不超过 500 只, 避免 MiniQMT 过载
+- 每批不超过 500 只, 避免 QMT 数据服务过载
 - 批间暂停 2~3s 防限流
 - incrementally=None 让 xtdata 自动增量 (本地有则续传, 无则全量)
 - 单批失败自动重试, 不影响后续批次

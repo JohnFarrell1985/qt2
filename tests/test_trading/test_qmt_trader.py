@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock, PropertyMock
 def mock_settings():
     with patch("src.trading.qmt_trader.settings") as m:
         m.qmt.account_id = "TEST_ACCOUNT"
-        m.qmt.mini_qmt_path = "/fake/path"
+        m.qmt.qmt_path = "/fake/path"
         m.qmt.account_type = "STOCK"
         yield m
 
@@ -41,7 +41,7 @@ def trader(mock_settings):
     from src.trading.qmt_trader import QMTTrader
     return QMTTrader(
         account_id="ACC001",
-        mini_qmt_path="/mini/qmt",
+        qmt_path="/qmt/path",
         account_type="STOCK",
         session_id=99999,
     )
@@ -110,7 +110,7 @@ class TestQMTTraderInit:
         from src.trading.qmt_trader import QMTTrader
         t = QMTTrader(
             account_id="MY_ACC",
-            mini_qmt_path="/my/path",
+            qmt_path="/my/path",
             account_type="CREDIT",
             session_id=42,
         )
