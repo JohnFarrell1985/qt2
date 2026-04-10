@@ -161,10 +161,16 @@ class TestConnect:
 
     def test_connect_import_error(self, mock_settings):
         """When xtquant is not installed, connect() raises ImportError."""
-        from src.trading.qmt_trader import QMTTrader
-        t = QMTTrader(session_id=1)
-        with pytest.raises(ImportError, match="xtquant"):
-            t.connect()
+        modules = {k: v for k, v in sys.modules.items()}
+        modules["xtquant"] = None
+        modules["xtquant.xttrader"] = None
+        modules["xtquant.xttype"] = None
+        modules["xtquant.xtdata"] = None
+        with patch.dict(sys.modules, modules, clear=False):
+            from src.trading.qmt_trader import QMTTrader
+            t = QMTTrader(session_id=1)
+            with pytest.raises(ImportError, match="xtquant"):
+                t.connect()
 
     def test_connect_generic_exception(self, trader, mock_xtquant):
         mock_xtquant.xttrader.XtQuantTrader.side_effect = RuntimeError("boom")

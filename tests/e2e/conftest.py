@@ -18,11 +18,31 @@ from unittest.mock import patch, MagicMock
 
 from src.common.config import settings
 from src.common.db import Base
+import src.data.models  # noqa: F401 — 注册 data ORM 模型
+import src.sentiment.models  # noqa: F401 — 注册 sentiment ORM 模型
 
 from tests.e2e.fixtures.seed_market_data import (
     create_stocks, create_trading_dates, create_stock_daily,
 )
 from tests.e2e.fixtures.seed_factor_data import create_factor_meta, create_factor_values
+from tests.e2e.fixtures.seed_strategy_data import (
+    create_strategies, create_instrument_pools,
+    create_strategy_allocations, create_macro_state_log,
+)
+from tests.e2e.fixtures.seed_financial_data import (
+    create_financial_reports, create_financial_indicators,
+)
+from tests.e2e.fixtures.seed_market_extra_data import (
+    create_market_index, create_sector_stocks, create_index_weights,
+)
+from tests.e2e.fixtures.seed_trade_data import (
+    create_trade_orders, create_trade_positions, create_trade_daily_reports,
+)
+from tests.e2e.fixtures.seed_cb_data import create_convertible_bonds, create_cb_daily
+from tests.e2e.fixtures.seed_ml_data import (
+    create_ml_model_logs, create_ml_predictions, create_data_sync_logs,
+    create_sentiment_daily, create_sentiment_ingest_logs,
+)
 
 E2E_SCHEMA = "e2e_test"
 QMT_SCHEMA = "qmt_e2e_test"
@@ -80,7 +100,7 @@ def session_factory(db_engine):
 
 @pytest.fixture(scope="session")
 def seeded_db(db_engine, session_factory):
-    """插入全部合成数据 (session 级, 只执行一次)"""
+    """插入全部合成数据 — 23 张业务表 + 2 张情绪表, session 级只执行一次"""
     session = session_factory()
     session.execute(text(f"SET search_path TO {E2E_SCHEMA}, public"))
 
@@ -90,6 +110,33 @@ def seeded_db(db_engine, session_factory):
         daily = create_stock_daily(session, stocks, dates)
         factor_meta = create_factor_meta(session)
         factor_values = create_factor_values(session, stocks, dates, daily)
+
+        strategies = create_strategies(session)
+        pools = create_instrument_pools(session, stocks)
+        allocations = create_strategy_allocations(session, strategies, pools)
+        macro_logs = create_macro_state_log(session)
+
+        fin_reports = create_financial_reports(session, stocks)
+        fin_indicators = create_financial_indicators(session, stocks)
+
+        market_indices = create_market_index(session, dates)
+        sector_stocks = create_sector_stocks(session, stocks)
+        index_weights = create_index_weights(session, stocks)
+
+        trade_orders = create_trade_orders(session)
+        trade_positions = create_trade_positions(session)
+        trade_reports = create_trade_daily_reports(session)
+
+        cb_bonds = create_convertible_bonds(session)
+        cb_daily = create_cb_daily(session, cb_bonds, dates)
+
+        ml_logs = create_ml_model_logs(session)
+        ml_preds = create_ml_predictions(session, ml_logs)
+        sync_logs = create_data_sync_logs(session)
+
+        sentiment_rows = create_sentiment_daily(session)
+        ingest_logs = create_sentiment_ingest_logs(session)
+
         session.commit()
         yield {
             "stocks": stocks,
@@ -97,6 +144,25 @@ def seeded_db(db_engine, session_factory):
             "daily": daily,
             "factor_meta": factor_meta,
             "factor_values": factor_values,
+            "strategies": strategies,
+            "pools": pools,
+            "allocations": allocations,
+            "macro_logs": macro_logs,
+            "fin_reports": fin_reports,
+            "fin_indicators": fin_indicators,
+            "market_indices": market_indices,
+            "sector_stocks": sector_stocks,
+            "index_weights": index_weights,
+            "trade_orders": trade_orders,
+            "trade_positions": trade_positions,
+            "trade_reports": trade_reports,
+            "cb_bonds": cb_bonds,
+            "cb_daily": cb_daily,
+            "ml_logs": ml_logs,
+            "ml_preds": ml_preds,
+            "sync_logs": sync_logs,
+            "sentiment_rows": sentiment_rows,
+            "ingest_logs": ingest_logs,
         }
     finally:
         session.close()

@@ -80,10 +80,14 @@ class TestXtdataProperty:
             assert c._xtdata is not None
 
     def test_import_error(self, mock_settings):
-        from src.data.qmt_client import QMTClient
-        c = QMTClient()
-        with pytest.raises(ImportError, match="xtquant"):
-            _ = c.xtdata
+        modules = {k: v for k, v in sys.modules.items()}
+        modules["xtquant"] = None
+        modules["xtquant.xtdata"] = None
+        with patch.dict(sys.modules, modules, clear=False):
+            from src.data.qmt_client import QMTClient
+            c = QMTClient()
+            with pytest.raises(ImportError, match="xtquant"):
+                _ = c.xtdata
 
 
 # ================================================================

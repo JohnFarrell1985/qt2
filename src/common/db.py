@@ -89,6 +89,8 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_database():
     """建表, 带启动重试 (容器场景下 DB 可能还未就绪)"""
+    import src.data.models  # noqa: F401 — 确保 ORM 模型注册到 Base.metadata
+
     for attempt in range(1, _MAX_STARTUP_RETRIES + 1):
         try:
             engine = get_engine()

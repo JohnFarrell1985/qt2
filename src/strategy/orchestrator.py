@@ -292,24 +292,24 @@ class StrategyOrchestrator:
                 .all()
             )
 
-        result = []
-        for alloc, strat, pool in rows:
-            if macro_state and alloc.macro_state and alloc.macro_state != macro_state:
-                continue
-            result.append({
-                "allocation_id": alloc.id,
-                "strategy_name": strat.strategy_name,
-                "strategy_id": strat.id,
-                "strategy_tier": strat.strategy_tier or "ml",
-                "strategy_class": strat.strategy_class or "",
-                "config": json.loads(strat.config_json) if strat.config_json else {},
-                "factor_names": json.loads(strat.factor_names_json) if strat.factor_names_json else [],
-                "model_path": strat.model_path,
-                "pool_name": pool.pool_name,
-                "pool_codes": json.loads(pool.codes_json) if pool.codes_json else [],
-                "macro_state": alloc.macro_state or "any",
-                "weight": alloc.weight,
-            })
+            result = []
+            for alloc, strat, pool in rows:
+                if macro_state and alloc.macro_state and alloc.macro_state != macro_state:
+                    continue
+                result.append({
+                    "allocation_id": alloc.id,
+                    "strategy_name": strat.strategy_name,
+                    "strategy_id": strat.id,
+                    "strategy_tier": strat.strategy_tier or "ml",
+                    "strategy_class": strat.strategy_class or "",
+                    "config": json.loads(strat.config_json) if strat.config_json else {},
+                    "factor_names": json.loads(strat.factor_names_json) if strat.factor_names_json else [],
+                    "model_path": strat.model_path,
+                    "pool_name": pool.pool_name,
+                    "pool_codes": json.loads(pool.codes_json) if pool.codes_json else [],
+                    "macro_state": alloc.macro_state or "any",
+                    "weight": alloc.weight,
+                })
         return result
 
     def get_current_plan(self) -> Dict[str, Any]:
