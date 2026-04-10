@@ -23,6 +23,9 @@ env/
 *.swo
 *~
 
+# Cursor MCP (contains DB credentials and API keys)
+.cursor/mcp.json
+
 # pytest / coverage
 .pytest_cache/
 htmlcov/
