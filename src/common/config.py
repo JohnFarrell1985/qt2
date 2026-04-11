@@ -1,6 +1,9 @@
-"""配置管理 — 所有参数通过 .env + 环境变量注入
+"""配置管理 — 所有参数通过 env/*.env.* 分模块文件 + 环境变量注入
 
-优先级: 系统环境变量 > 项目根目录 .env > 代码默认值
+优先级: 系统环境变量 > env/*.env.* > 代码默认值
+文件按模块拆分在 env/ 目录下, 便于维护:
+  env/.env.db, env/.env.qmt, env/.env.datacollect, env/.env.api,
+  env/.env.ml, env/.env.trading, env/.env.strategy, env/.env.webhook
 """
 from pathlib import Path
 
@@ -9,10 +12,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+_ENV_DIR = PROJECT_ROOT / "env"
+_ENV_FILES: tuple[str, ...] = tuple(
+    str(p) for p in sorted(_ENV_DIR.glob(".env.*"))
+    if p.name != ".env.example"
+)
+
 _SHARED_CFG = SettingsConfigDict(
     populate_by_name=True,
     extra="ignore",
-    env_file=str(PROJECT_ROOT / ".env"),
+    env_file=_ENV_FILES,
     env_file_encoding="utf-8",
 )
 
@@ -365,7 +374,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         populate_by_name=True,
         extra="ignore",
-        env_file=str(PROJECT_ROOT / ".env"),
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
     )
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

@@ -11,7 +11,8 @@ build/
 # Virtual environments
 venv/
 .venv/
-env/
+env/.env.*
+!env/.env.example
 
 # Environment variables (contains secrets)
 .env
