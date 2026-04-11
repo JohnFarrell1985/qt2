@@ -72,6 +72,11 @@ class SinaGlobalCollector(BaseCollector):
         super().__init__(limiter)
         self._client = client or SmartHttpClient()
 
+    _HEADERS = {
+        "Referer": "https://finance.sina.com.cn",
+        "Accept": "text/plain, */*",
+    }
+
     def _fetch_quotes(self, symbol_group: dict[str, str]) -> list[dict]:
         """Fetch quotes from Sina HQ API and parse var hq_str_ response."""
         if self._limiter:
@@ -82,7 +87,7 @@ class SinaGlobalCollector(BaseCollector):
 
         t0 = time.monotonic()
         try:
-            resp = self._client.get(url)
+            resp = self._client.get(url, headers=self._HEADERS)
             text = resp.text if hasattr(resp, "text") else str(resp.content, "gbk")
         except Exception as e:
             logger.warning("新浪行情请求失败: %s", e)

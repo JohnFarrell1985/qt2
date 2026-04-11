@@ -126,8 +126,9 @@ class EastmoneyCollector(BaseCollector):
             logger.warning("fetch_stock_list: 返回空列表")
             return pd.DataFrame()
 
+        items = diff.values() if isinstance(diff, dict) else diff
         rows = []
-        for item in diff:
+        for item in items:
             rows.append({
                 "code": str(item.get("f12", "")),
                 "name": str(item.get("f14", "")),
@@ -218,8 +219,9 @@ class EastmoneyCollector(BaseCollector):
             logger.warning("fetch_realtime: 返回空列表")
             return pd.DataFrame()
 
+        items = diff.values() if isinstance(diff, dict) else diff
         rows = []
-        for item in diff:
+        for item in items:
             rows.append({
                 "code": str(item.get("f12", "")),
                 "name": str(item.get("f14", "")),
@@ -282,8 +284,9 @@ class EastmoneyCollector(BaseCollector):
             logger.warning("fetch_cb_list: 返回空列表")
             return pd.DataFrame()
 
+        items = diff.values() if isinstance(diff, dict) else diff
         rows = []
-        for item in diff:
+        for item in items:
             rows.append({
                 "code": str(item.get("f12", "")),
                 "name": str(item.get("f14", "")),
@@ -374,8 +377,9 @@ class EastmoneyCollector(BaseCollector):
             logger.warning("fetch_etf_list: 返回空列表")
             return pd.DataFrame()
 
+        items = diff.values() if isinstance(diff, dict) else diff
         rows = []
-        for item in diff:
+        for item in items:
             rows.append({
                 "code": str(item.get("f12", "")),
                 "name": str(item.get("f14", "")),

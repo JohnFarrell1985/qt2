@@ -25,7 +25,7 @@ class TestGetCbList:
     def test_calls_bond_info(self, collector):
         with patch.object(collector, "call_adata", return_value=MagicMock()) as mock_call:
             collector.get_cb_list()
-            mock_call.assert_called_once_with("bond.info", "all_code")
+            mock_call.assert_called_once_with("bond.info", "all_convert_code")
 
 
 class TestGetCbMarket:

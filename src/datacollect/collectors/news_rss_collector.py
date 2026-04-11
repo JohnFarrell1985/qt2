@@ -16,6 +16,8 @@ from src.datacollect.rate_limiter import TokenBucketLimiter
 logger = get_logger(__name__)
 
 DEFAULT_FEEDS: list[dict[str, str]] = [
+    {"name": "36kr", "url": "https://36kr.com/feed", "label": "36氪科技财经"},
+    {"name": "36kr_article", "url": "https://36kr.com/feed-article", "label": "36氪深度"},
     {"name": "cls_telegraph", "url": "https://rsshub.app/cls/telegraph", "label": "财联社快讯"},
     {"name": "wallstreetcn", "url": "https://rsshub.app/wallstreetcn/news/global", "label": "华尔街见闻"},
     {"name": "eastmoney_news", "url": "https://rsshub.app/eastmoney/report", "label": "东方财富资讯"},
@@ -39,7 +41,7 @@ class NewsRssCollector(BaseCollector):
         if limiter is None:
             limiter = TokenBucketLimiter.for_domain("rss", rate=1.0, burst=5)
         super().__init__(limiter)
-        self._feeds = feeds or DEFAULT_FEEDS
+        self._feeds = feeds if feeds is not None else DEFAULT_FEEDS
 
     def _parse_feed(self, feed_url: str, feed_name: str, feed_label: str) -> list[dict]:
         """Parse a single RSS feed and return normalized news items."""

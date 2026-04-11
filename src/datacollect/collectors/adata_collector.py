@@ -132,7 +132,7 @@ class AdataCollector(BaseCollector):
 
     def get_cb_list(self) -> Any:
         """获取全部可转债列表。"""
-        return self.call_adata("bond.info", "all_code")
+        return self.call_adata("bond.info", "all_convert_code")
 
     def get_cb_market(self, stock_code: str, start_date: str = "") -> Any:
         """获取可转债行情数据。
