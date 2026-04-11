@@ -257,6 +257,33 @@ class LowVolDividendStratConfig(BaseSettings):
 
 
 # ================================================================
+# 数据采集 (datacollect)
+# ================================================================
+
+class DatacollectConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    akshare_rate: float = Field(default=0.15, alias="DATACOLLECT_AKSHARE_RATE")
+    akshare_burst: int = Field(default=3, alias="DATACOLLECT_AKSHARE_BURST")
+    baostock_rate: float = Field(default=5.0, alias="DATACOLLECT_BAOSTOCK_RATE")
+    baostock_burst: int = Field(default=10, alias="DATACOLLECT_BAOSTOCK_BURST")
+    tushare_token: str = Field(default="", alias="TUSHARE_TOKEN")
+    tushare_rate: float = Field(default=0.8, alias="DATACOLLECT_TUSHARE_RATE")
+    tushare_burst: int = Field(default=5, alias="DATACOLLECT_TUSHARE_BURST")
+    adata_rate: float = Field(default=0.5, alias="DATACOLLECT_ADATA_RATE")
+    adata_burst: int = Field(default=5, alias="DATACOLLECT_ADATA_BURST")
+    pytdx_rate: float = Field(default=1.0, alias="DATACOLLECT_PYTDX_RATE")
+    pytdx_burst: int = Field(default=5, alias="DATACOLLECT_PYTDX_BURST")
+    eastmoney_rate: float = Field(default=0.1, alias="DATACOLLECT_EASTMONEY_RATE")
+    eastmoney_burst: int = Field(default=2, alias="DATACOLLECT_EASTMONEY_BURST")
+    max_retries: int = Field(default=5, alias="DATACOLLECT_MAX_RETRIES")
+    retry_backoff_base: float = Field(default=2.0, alias="DATACOLLECT_RETRY_BACKOFF")
+    request_timeout: int = Field(default=30, alias="DATACOLLECT_REQUEST_TIMEOUT")
+    proxy_url: str = Field(default="", alias="DATACOLLECT_PROXY_URL")
+    archive_days: int = Field(default=90, alias="DATACOLLECT_ARCHIVE_DAYS")
+    impersonate: str = Field(default="chrome", alias="DATACOLLECT_IMPERSONATE")
+
+
+# ================================================================
 # 情绪引擎
 # ================================================================
 
@@ -320,6 +347,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig = DatabaseConfig()
     qmt: QMTConfig = QMTConfig()
     download: DownloadConfig = DownloadConfig()
+    datacollect: DatacollectConfig = DatacollectConfig()
     api: APIConfig = APIConfig()
     webhook: WebhookConfig = WebhookConfig()
 

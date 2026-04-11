@@ -195,7 +195,17 @@ POST /api/strategy/execute
 
 ```bash
 uv sync --extra dev
-uv run pytest --cov=src --cov-report=html
+
+# 单元测试
+uv run pytest tests/ -m "not qmt" --cov=src --cov-report=html
+
+# E2E 端到端测试 (按模块)
+uv run pytest tests/e2e/api/ -v                # API E2E (合成数据)
+uv run pytest tests/e2e/datacollect/ -v        # 数据采集 E2E (真实数据源, 120s超时)
+uv run pytest tests/e2e/qmt/ -v -m qmt        # QMT 终端 E2E (需 QMT 已登录)
+
+# 全量 E2E (排除 QMT)
+uv run pytest tests/e2e/ -v -m "not qmt"
 ```
 
 ### Docker 部署

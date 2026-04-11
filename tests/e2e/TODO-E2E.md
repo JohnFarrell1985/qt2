@@ -1,8 +1,8 @@
 # E2E 端到端测试设计文档
 
-> 最后更新: 2026-04-05
+> 最后更新: 2026-04-12
 >
-> 5 个测试套件 | 25 个测试用例 | 预估实现工作量: 2-3 天
+> 3 个子目录 | 31 个文件 | ~75 个测试用例
 >
 > 目标: 验证 A 股量化因子迭代平台各模块的跨层数据流正确性
 
@@ -28,10 +28,11 @@
 
 ### 1.3 不在 E2E 范围
 
-- QMT/xtquant 实际调用 (mock 处理, SDK 在 CI 环境不可用)
-- 真实行情数据下载 (使用合成数据)
 - 性能/压力测试 (单独设计)
 - UI/前端测试 (无前端)
+
+> **注**: QMT 和真实数据源的 E2E 测试已在 `qmt/` 和 `datacollect/` 子目录实现。
+> QMT 需要终端已登录，用 `-m qmt` 标记；数据源测试使用真实 API 但限制为轻量级调用。
 
 ---
 
@@ -43,16 +44,43 @@
 tests/e2e/
 ├── __init__.py
 ├── TODO-E2E.md                       ← 本文档
-├── conftest.py                       ← 共享 fixtures: DB 隔离、TestClient、数据种子
+├── conftest.py                       ← 共享 fixtures: DB 隔离 (e2e_test schema)、TestClient、数据种子
 ├── fixtures/
 │   ├── __init__.py
 │   ├── seed_market_data.py           ← 合成行情数据工厂 (Stock, StockDaily, TradingDate)
 │   └── seed_factor_data.py           ← 合成因子数据工厂 (FactorMeta, FactorValue)
-├── test_strategy_pipeline.py         ← E2E-01: 策略执行全链路
-├── test_backtest_pipeline.py         ← E2E-02: 回测全链路
-├── test_ml_pipeline.py               ← E2E-03: ML 训练→预测全链路
-├── test_data_query.py                ← E2E-04: 数据查询链路
-└── test_system_health.py             ← E2E-05: 系统健康与容错
+│
+├── api/                              ← API E2E (合成数据, 无外部依赖)
+│   ├── __init__.py
+│   ├── test_strategy_pipeline.py     ← E2E-01: 策略执行全链路
+│   ├── test_backtest_pipeline.py     ← E2E-02: 回测全链路
+│   ├── test_ml_pipeline.py           ← E2E-03: ML 训练→预测全链路
+│   ├── test_data_query.py            ← E2E-04: 数据查询链路
+│   ├── test_data_extended.py         ← 数据扩展测试
+│   ├── test_strategy_extended.py     ← 策略扩展测试
+│   ├── test_sentiment.py             ← 情绪引擎测试
+│   └── test_system_health.py         ← E2E-05: 系统健康与容错
+│
+├── datacollect/                      ← 数据采集 E2E (真实数据源, 120s硬超时)
+│   ├── __init__.py
+│   ├── conftest.py                   ← datacollect_e2e schema 隔离 + session fixtures
+│   ├── test_source_health.py         ← 数据源连通性检测 (baostock/akshare/tushare/adata)
+│   ├── test_stock_list.py            ← 股票列表采集落盘
+│   ├── test_daily_kline.py           ← 日线 K 线采集落盘
+│   ├── test_index_data.py            ← 指数数据采集落盘
+│   ├── test_financial.py             ← 财务报表/指标采集落盘
+│   ├── test_etf_sector.py            ← ETF + 板块数据采集落盘
+│   └── test_dispatcher.py            ← FallbackDispatcher 降级链逻辑
+│
+└── qmt/                              ← QMT 终端 E2E (需 QMT 已登录)
+    ├── __init__.py
+    ├── test_qmt_connection.py        ← QMT 连接测试
+    ├── test_qmt_market.py            ← QMT 行情数据
+    ├── test_qmt_sector.py            ← QMT 板块数据
+    ├── test_qmt_financial.py         ← QMT 财务数据
+    ├── test_qmt_sync.py              ← QMT 数据同步
+    ├── test_qmt_special.py           ← QMT 特殊场景
+    └── test_qmt_trader.py            ← QMT 交易模块
 ```
 
 ### 2.2 数据流总览
@@ -433,21 +461,45 @@ def seeded_db(db_engine):
 ### 8.1 本地运行
 
 ```bash
-# 运行全部 E2E 测试
-uv run pytest tests/e2e/ -v --tb=short
+# ── 按模块运行 (推荐) ──
+uv run pytest tests/e2e/api/ -v --tb=short             # API E2E (合成数据)
+uv run pytest tests/e2e/datacollect/ -v --timeout=120   # 数据采集 E2E (真实数据源)
+uv run pytest tests/e2e/qmt/ -v -m qmt                  # QMT E2E (需 QMT 终端)
 
-# 运行单个套件
-uv run pytest tests/e2e/test_strategy_pipeline.py -v
+# ── 全量运行 ──
+uv run pytest tests/e2e/ -v -m "not qmt" --tb=short    # 全部 (排除 QMT)
+uv run pytest tests/e2e/ -v --tb=short                  # 全部 (含 QMT)
 
-# 运行单个用例
-uv run pytest tests/e2e/test_strategy_pipeline.py::TestStrategyExecution::test_empty_holdings_buy -v
+# ── 运行单个套件 ──
+uv run pytest tests/e2e/api/test_strategy_pipeline.py -v
+uv run pytest tests/e2e/datacollect/test_daily_kline.py -v
+
+# ── 运行单个用例 ──
+uv run pytest tests/e2e/api/test_strategy_pipeline.py::TestStrategyExecution::test_empty_holdings_buy -v
 ```
 
 ### 8.2 前提条件
 
-- PostgreSQL 可达: `123.60.11.74:5432/qt_quant` (从 `.env` 或 `settings.database.url` 读取)
-- Python 依赖已安装: `uv sync`
-- 无需 xtquant SDK (已 mock)
+| 测试类型 | 前提条件 |
+|---------|---------|
+| API E2E (`tests/e2e/api/`) | PostgreSQL 可达, Python 依赖已安装 (`uv sync`) |
+| 数据采集 E2E (`tests/e2e/datacollect/`) | PostgreSQL 可达 + 外网可达 (baostock/akshare) |
+| QMT E2E (`tests/e2e/qmt/`) | PostgreSQL + QMT 终端已启动登录 |
+
+**数据库隔离说明:**
+
+| 子目录 | Schema | 说明 |
+|--------|--------|------|
+| `api/` | `e2e_test` | 合成数据, session 级创建/清理 |
+| `datacollect/` | `datacollect_e2e` | 真实数据, 独立 conftest.py 管理 |
+| `qmt/` | `qmt_e2e_test` | QMT 数据, 独立 schema |
+
+**数据采集 E2E 设计原则:**
+
+- **2 分钟硬超时**: 所有测试 `@pytest.mark.timeout(120)`, 数据源超时即判定不可用
+- **轻量下载**: 每个测试仅取 1-2 只股票 / 5 个交易日数据, 不触发反爬限流
+- **网络容错**: `requests.exceptions.ProxyError`/`ConnectionError`/`Timeout` 自动 skip
+- **独立 schema**: 使用 `datacollect_e2e`, 测试后 ROLLBACK + DROP
 
 ### 8.3 CI 集成 (GitHub Actions)
 
@@ -460,82 +512,152 @@ e2e-test:
     - uses: actions/setup-python@v5
       with: { python-version: '3.11' }
     - run: pip install -e ".[dev]"
-    - run: pytest tests/e2e/ -v --tb=short
+    - run: pytest tests/e2e/api/ -v --tb=short         # API E2E
+    - run: pytest tests/e2e/datacollect/ -v --timeout=120  # 数据采集 E2E
+    # QMT E2E 不在 CI 运行 (需要 QMT 终端)
   env:
     DATABASE_URL: postgresql://game_agents:****@123.60.11.74:5432/qt_quant
 ```
 
 ### 8.4 预期耗时
 
-| 阶段 | 耗时 |
-|------|------|
-| Schema 创建 + 建表 | ~2s |
-| 合成数据插入 (50×252 = 12600 行) | ~5s |
-| E2E-01 策略执行 (6 TC) | ~10s |
-| E2E-02 回测 (5 TC) | ~8s |
-| E2E-03 ML 训练预测 (5 TC) | ~15s |
-| E2E-04 数据查询 (4 TC) | ~3s |
-| E2E-05 系统健康 (5 TC) | ~5s |
-| Schema 清理 | ~1s |
-| **总计** | **< 60s** |
+| 子目录 | 测试数 | 预期耗时 |
+|--------|--------|---------|
+| `api/` — Schema 创建 + 建表 | — | ~2s |
+| `api/` — 合成数据插入 (50×252 行) | — | ~5s |
+| `api/` — E2E-01~05 全部用例 | 25 TC | ~40s |
+| `datacollect/` — Schema 创建 | — | ~1s |
+| `datacollect/` — 数据源连通性 | 4 TC | ~30s |
+| `datacollect/` — 采集落盘 | 10 TC | ~60s |
+| `datacollect/` — Dispatcher 逻辑 | 4 TC | ~10s |
+| Schema 清理 | — | ~1s |
+| **API + datacollect 总计** | **~43 TC** | **< 3 min** |
+| `qmt/` (需终端) | 7 文件 | ~2 min |
 
 ---
 
 ## 九、落地计划
 
-### Phase 1: 基础设施 (1 天)
+### Phase 1: 基础设施 (1 天) ✅ DONE
 
 | 步骤 | 文件 | 内容 |
 |------|------|------|
 | 1.1 | `tests/e2e/__init__.py` | 空文件 (包标记) |
-| 1.2 | `tests/e2e/conftest.py` | DB engine + schema 隔离 + SAVEPOINT rollback + TestClient + seeded_db |
+| 1.2 | `tests/e2e/conftest.py` | DB engine + e2e_test schema 隔离 + SAVEPOINT rollback + TestClient + seeded_db |
 | 1.3 | `tests/e2e/fixtures/__init__.py` | 空文件 (包标记) |
 | 1.4 | `tests/e2e/fixtures/seed_market_data.py` | 50 stocks + 252 dates + StockDaily 合成数据 |
 | 1.5 | `tests/e2e/fixtures/seed_factor_data.py` | 5 FactorMeta + FactorValue 合成数据 |
 
-验收标准: `pytest tests/e2e/conftest.py --co` 能发现 fixtures, DB schema 能创建和清理。
-
-### Phase 2: 核心测试套件 (1 天)
+### Phase 2: API 核心测试套件 (1 天) ✅ DONE
 
 | 步骤 | 文件 | TC 数量 |
 |------|------|--------|
-| 2.1 | `test_strategy_pipeline.py` | 6 |
-| 2.2 | `test_backtest_pipeline.py` | 5 |
-| 2.3 | `test_ml_pipeline.py` | 5 |
+| 2.1 | `api/test_strategy_pipeline.py` | 6 |
+| 2.2 | `api/test_backtest_pipeline.py` | 5 |
+| 2.3 | `api/test_ml_pipeline.py` | 5 |
 
-验收标准: 3 个核心套件全部 PASS。
-
-### Phase 3: 辅助测试套件 (0.5 天)
+### Phase 3: API 辅助测试套件 (0.5 天) ✅ DONE
 
 | 步骤 | 文件 | TC 数量 |
 |------|------|--------|
-| 3.1 | `test_data_query.py` | 4 |
-| 3.2 | `test_system_health.py` | 5 |
+| 3.1 | `api/test_data_query.py` | 4 |
+| 3.2 | `api/test_system_health.py` | 5 |
 
-验收标准: 全部 25 个用例 PASS, `pytest tests/e2e/ -v` 输出全绿。
+### Phase 4: 数据采集 E2E (1 天) ✅ DONE
 
-### Phase 4: 文档与 CI (0.5 天)
+| 步骤 | 文件 | TC 数量 | 说明 |
+|------|------|--------|------|
+| 4.1 | `datacollect/conftest.py` | — | datacollect_e2e schema 隔离 |
+| 4.2 | `datacollect/test_source_health.py` | 4 | baostock/akshare/tushare/adata 连通性 |
+| 4.3 | `datacollect/test_stock_list.py` | 2 | 股票列表采集落盘 |
+| 4.4 | `datacollect/test_daily_kline.py` | 2 | 日线 K 线采集落盘 |
+| 4.5 | `datacollect/test_index_data.py` | 2 | 指数数据采集落盘 |
+| 4.6 | `datacollect/test_financial.py` | 2 | 财务报表/指标采集落盘 |
+| 4.7 | `datacollect/test_etf_sector.py` | 3 | ETF + 板块数据落盘 |
+| 4.8 | `datacollect/test_dispatcher.py` | 5 | FallbackDispatcher 降级链 (含 mock) |
+
+### Phase 5: QMT 终端 E2E ✅ DONE
+
+| 步骤 | 文件 | 说明 |
+|------|------|------|
+| 5.1 | `qmt/test_qmt_connection.py` | QMT 连接测试 |
+| 5.2 | `qmt/test_qmt_market.py` | 行情数据 |
+| 5.3 | `qmt/test_qmt_sector.py` | 板块数据 |
+| 5.4 | `qmt/test_qmt_financial.py` | 财务数据 |
+| 5.5 | `qmt/test_qmt_sync.py` | 数据同步 |
+| 5.6 | `qmt/test_qmt_special.py` | 特殊场景 |
+| 5.7 | `qmt/test_qmt_trader.py` | 交易模块 |
+
+### Phase 6: 文档与 CI (0.5 天) ✅ DONE
 
 | 步骤 | 内容 |
 |------|------|
-| 4.1 | 更新 `README.md` 中的测试章节 |
-| 4.2 | 更新 `.github/workflows/ci.yml` 新增 E2E job |
-| 4.3 | ~~更新 `TODO-P0.md`~~ P0 已全部完成并删除 |
+| 6.1 | 更新 `README.md` 测试章节 |
+| 6.2 | 更新 `doc/08-用户手册.md` 测试章节 |
+| 6.3 | 更新 `doc/12-数据采集模块.md` 测试章节 |
+| 6.4 | 更新 `.github/workflows/ci.yml` 新增 E2E job |
 
 ---
 
-## 十、文件清单与预估代码量
+## 十、文件清单与代码量
 
-| 文件 | 预估行数 | 用途 |
-|------|---------|------|
+### 基础设施
+
+| 文件 | 行数 | 用途 |
+|------|------|------|
 | `tests/e2e/__init__.py` | 0 | 包标记 |
 | `tests/e2e/conftest.py` | ~180 | PostgreSQL e2e_test schema 隔离, SAVEPOINT, TestClient |
 | `tests/e2e/fixtures/__init__.py` | 0 | 包标记 |
 | `tests/e2e/fixtures/seed_market_data.py` | ~150 | Stock, TradingDate, StockDaily 合成工厂 |
 | `tests/e2e/fixtures/seed_factor_data.py` | ~100 | FactorMeta, FactorValue 合成工厂 |
-| `tests/e2e/test_strategy_pipeline.py` | ~220 | E2E-01: 6 个策略执行用例 |
-| `tests/e2e/test_backtest_pipeline.py` | ~200 | E2E-02: 5 个回测用例 |
-| `tests/e2e/test_ml_pipeline.py` | ~180 | E2E-03: 5 个 ML 用例 |
-| `tests/e2e/test_data_query.py` | ~120 | E2E-04: 4 个数据查询用例 |
-| `tests/e2e/test_system_health.py` | ~120 | E2E-05: 5 个系统健康用例 |
-| **合计** | **~1270** | **10 个文件, 25 个测试用例** |
+
+### api/ — API 端到端测试
+
+| 文件 | 行数 | 用途 |
+|------|------|------|
+| `api/__init__.py` | 0 | 包标记 |
+| `api/test_strategy_pipeline.py` | ~220 | E2E-01: 策略执行全链路 (6 TC) |
+| `api/test_backtest_pipeline.py` | ~200 | E2E-02: 回测全链路 (5 TC) |
+| `api/test_ml_pipeline.py` | ~180 | E2E-03: ML 训练→预测 (5 TC) |
+| `api/test_data_query.py` | ~120 | E2E-04: 数据查询 (4 TC) |
+| `api/test_data_extended.py` | ~100 | 数据扩展测试 |
+| `api/test_strategy_extended.py` | ~100 | 策略扩展测试 |
+| `api/test_sentiment.py` | ~80 | 情绪引擎测试 |
+| `api/test_system_health.py` | ~120 | E2E-05: 系统健康与容错 (5 TC) |
+
+### datacollect/ — 数据采集端到端测试
+
+| 文件 | 行数 | 用途 |
+|------|------|------|
+| `datacollect/__init__.py` | 0 | 包标记 |
+| `datacollect/conftest.py` | ~70 | datacollect_e2e schema 隔离 + session fixtures |
+| `datacollect/test_source_health.py` | ~80 | 数据源连通性 (baostock/akshare/tushare/adata) |
+| `datacollect/test_stock_list.py` | ~100 | 股票列表采集落盘 |
+| `datacollect/test_daily_kline.py` | ~120 | 日线 K 线采集落盘 |
+| `datacollect/test_index_data.py` | ~100 | 指数数据采集落盘 |
+| `datacollect/test_financial.py` | ~100 | 财务报表/指标采集落盘 |
+| `datacollect/test_etf_sector.py` | ~120 | ETF + 板块数据落盘 |
+| `datacollect/test_dispatcher.py` | ~150 | FallbackDispatcher 降级链 (含 mock) |
+
+### qmt/ — QMT 终端端到端测试
+
+| 文件 | 行数 | 用途 |
+|------|------|------|
+| `qmt/__init__.py` | 0 | 包标记 |
+| `qmt/test_qmt_connection.py` | ~80 | QMT 连接测试 |
+| `qmt/test_qmt_market.py` | ~100 | 行情数据 |
+| `qmt/test_qmt_sector.py` | ~80 | 板块数据 |
+| `qmt/test_qmt_financial.py` | ~80 | 财务数据 |
+| `qmt/test_qmt_sync.py` | ~100 | 数据同步 |
+| `qmt/test_qmt_special.py` | ~80 | 特殊场景 |
+| `qmt/test_qmt_trader.py` | ~100 | 交易模块 |
+
+### 汇总
+
+| 子目录 | 文件数 | 测试用例 | 代码量 |
+|--------|--------|---------|--------|
+| 基础设施 | 5 | — | ~430 行 |
+| api/ | 9 | ~25 TC | ~1120 行 |
+| datacollect/ | 9 | ~20 TC | ~840 行 |
+| qmt/ | 8 | ~30 TC | ~620 行 |
+| **合计** | **31** | **~75 TC** | **~3010 行** |
