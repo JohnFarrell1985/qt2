@@ -15,12 +15,12 @@
 | 优先级 | 文档 | 项目数 | 预估工作量 | 核心价值 |
 |--------|------|--------|-----------|---------|
 | ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
-| **P0.1** | [TODO-P01.md](TODO-P01.md) | 30 项 | ~21 天 | **数据采集 + 数据清洗** (爬虫攻防 + 数据质量 + 死信/幂等/新鲜度 + 异步并发/代理/写缓冲) |
+| ~~**P0.1**~~ | ✅ 已完成 → [12-数据采集模块](12-数据采集模块.md) | ~~48 项~~ | ~~~21 天~~ | 数据采集 + 数据清洗 — **全部完成** (A01-A48) |
 | **P1** | [TODO-P1.md](TODO-P1.md) | 25 项 | ~53 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 |
 | **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
 | **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
-| **合计** | — | **92 项** (剩余) | **~134 天** | P0 已完成, 其余待实施 |
+| **合计** | — | **63 项** (剩余) | **~114 天** | P0 + P0.1 已完成, 其余待实施 |
 
 ---
 
@@ -65,35 +65,9 @@
 > 包括: ATR 仓位接入、行业中性化、预处理接通、OrchestratorBacktester 统一回测管道、
 > 情绪引擎 (ORM/量价/Profile/API)、PIT 数据管理、CI/CD、Alembic、涨跌停模拟。
 
-### P0.1: 数据采集 + 数据清洗 (暂缓) → [详见 TODO-P01.md](TODO-P01.md)
+### ~~P0.1: 数据采集 + 数据清洗~~ ✅ 全部完成 → [详见 12-数据采集模块.md](12-数据采集模块.md)
 
-| # | 任务 | 模块 | 工作量 |
-|---|------|------|--------|
-| P0-05 | SmartHttpClient 反爬 HTTP 客户端 | datacollect | 1 天 |
-| P0-06 | TokenBucketLimiter 令牌桶限流器 | datacollect | 0.5 天 |
-| P0-07 | BaseCollector 采集器抽象基类 | datacollect | 0.5 天 |
-| P0-08 | AkshareCollector | datacollect | 1 天 |
-| P0-09 | 数据源注册表 | datacollect | 1 天 |
-| P0-10 | 采集日志 ORM | datacollect | 0.5 天 |
-| P0-11 | datacollect 模块初始化 | datacollect | 0.5 天 |
-| P0-12 | LLMClient 统一客户端 | dataclean | 1 天 |
-| P0-13~19 | dataclean 其余 7 项 | dataclean | 3 天 |
-| **A18~A23** | **反爬加固 + 自选股情报 (6 项)** | **datacollect** | **~5 天** |
-| **A24** | **DataValidator 数据质量校验层** | **datacollect** | **1 天** |
-| **A25** | **collect_dead_letter 死信队列** | **datacollect** | **0.5 天** |
-| **A26** | **CollectTask 幂等性 (idempotency_key)** | **datacollect** | **0.5 天** |
-| **A27** | **DataFreshnessMonitor 新鲜度监控** | **datacollect** | **0.5 天** |
-| **A28** | **data_sources.json 配置统一** | **datacollect** | **0.5 天** |
-| **A29** | **BaseCollector.collect_stream() 流式持久化** | **datacollect** | **0.5 天** |
-| **A30** | **AsyncCollectEngine 异步采集引擎 (双层 Semaphore + to_thread)** | **datacollect** | **2 天** |
-| **A31** | **AsyncSmartHttpClient (curl_cffi AsyncSession)** | **datacollect** | **0.5 天** |
-| **A32** | **AsyncTokenBucketLimiter 异步限流器** | **datacollect** | **0.5 天** |
-| **A33** | **WriteBehindBuffer 写缓冲层 (asyncio.Queue)** | **data** | **1 天** |
-| **A34** | **BulkWriter COPY 协议 + 优化批量写入 (asyncpg)** | **data** | **1 天** |
-| **A35** | **CollectorConnectionPool 连接复用 (baostock/pytdx)** | **datacollect** | **0.5 天** |
-| **A36** | **Pipeline 背压设计 (三阶段 Queue)** | **datacollect** | **0.5 天** |
-| **A37** | **内存高效分块处理 (chunk + CoW)** | **datacollect** | **0.5 天** |
-| **A38** | **ProxyPoolManager 代理 IP 轮换 (per-IP 限流)** | **datacollect** | **1.5 天** |
+> 48 项任务 (A01-A48) 已全部完成。详细实现清单及架构文档见 [12-数据采集模块.md](12-数据采集模块.md#实现完成总览-48-项-全部-)。
 
 ### P1: 重要 → [详见 TODO-P1.md](TODO-P1.md)
 
