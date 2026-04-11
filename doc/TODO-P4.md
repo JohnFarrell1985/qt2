@@ -2,7 +2,7 @@
 
 > 最后更新: 2026-04-12
 >
-> 7 项 | 预估工作量 ~12 天
+> 8 项 | 预估工作量 ~13.5 天
 >
 > 返回总览: [TODO.md](TODO.md) | P1-26 (structlog + 飞书告警) 已吸收至本文档
 
@@ -668,6 +668,69 @@ ORDER BY day;
 
 ---
 
+### P4-08: Langfuse LLM 可观测性
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | dataclean (LLM 专属可观测性) |
+| **文件** | `src/dataclean/llm_client.py`, `ops/docker-compose.yml` |
+| **工作量** | 1.5 天 |
+
+**为什么要做:**
+通用可观测性 (Jaeger/Prometheus/Loki) 覆盖系统层指标, 但 LLM 调用有独特的观测需求: prompt 版本 A/B 对比、token 成本追踪、Schema 校验成功率、上下文缓存命中率。[Langfuse](https://langfuse.com/) 是开源 (MIT) 的 LLM 专属可观测性平台, 支持自托管, 与 `instructor` 原生集成。
+
+> 来源: 原 [13-数据清洗与LLM.md](13-数据清洗与LLM.md) Langfuse 章节移入, 与全栈可观测性统一实施。
+
+**Phase 1 现状 (已满足)**:
+- `LLMClient.extract()` 每次调用返回 `usage_meta` (含 `cost_usd`, `tokens_cached`, `latency_ms`, `prompt_version`)
+- `clean_log` 表持久化所有调用记录, 可按天/周/月聚合分析
+- Phase 1 每日仅 ~30 次 LLM 调用, `clean_log` 足够
+
+**Phase 2 升级 (Langfuse)**:
+
+```
+LLMClient.extract()
+    │
+    ├─ LANGFUSE_ENABLED=false → 正常调用, usage_meta 写 clean_log (默认)
+    │
+    └─ LANGFUSE_ENABLED=true  → instructor @observe 装饰器
+         │
+         ├─ 自动上报: trace_id, span, model, tokens, cost, latency
+         ├─ 自动上报: prompt_version, input/output 内容
+         └─ Langfuse Dashboard → 成本趋势 / 延迟 P99 / 错误率 / prompt A/B
+```
+
+**集成代码:**
+
+```python
+# src/dataclean/llm_client.py (Langfuse 集成)
+
+from langfuse.decorators import observe
+
+class LLMClient:
+    def __init__(self, settings):
+        ...
+        self._langfuse_enabled = settings.langfuse_enabled
+
+    @observe(name="llm_extract")    # Langfuse 自动追踪 (仅 enabled 时生效)
+    def extract(self, response_model, system_prompt, user_content, **kwargs):
+        ...
+```
+
+**Langfuse 仪表盘可回答的问题:**
+
+| 问题 | Langfuse 功能 |
+|------|-------------|
+| 本月 LLM 花了多少钱? | Cost Dashboard (按 model/provider 分组) |
+| 哪个 prompt 版本质量更好? | Prompt A/B 对比 (v1 vs v2 成功率) |
+| 调用延迟 P99 是多少? | Latency Monitoring |
+| 哪些调用失败了? | Error Traces (按错误类型过滤) |
+| Schema 校验失败率? | Trace Tags + 自定义 score |
+
+**部署:** 在 `ops/docker-compose.yml` 中增加 Langfuse 服务 (self-hosted), 与 Grafana/Jaeger 一起部署。
+
+---
+
 ## `.env` 新增参数
 
 ```bash
@@ -694,6 +757,12 @@ GRAFANA_ADMIN_PASSWORD=admin
 FEISHU_WEBHOOK_URL=                                  # 飞书自定义机器人 Webhook
 FEISHU_WEBHOOK_SECRET=                               # 飞书签名密钥
 ALERT_ENABLED=true
+
+# Langfuse (LLM 专属可观测性)
+LANGFUSE_ENABLED=false                               # true 启用 LLM trace 上报
+LANGFUSE_HOST=http://localhost:3000                  # 自托管 Langfuse 地址
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
 ```
 
 ---
@@ -709,6 +778,7 @@ opentelemetry-instrumentation-sqlalchemy>=0.51b0
 opentelemetry-instrumentation-requests>=0.51b0
 prometheus-client>=0.21
 structlog>=25.1
+langfuse>=2.0                                          # LLM trace + 成本追踪 + prompt 版本管理
 ```
 
 ---
@@ -724,6 +794,7 @@ structlog>=25.1
 | Phase 3 | P4-06 Docker Compose 部署 | 1.5 天 | P4-01/02/03 |
 | Phase 3 | P4-04 Grafana 看板 | 3 天 | P4-06 |
 | Phase 3 | P4-05 告警规则 | 1.5 天 | P4-06 |
+| Phase 3 | P4-08 Langfuse LLM 可观测性 | 1.5 天 | P4-06 + dataclean LLMClient |
 
 ---
 
@@ -733,3 +804,4 @@ structlog>=25.1
 |---------|------|
 | P1-26: 可观测性 (structlog + 飞书告警) | 已吸收至 P4-03 (structlog) + P4-05 (告警). P1-26 标记为 "→ 已合并至 P4" |
 | 架构 review 待办: CollectResult trace_id/latency_ms + collect_metrics 表 | 已纳入 P4-07 |
+| 13-数据清洗与LLM.md § Langfuse 可观测性 | 已移入 P4-08, doc-13 保留交叉引用 |

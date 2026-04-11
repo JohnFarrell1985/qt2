@@ -82,7 +82,7 @@
 | 交易模块 | `src/trading/` | ✅ 已实现 | QMT 交易 + 风控 + 模拟盘 |
 | API 服务 | `src/api/` | ✅ 已实现 | FastAPI 路由 + Swagger |
 | 数据采集 | `src/datacollect/` | ✅ 已实现 | 六层反爬 + 异步并发引擎 + 多源 fallback (48 项) |
-| 数据清洗 | `src/dataclean/` | 📋 设计完成 | LLM 清洗 + Schema 注册表 + 三级降级 |
+| 数据清洗 | `src/dataclean/` | 📋 设计完成 | instructor + LLM 清洗 + Schema 注册表 + 三级降级 |
 | 情绪引擎 | `src/sentiment/` | 📋 设计完成 | 6 维合成指数 + 宏观状态 + 策略 Profile |
 | ETF 轮动 | `src/strategy/etf_rotation/` | 📋 设计完成 | VAA/DAA/CAA + 崩盘保护 + 全球配置 |
 | 知识蒸馏 | `src/distill/` | 📋 设计完成 | 多教师共识 + LoRA/DPO + 数据飞轮 |
@@ -134,6 +134,8 @@
 | | Playwright | >=1.40 | 浏览器级采集 (可选) |
 | | tavily-python | >=0.5 | AI 搜索兜底 (可选) |
 | **LLM / NLP** | openai SDK | >=2.0 | DeepSeek / Qwen 统一客户端 |
+| | instructor | >=1.14 | 结构化 LLM 输出 (Pydantic + auto-retry) |
+| | tenacity | >=8.0 | 指数退避重试 |
 | | FinBERT2-Base | 125M (2025) | 中文金融情绪分类 (Encoder, ONNX) |
 | | Qwen3-0.6B | 600M (2025) | 结构化 JSON 抽取 (Decoder, GGUF) |
 | | transformers | >=5.0 | HuggingFace 推理 |
@@ -239,7 +241,7 @@ docker compose up -d
 | [运维部署](doc/09-运维部署.md) | Docker、环境变量、定时任务 |
 | [市场情绪引擎](doc/11-市场情绪引擎.md) | 情绪特征、合成指数、宏观分类、策略 Profile |
 | [数据采集模块](doc/12-数据采集模块.md) | 六层反爬、异步并发引擎、多源 fallback、48 项全部完成 |
-| [数据清洗与 LLM](doc/13-数据清洗与LLM.md) | LLM 清洗管道、Schema 注册表、降级策略 |
+| [数据清洗与 LLM](doc/13-数据清洗与LLM.md) | instructor + LLM 清洗、Schema 注册表、降级策略 |
 | [ETF 资产配置轮动](doc/14-ETF资产配置轮动.md) | VAA/DAA/CAA 策略族、候选池、崩盘保护 |
 | **[TODO 待办清单](doc/TODO.md)** | **63 项剩余: P0+P0.1 已完成, P1~P4 待实施** |
 
@@ -291,6 +293,8 @@ docker compose up -d
 | [Barra-CNE6-LightGBM](https://github.com/finexsf/Barra-CNE6-LightGBM) | - | CNE6 + LGB 选股 |
 | [FinBERT2](https://github.com/valuesimplex/FinBERT) | - | 中文金融 NLP |
 | [NVIDIA Financial Distillation](https://github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data) | 41 | 生产级蒸馏蓝图 |
+| [instructor](https://github.com/jxnl/instructor) | 12.6k+ | 结构化 LLM 输出 (Pydantic + auto-retry) |
+| [Langfuse](https://github.com/langfuse/langfuse) | 10k+ | LLM 可观测性 (开源, 自托管) |
 | [TensorZero](https://github.com/tensorzero/tensorzero) | 7.3k+ | LLMOps 程序化策展 |
 | [SetFit](https://github.com/SetFit/setfit) | 2.2k+ | 少样本学习 |
 | [Pandera](https://pandera.readthedocs.io/) | 3.5k+ | DataFrame schema 校验 |
