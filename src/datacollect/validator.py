@@ -9,9 +9,12 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from src.common.config import settings
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
+
+_CFG = settings.datacollect
 
 STOCK_CODE_PATTERN = re.compile(r"^\d{6}\.(SH|SZ|BJ)$")
 
@@ -57,11 +60,11 @@ class DataValidator:
 
     def __init__(
         self,
-        pct_change_limit: float = 22.0,
-        zscore_limit: float = 10.0,
+        pct_change_limit: float | None = None,
+        zscore_limit: float | None = None,
     ):
-        self._pct_change_limit = pct_change_limit
-        self._zscore_limit = zscore_limit
+        self._pct_change_limit = pct_change_limit if pct_change_limit is not None else _CFG.validator_pct_change_limit
+        self._zscore_limit = zscore_limit if zscore_limit is not None else _CFG.validator_zscore_limit
 
     def validate(self, df: pd.DataFrame, data_type: str) -> ValidationResult:
         """执行三级校验, 返回 ValidationResult。"""

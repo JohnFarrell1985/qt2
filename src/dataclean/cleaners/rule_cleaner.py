@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.dataclean.base import BaseCleaner, CleanResult
+from src.dataclean.base import RAW_INPUT_MAX_LEN, BaseCleaner, CleanResult
 
 POSITIVE_KEYWORDS: list[str] = [
     "涨停", "利好", "上涨", "突破", "降准", "放量", "大涨", "暴涨", "利多", "买入",
@@ -17,6 +17,8 @@ NEGATIVE_KEYWORDS: list[str] = [
     "跌停", "利空", "下跌", "暴跌", "加息", "制裁", "大跌", "利淡", "卖出", "减持",
 ]
 STOCK_CODE_PATTERN: re.Pattern[str] = re.compile(r"[036]\d{5}\.[A-Z]{2}")
+RULE_MAX_STOCKS: int = 5
+"""规则清洗最多返回的股票数"""
 
 
 class RuleCleaner(BaseCleaner):
@@ -42,11 +44,11 @@ class RuleCleaner(BaseCleaner):
                 "news_sentiment_score": score,
                 "hot_stocks": [
                     {"code": c, "reason": "关键词匹配", "sentiment": score}
-                    for c in codes[:5]
-                ],
-                "market_mood_text": "规则提取(LLM不可用)",
-            },
-            raw_input=text[:500],
+                for c in codes[:RULE_MAX_STOCKS]
+            ],
+            "market_mood_text": "规则提取(LLM不可用)",
+        },
+        raw_input=text[:RAW_INPUT_MAX_LEN],
             llm_usage={},
             is_fallback=True,
         )

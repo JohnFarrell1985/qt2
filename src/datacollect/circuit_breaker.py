@@ -12,9 +12,12 @@ import enum
 import threading
 import time
 
+from src.common.config import settings
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
+
+_CFG = settings.datacollect
 
 
 class CircuitState(enum.Enum):
@@ -39,15 +42,16 @@ class CircuitBreaker:
     def __init__(
         self,
         name: str,
-        failure_threshold: int = 5,
-        cooldown_sec: float = 300.0,
-        success_threshold: int = 2,
+        failure_threshold: int | None = None,
+        cooldown_sec: float | None = None,
+        success_threshold: int | None = None,
     ):
         self._name = name
-        self._failure_threshold = failure_threshold
-        self._base_cooldown = cooldown_sec
-        self._cooldown_sec = cooldown_sec
-        self._success_threshold = success_threshold
+        self._failure_threshold = failure_threshold if failure_threshold is not None else _CFG.cb_failure_threshold
+        _cd = cooldown_sec if cooldown_sec is not None else _CFG.cb_cooldown_sec
+        self._base_cooldown = _cd
+        self._cooldown_sec = _cd
+        self._success_threshold = success_threshold if success_threshold is not None else _CFG.cb_success_threshold
 
         self._state = CircuitState.CLOSED
         self._consecutive_failures = 0

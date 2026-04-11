@@ -317,6 +317,35 @@ class DatacollectConfig(BaseSettings):
     rss_rate: float = Field(default=1.0, alias="DATACOLLECT_RSS_RATE")
     rss_burst: int = Field(default=5, alias="DATACOLLECT_RSS_BURST")
 
+    # Circuit breaker
+    cb_failure_threshold: int = Field(default=5, alias="DATACOLLECT_CB_FAILURE_THRESHOLD")
+    cb_cooldown_sec: float = Field(default=300.0, alias="DATACOLLECT_CB_COOLDOWN_SEC")
+    cb_success_threshold: int = Field(default=2, alias="DATACOLLECT_CB_SUCCESS_THRESHOLD")
+
+    # Dead letter queue
+    dead_letter_backoff_base: float = Field(default=60.0, alias="DATACOLLECT_DL_BACKOFF_BASE")
+    dead_letter_max_retries: int = Field(default=3, alias="DATACOLLECT_DL_MAX_RETRIES")
+    dead_letter_pending_limit: int = Field(default=100, alias="DATACOLLECT_DL_PENDING_LIMIT")
+
+    # Anti-crawl sentinel
+    sentinel_latency_spike_sec: float = Field(default=10.0, alias="DATACOLLECT_SENTINEL_LATENCY_SPIKE_SEC")
+    sentinel_latency_warn_sec: float = Field(default=5.0, alias="DATACOLLECT_SENTINEL_LATENCY_WARN_SEC")
+    sentinel_soft_block_min_bytes: int = Field(default=50, alias="DATACOLLECT_SENTINEL_SOFT_BLOCK_MIN_BYTES")
+    sentinel_consecutive_timeout_limit: int = Field(default=2, alias="DATACOLLECT_SENTINEL_CONSECUTIVE_TIMEOUT")
+    sentinel_history_size: int = Field(default=50, alias="DATACOLLECT_SENTINEL_HISTORY_SIZE")
+
+    # Data validator
+    validator_pct_change_limit: float = Field(default=22.0, alias="DATACOLLECT_VALIDATOR_PCT_CHANGE_LIMIT")
+    validator_zscore_limit: float = Field(default=10.0, alias="DATACOLLECT_VALIDATOR_ZSCORE_LIMIT")
+
+    # Idempotency
+    idempotency_ttl_hours: int = Field(default=24, alias="DATACOLLECT_IDEMPOTENCY_TTL_HOURS")
+
+    # RSS feeds
+    rsshub_base_url: str = Field(default="https://rsshub.app", alias="DATACOLLECT_RSSHUB_BASE_URL")
+    rss_max_entries: int = Field(default=50, alias="DATACOLLECT_RSS_MAX_ENTRIES")
+    rss_summary_max_chars: int = Field(default=500, alias="DATACOLLECT_RSS_SUMMARY_MAX_CHARS")
+
 
 # ================================================================
 # 数据清洗 LLM (dataclean)

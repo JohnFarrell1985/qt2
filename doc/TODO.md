@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (索引)
 
-> 最后更新: 2026-04-02
+> 最后更新: 2026-04-11
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -40,13 +40,13 @@
 | API 服务 | `src/api/` | FastAPI 路由 (依赖注入) |
 | 公共基础 | `src/common/` | 配置 / 数据库 (DeclarativeBase) / 日志 |
 | 基础设施 | `.github/`, `alembic/` | CI/CD (GitHub Actions) + Alembic 数据库迁移 |
+| 数据采集 | `src/datacollect/` | 六层反爬 + 异步并发引擎 + 多源 fallback (A01-A48, 48 项) |
+| 数据清洗 | `src/dataclean/` | instructor + LLM 清洗 + 三级降级 + E2E 测试 (P0-12~20, 9 项) |
 
 **仅有文档设计、代码未创建** (待办):
 
 | 模块 | 路径 | 设计文档 |
 |------|------|---------|
-| 数据采集 | `src/datacollect/` | [doc/12-数据采集模块.md](12-数据采集模块.md) |
-| 数据清洗 | `src/dataclean/` | [doc/13-数据清洗与LLM.md](13-数据清洗与LLM.md) |
 | 个股雷达 | `src/stockradar/` | doc/13 引擎扩展章节 |
 | 资金流向 | `src/fundflow/` | doc/13 引擎扩展章节 |
 | 风险预警 | `src/riskmonitor/` | doc/13 引擎扩展章节 |
@@ -247,12 +247,9 @@
 ```
 Phase 0 — ✅ 已完成 (Bug 修复 + 基础设施)
 
-Phase 0.1 — 数据采集 + 清洗 (下一步):
-  A01~A07   datacollect 核心 (HTTP客户端/限流/采集器/注册表)
-  A18~A23   反爬加固 (自适应限流/熔断/哨兵/健康仪表盘/自选股)
-  A24~A29   架构加固 (数据质量/死信/幂等/新鲜度/配置统一/流式持久化)
-  A30~A38   高性能加固 (异步引擎/代理轮换/写缓冲/COPY批量/连接复用/背压/内存优化)
-  P0-12~19  dataclean 核心 (LLM客户端/Schema/清洗器)
+Phase 0.1 — ✅ 已完成 (数据采集 + 清洗):
+  A01~A38   datacollect 48 项全部完成 (HTTP客户端/限流/反爬/架构/高性能)
+  P0-12~20  dataclean 9 项全部完成 (LLM客户端/Schema/清洗器/Prompt/Config)
 
 Phase 1 (第 5-9 周):
   P1-01~02  Purged CV + Walk-Forward 重训练 (含 Regime-Aware)

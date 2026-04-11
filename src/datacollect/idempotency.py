@@ -5,19 +5,23 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from src.common.config import settings
 from src.common.logger import get_logger
 from src.datacollect.models import CollectLog
 
 logger = get_logger(__name__)
+
+_CFG = settings.datacollect
 
 
 class IdempotencyChecker:
     """基于 CollectLog.idempotency_key 做去重。"""
 
     @staticmethod
-    def is_duplicate(session: Session, idempotency_key: str, ttl_hours: int = 24) -> bool:
+    def is_duplicate(session: Session, idempotency_key: str, ttl_hours: int | None = None) -> bool:
         """检查 TTL 窗口内是否有相同 idempotency_key 的成功记录。"""
-        cutoff = datetime.now() - timedelta(hours=ttl_hours)
+        effective_ttl = ttl_hours if ttl_hours is not None else _CFG.idempotency_ttl_hours
+        cutoff = datetime.now() - timedelta(hours=effective_ttl)
         exists = (
             session.query(CollectLog.id)
             .filter(

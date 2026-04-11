@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from src.common.logger import get_logger
-from src.dataclean.base import BaseCleaner, CleanResult
+from src.dataclean.base import RAW_INPUT_MAX_LEN, BaseCleaner, CleanResult
 from src.dataclean.exceptions import AllProvidersFailedError
 from src.dataclean.prompts.sentiment_prompt import PROMPT_VERSION, SENTIMENT_PROMPT
 from src.dataclean.schemas.sentiment import SentimentExtraction
@@ -35,7 +35,7 @@ class SentimentCleaner(BaseCleaner):
                     engine="sentiment",
                     schema_name="SentimentExtraction",
                     cleaned_data=validated.model_dump(),
-                    raw_input=str(raw_data)[:500],
+                    raw_input=str(raw_data)[:RAW_INPUT_MAX_LEN],
                     llm_usage={},
                     is_fallback=False,
                 )
@@ -54,7 +54,7 @@ class SentimentCleaner(BaseCleaner):
                 engine="sentiment",
                 schema_name="SentimentExtraction",
                 cleaned_data=result.model_dump(),
-                raw_input=str(raw_data)[:500],
+                raw_input=str(raw_data)[:RAW_INPUT_MAX_LEN],
                 llm_usage=usage,
                 is_fallback=False,
             )

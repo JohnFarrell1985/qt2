@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.dataclean.base import BaseCleaner, CleanResult
+from src.dataclean.base import RAW_INPUT_MAX_LEN, BaseCleaner, CleanResult
 
 try:
     import pandas as pd
@@ -32,7 +32,7 @@ class PassthroughCleaner(BaseCleaner):
             engine="passthrough",
             schema_name="raw",
             cleaned_data=data,
-            raw_input=str(raw_data)[:500],
+            raw_input=str(raw_data)[:RAW_INPUT_MAX_LEN],
             llm_usage={},
             is_fallback=False,
         )

@@ -137,10 +137,12 @@ class DataFreshnessMonitor:
 
         return d.weekday() < 5
 
+    _MAX_LOOKBACK_DAYS: int = 10
+
     def _last_trading_day(self, d: date) -> date:
         """获取 d 当天或之前最近的交易日。"""
         current = d
-        for _ in range(10):
+        for _ in range(self._MAX_LOOKBACK_DAYS):
             if self._is_trading_day(current):
                 return current
             current -= timedelta(days=1)

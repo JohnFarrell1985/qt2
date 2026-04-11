@@ -15,9 +15,12 @@ import re
 import threading
 from dataclasses import dataclass, field
 
+from src.common.config import settings
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
+
+_CFG = settings.datacollect
 
 _SOFT_BLOCK_PATTERNS = re.compile(
     r"验证码|captcha|请稍后再试|频繁|too many requests",
@@ -63,17 +66,17 @@ class AntiCrawlSentinel:
 
     def __init__(
         self,
-        latency_spike_sec: float = 10.0,
-        latency_warn_sec: float = 5.0,
-        soft_block_min_bytes: int = 50,
-        consecutive_timeout_limit: int = 2,
-        history_size: int = 50,
+        latency_spike_sec: float | None = None,
+        latency_warn_sec: float | None = None,
+        soft_block_min_bytes: int | None = None,
+        consecutive_timeout_limit: int | None = None,
+        history_size: int | None = None,
     ):
-        self._latency_spike_sec = latency_spike_sec
-        self._latency_warn_sec = latency_warn_sec
-        self._soft_block_min_bytes = soft_block_min_bytes
-        self._consecutive_timeout_limit = consecutive_timeout_limit
-        self._history_size = history_size
+        self._latency_spike_sec = latency_spike_sec if latency_spike_sec is not None else _CFG.sentinel_latency_spike_sec
+        self._latency_warn_sec = latency_warn_sec if latency_warn_sec is not None else _CFG.sentinel_latency_warn_sec
+        self._soft_block_min_bytes = soft_block_min_bytes if soft_block_min_bytes is not None else _CFG.sentinel_soft_block_min_bytes
+        self._consecutive_timeout_limit = consecutive_timeout_limit if consecutive_timeout_limit is not None else _CFG.sentinel_consecutive_timeout_limit
+        self._history_size = history_size if history_size is not None else _CFG.sentinel_history_size
 
         self._domains: dict[str, _DomainState] = {}
         self._lock = threading.Lock()

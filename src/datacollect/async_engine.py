@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from src.common.config import settings
 from src.common.logger import get_logger
 from src.datacollect.async_rate_limiter import AsyncTokenBucketLimiter
 from src.datacollect.base import CollectTask, CollectResult
@@ -15,6 +16,8 @@ from src.datacollect.health import SourceHealthDashboard
 from src.datacollect.validator import DataValidator
 
 logger = get_logger(__name__)
+
+_CFG = settings.datacollect
 
 _SENTINEL = object()
 
@@ -31,13 +34,13 @@ class AsyncCollectEngine:
 
     def __init__(
         self,
-        global_concurrency: int = 50,
+        global_concurrency: int | None = None,
         source_concurrency: dict[str, int] | None = None,
         source_rates: dict[str, tuple[float, int]] | None = None,
         validator: DataValidator | None = None,
         health_dashboard: SourceHealthDashboard | None = None,
     ):
-        self._global_sem = asyncio.Semaphore(global_concurrency)
+        self._global_sem = asyncio.Semaphore(global_concurrency if global_concurrency is not None else _CFG.global_concurrency)
         self._source_sems: dict[str, asyncio.Semaphore] = {}
         if source_concurrency:
             for src, limit in source_concurrency.items():
@@ -71,9 +74,11 @@ class AsyncCollectEngine:
             engine._source_to_rate_domain[src_def.name] = src_def.rate_domain
         return engine
 
+    _DEFAULT_SOURCE_CONCURRENCY: int = 3
+
     def _get_source_sem(self, source: str) -> asyncio.Semaphore:
         if source not in self._source_sems:
-            self._source_sems[source] = asyncio.Semaphore(3)
+            self._source_sems[source] = asyncio.Semaphore(self._DEFAULT_SOURCE_CONCURRENCY)
         return self._source_sems[source]
 
     async def collect_one(

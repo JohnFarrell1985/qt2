@@ -9,17 +9,20 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src.common.config import settings
 from src.common.logger import get_logger
 from src.datacollect.models import CollectDeadLetter
 
 logger = get_logger(__name__)
 
+_CFG = settings.datacollect
+
 
 class DeadLetterDAO:
     """CollectDeadLetter 数据访问对象。"""
 
-    def __init__(self, backoff_base: float = 60.0):
-        self._backoff_base = backoff_base
+    def __init__(self, backoff_base: float | None = None):
+        self._backoff_base = backoff_base if backoff_base is not None else _CFG.dead_letter_backoff_base
 
     def enqueue(
         self,
@@ -30,9 +33,10 @@ class DeadLetterDAO:
         error_type: str,
         error_msg: str,
         payload: dict | None = None,
-        max_retries: int = 3,
+        max_retries: int | None = None,
     ) -> CollectDeadLetter:
         """将失败任务放入死信队列。"""
+        effective_max_retries = max_retries if max_retries is not None else _CFG.dead_letter_max_retries
         dl = CollectDeadLetter(
             task_id=task_id,
             source=source,
@@ -40,7 +44,7 @@ class DeadLetterDAO:
             error_type=error_type,
             error_msg=error_msg,
             payload=payload,
-            max_retries=max_retries,
+            max_retries=effective_max_retries,
             retry_count=0,
             next_retry_at=None,
         )
@@ -49,8 +53,9 @@ class DeadLetterDAO:
         logger.info("dead-letter enqueued task_id=%s source=%s error_type=%s", task_id, source, error_type)
         return dl
 
-    def get_pending(self, session: Session, limit: int = 100) -> list[CollectDeadLetter]:
+    def get_pending(self, session: Session, limit: int | None = None) -> list[CollectDeadLetter]:
         """获取可重试的死信: 未解决 & 未耗尽 & 重试时间已到。"""
+        effective_limit = limit if limit is not None else _CFG.dead_letter_pending_limit
         now = datetime.now()
         return (
             session.query(CollectDeadLetter)
@@ -60,7 +65,7 @@ class DeadLetterDAO:
                 (CollectDeadLetter.next_retry_at.is_(None)) | (CollectDeadLetter.next_retry_at <= now),
             )
             .order_by(CollectDeadLetter.created_at)
-            .limit(limit)
+            .limit(effective_limit)
             .all()
         )
 

@@ -11,6 +11,9 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from src.dataclean.llm_client import LLMClient
 
+RAW_INPUT_MAX_LEN: int = 500
+"""raw_input 字段截断长度 — 所有 cleaner 统一引用"""
+
 
 @dataclass
 class CleanResult:

@@ -82,7 +82,7 @@
 | 交易模块 | `src/trading/` | ✅ 已实现 | QMT 交易 + 风控 + 模拟盘 |
 | API 服务 | `src/api/` | ✅ 已实现 | FastAPI 路由 + Swagger |
 | 数据采集 | `src/datacollect/` | ✅ 已实现 | 六层反爬 + 异步并发引擎 + 多源 fallback (48 项) |
-| 数据清洗 | `src/dataclean/` | 📋 设计完成 | instructor + LLM 清洗 + Schema 注册表 + 三级降级 |
+| 数据清洗 | `src/dataclean/` | ✅ 已实现 | instructor + LLM 清洗 + Schema + 三级降级 (P0-12~20, 9 项) |
 | 情绪引擎 | `src/sentiment/` | 📋 设计完成 | 6 维合成指数 + 宏观状态 + 策略 Profile |
 | ETF 轮动 | `src/strategy/etf_rotation/` | 📋 设计完成 | VAA/DAA/CAA + 崩盘保护 + 全球配置 |
 | 知识蒸馏 | `src/distill/` | 📋 设计完成 | 多教师共识 + LoRA/DPO + 数据飞轮 |
@@ -211,6 +211,7 @@ uv run pytest tests/ -m "not qmt" --cov=src --cov-report=html
 # E2E 端到端测试 (按模块)
 uv run pytest tests/e2e/api/ -v                # API E2E (合成数据)
 uv run pytest tests/e2e/datacollect/ -v        # 数据采集 E2E (真实数据源, 120s超时)
+uv run pytest tests/e2e/dataclean/ -v          # 数据清洗 E2E (LLM API, 需配置 API key)
 uv run pytest tests/e2e/qmt/ -v -m qmt        # QMT 终端 E2E (需 QMT 已登录)
 
 # 全量 E2E (排除 QMT)
@@ -307,7 +308,7 @@ docker compose up -d
 
 ## 配置
 
-- 环境变量: `.env` (项目根目录, 已加入 .gitignore; 新用户可复制 `.env.example` 模板)
+- 环境变量: `env/` 目录下按模块拆分 (`.env.qmt`, `.env.db`, `.env.datacollect` 等), 已加入 .gitignore; 新用户可参考 `env/.env.example` 模板
 - 宏观环境: `macro_env.json` (项目根目录)
 
 ## License

@@ -6,7 +6,7 @@ tushare 仅在方法内部延迟导入, CI 环境无需安装该 SDK。
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.common.config import settings
@@ -210,12 +210,15 @@ class TushareCollector(BaseCollector):
             logger.info("tushare Token 未配置, 数据源不可用")
             return False
         try:
+            today = datetime.now()
+            start = (today - timedelta(days=30)).strftime("%Y%m%d")
+            end = today.strftime("%Y%m%d")
             df = self.query(
                 "trade_cal",
                 exchange="SSE",
                 is_open="1",
-                start_date="20260101",
-                end_date="20260131",
+                start_date=start,
+                end_date=end,
             )
             ok = df is not None and len(df) > 0
             logger.info(

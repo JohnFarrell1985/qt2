@@ -9,19 +9,24 @@ from __future__ import annotations
 import time
 from datetime import datetime
 
+from src.common.config import settings
 from src.common.logger import get_logger
 from src.datacollect.base import BaseCollector, CollectResult, CollectTask
 from src.datacollect.rate_limiter import TokenBucketLimiter
 
 logger = get_logger(__name__)
 
+_CFG = settings.datacollect
+
+_RSSHUB = _CFG.rsshub_base_url.rstrip("/")
+
 DEFAULT_FEEDS: list[dict[str, str]] = [
     {"name": "36kr", "url": "https://36kr.com/feed", "label": "36氪科技财经"},
     {"name": "36kr_article", "url": "https://36kr.com/feed-article", "label": "36氪深度"},
-    {"name": "cls_telegraph", "url": "https://rsshub.app/cls/telegraph", "label": "财联社快讯"},
-    {"name": "wallstreetcn", "url": "https://rsshub.app/wallstreetcn/news/global", "label": "华尔街见闻"},
-    {"name": "eastmoney_news", "url": "https://rsshub.app/eastmoney/report", "label": "东方财富资讯"},
-    {"name": "caixin", "url": "https://rsshub.app/caixin/latest", "label": "财新网"},
+    {"name": "cls_telegraph", "url": f"{_RSSHUB}/cls/telegraph", "label": "财联社快讯"},
+    {"name": "wallstreetcn", "url": f"{_RSSHUB}/wallstreetcn/news/global", "label": "华尔街见闻"},
+    {"name": "eastmoney_news", "url": f"{_RSSHUB}/eastmoney/report", "label": "东方财富资讯"},
+    {"name": "caixin", "url": f"{_RSSHUB}/caixin/latest", "label": "财新网"},
 ]
 
 
@@ -59,7 +64,7 @@ class NewsRssCollector(BaseCollector):
         logger.debug("RSS parse %s (%.0fms, %d entries)", feed_name, elapsed, len(parsed.entries))
 
         items: list[dict] = []
-        for entry in parsed.entries[:50]:
+        for entry in parsed.entries[:_CFG.rss_max_entries]:
             published = None
             if hasattr(entry, "published_parsed") and entry.published_parsed:
                 try:
@@ -69,7 +74,7 @@ class NewsRssCollector(BaseCollector):
 
             items.append({
                 "title": getattr(entry, "title", ""),
-                "summary": getattr(entry, "summary", "")[:500],
+                "summary": getattr(entry, "summary", "")[:_CFG.rss_summary_max_chars],
                 "link": getattr(entry, "link", ""),
                 "source": feed_label,
                 "source_key": feed_name,
