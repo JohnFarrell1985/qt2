@@ -1,5 +1,7 @@
 # 数据清洗与 LLM 模块 (src/dataclean/)
 
+> 最后更新: 2026-04-11 | 状态: **✅ Phase 1 核心完成 (P0-12 ~ P0-20, 共 9 项)**
+
 ## 概述
 
 数据清洗模块是采集和分析之间的**桥梁**——它负责将多种格式的原始数据 (HTML、Markdown、自然语言、JSON) 统一清洗为标准结构化 JSON，供下游各分析引擎使用。
@@ -1208,6 +1210,30 @@ transformers>=4.40      # FinBERT2-Base tokenizer + model
 onnxruntime>=1.17       # FinBERT2 ONNX 推理 (CPU, 无需 GPU 版)
 llama-cpp-python>=0.3   # Qwen3-0.6B GGUF 本地推理 (可选, 也可用 ollama CLI)
 ```
+
+---
+
+## 实现完成总览 (P0-12 ~ P0-20, 全部 ✅)
+
+> 原 TODO-P02.md 任务清单, 已全部完成并合并至本文档。
+
+| # | 描述 | 文件 | 状态 |
+|---|------|------|------|
+| P0-12 | LLMClient 统一客户端 (instructor + 自动降级 + 指数退避 + 成本追踪) | `src/dataclean/llm_client.py` | ✅ |
+| P0-13 | BaseCleaner + CleanResult 抽象基类 | `src/dataclean/base.py` | ✅ |
+| P0-14 | SentimentExtraction Pydantic Schema (情绪分/实体/事件) | `src/dataclean/schemas/sentiment.py` | ✅ |
+| P0-15 | SentimentCleaner LLM 清洗器 (instructor 版) | `src/dataclean/cleaners/sentiment_cleaner.py` | ✅ |
+| P0-16 | PassthroughCleaner 直通清洗器 | `src/dataclean/cleaners/passthrough_cleaner.py` | ✅ |
+| P0-17 | RuleCleaner 规则降级清洗 (关键词+正则) | `src/dataclean/cleaners/rule_cleaner.py` | ✅ |
+| P0-18 | 情绪清洗 Prompt v2 (few-shot + auto-schema + 负约束) | `src/dataclean/prompts/sentiment_prompt.py` | ✅ |
+| P0-19 | 错误层级 + 模块初始化 | `src/dataclean/exceptions.py` + `__init__.py` | ✅ |
+| P0-20 | DatacleanConfig + .env LLM 参数 | `src/common/config.py` + `env/.env.datacollect` | ✅ |
+
+**测试覆盖**: 98 个单元测试 + 13 个 E2E 测试, 单元测试覆盖率 100%。
+
+**新增依赖**: `openai>=1.0`, `instructor>=1.7.0` (已声明在 pyproject.toml)。
+
+**后续扩展 (P1)**: StockEvent Schema + Cleaner (P1-12), RiskAlert Schema (P1-13), Schema+Prompt 注册表 (P1-14), 清洗日志 ORM (P1-15)。
 
 ---
 

@@ -319,6 +319,28 @@ class DatacollectConfig(BaseSettings):
 
 
 # ================================================================
+# 数据清洗 LLM (dataclean)
+# ================================================================
+
+class DatacleanConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    llm_provider: str = Field(default="deepseek", alias="LLM_PROVIDER")
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
+    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_reasoner_model: str = Field(default="deepseek-reasoner", alias="DEEPSEEK_REASONER_MODEL")
+    qwen_api_key: str = Field(default="", alias="QWEN_API_KEY")
+    qwen_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="QWEN_BASE_URL",
+    )
+    qwen_model: str = Field(default="qwen3-max", alias="QWEN_MODEL")
+    llm_temperature: float = Field(default=0.1, alias="LLM_TEMPERATURE")
+    llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
+    llm_timeout: int = Field(default=30, alias="LLM_TIMEOUT")
+
+
+# ================================================================
 # 情绪引擎
 # ================================================================
 
@@ -383,6 +405,7 @@ class Settings(BaseSettings):
     qmt: QMTConfig = QMTConfig()
     download: DownloadConfig = DownloadConfig()
     datacollect: DatacollectConfig = DatacollectConfig()
+    dataclean: DatacleanConfig = DatacleanConfig()
     api: APIConfig = APIConfig()
     webhook: WebhookConfig = WebhookConfig()
 
