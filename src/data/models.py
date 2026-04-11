@@ -1,11 +1,14 @@
 """数据库 ORM 模型"""
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Dict, Any
 
 from sqlalchemy import (
-    Column, String, Float, Date, DateTime, Integer, BigInteger,
-    Text, Index, UniqueConstraint, Boolean,
+    JSON, Column, String, Float, Date, DateTime, Integer, BigInteger,
+    Text, Index, UniqueConstraint, Boolean, func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 
 from src.common.db import Base
 
@@ -636,4 +639,67 @@ class StockRealtime(Base):
     __table_args__ = (
         Index("idx_rt_code_ts", "code", "timestamp"),
         Index("idx_rt_timestamp", "timestamp"),
+    )
+
+
+# ============ 自选股 / 情报 ============
+
+class WatchlistStock(Base):
+    """自选股列表"""
+    __tablename__ = "watchlist_stock"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(20), nullable=False, comment="股票代码 (如 000001.SZ)")
+    name = Column(String(100), nullable=False, default="", comment="股票名称")
+    source = Column(String(30), nullable=False, default="qmt", comment="来源: qmt/csv/manual")
+    added_at = Column(DateTime, default=func.now(), comment="加入时间")
+    removed_at = Column(DateTime, nullable=True, comment="移除时间")
+    is_active = Column(Boolean, default=True, comment="是否活跃")
+
+    __table_args__ = (
+        Index("idx_watchlist_code", "code"),
+        Index("idx_watchlist_active", "is_active"),
+    )
+
+
+class WatchlistIntel(Base):
+    """自选股情报 — 新闻/公告/讨论/资金异动等原始数据"""
+    __tablename__ = "watchlist_intel"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(20), nullable=False, comment="股票代码")
+    intel_type = Column(String(30), nullable=False, comment="情报类型: news/announcement/discussion/capital_flow")
+    title = Column(String(500), nullable=False, default="", comment="标题")
+    content = Column(Text, comment="内容摘要或全文")
+    source = Column(String(50), nullable=False, comment="数据来源: eastmoney/akshare/xueqiu/rss")
+    url = Column(String(1000), comment="原始链接")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), comment="原始结构化数据")
+    published_at = Column(DateTime, comment="发布时间")
+    collected_at = Column(DateTime, default=func.now(), comment="采集时间")
+
+    __table_args__ = (
+        Index("idx_wintel_code_type", "code", "intel_type"),
+        Index("idx_wintel_collected", "collected_at"),
+    )
+
+
+# ============ 全球市场快照 ============
+
+class GlobalMarketSnapshot(Base):
+    """全球市场快照 — 存储外围市场原始数据, 供情绪引擎合成 global_mood"""
+    __tablename__ = "global_market_snapshot"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trade_date = Column(Date, nullable=False, comment="交易日期")
+    symbol = Column(String(30), nullable=False, comment="标的符号 (SPX/XAUUSD/USDCNY/...)")
+    asset_class = Column(String(20), nullable=False, comment="资产类别: global_index/forex/commodity/bond/vix")
+    close_price = Column(Float, comment="收盘价/最新价")
+    change_pct = Column(Float, comment="涨跌幅 (%)")
+    source = Column(String(30), nullable=False, comment="数据来源: yfinance/sina/akshare")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict, comment="原始完整数据")
+    collected_at = Column(DateTime, default=func.now(), comment="采集时间")
+
+    __table_args__ = (
+        Index("idx_gms_date_symbol", "trade_date", "symbol"),
+        UniqueConstraint("trade_date", "symbol", "source", name="uq_gms_date_symbol_source"),
     )

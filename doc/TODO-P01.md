@@ -3,17 +3,19 @@
 > 最后更新: 2026-04-02
 >
 > A18-A23 为反爬加固 + 自选股情报, A24-A29 为架构 review 新增高优项 (数据质量/死信/幂等/新鲜度/配置统一/流式持久化),
-> A30-A38 为高性能 review 新增项 (异步并发引擎/代理IP轮换/写缓冲/COPY批量写入/连接复用/背压/内存优化)
+> A30-A38 为高性能 review 新增项 (异步并发引擎/代理IP轮换/写缓冲/COPY批量写入/连接复用/背压/内存优化),
+> A39-A48 为多层数据采集扩展 (Tier 1 A 股源补齐 + Tier 2 全球情报信号采集)
 >
-> 分两大阶段:
-> - **Phase A — 数据采集基础设施 + 结构化行情数据**: 反爬/限流客户端 + 日线/ETF/财务/基本面/板块等核心数据，**优先完成**
-> - **Phase B — LLM 数据清洗 (暂缓)**: 新闻/情绪/舆情的 LLM 结构化抽取，待 Phase A 完成后启动
+> 分三大阶段:
+> - **Phase A — 数据采集基础设施 + 结构化行情数据**: 反爬/限流客户端 + 日线/ETF/财务/基本面/板块等核心数据，**已完成**
+> - **Phase A2 — 多层数据采集扩展**: Tier 1 A 股源补齐 (cb/ETF/financial 4-5 源) + Tier 2 全球情报信号 (yfinance/新浪/RSS)，**已完成**
+> - **Phase B — LLM 数据清洗 (暂缓)**: 新闻/情绪/舆情的 LLM 结构化抽取，待 Phase A2 完成后启动
 >
 > 返回总览: [TODO.md](TODO.md) | P0 已全部完成
 
 ---
 
-## 采集基础设施 + 结构化行情数据采集 (38 项, ~29 天)
+## 采集基础设施 + 结构化行情数据采集 (48 项, ~34 天)
 
 > **目标**: 构建反爬/限流基础设施，通过 MiniQMT (xtquant) 和 akshare 双源互补，将日线、ETF、
 > 财务、基本面、板块等核心量化数据采集完整并入库 PostgreSQL。
@@ -1347,4 +1349,125 @@ DATACOLLECT_PROXY_BLACKLIST_COOLDOWN=600      # 被封代理冷却时间 (秒)
 | 分钟线 | `stock_minute` | **不采集历史** | MiniQMT 盘中实时 | 仅实时查看 |
 | 下载进度 | `stock_download_progress` | — | 引擎自动维护 | 5,489 行 (dump), 需接入引擎 |
 | 自选股列表 | `watchlist_stocks` | 动态 (每日更新) | MiniQMT `我的自选` | **需新增 ORM**, A22 |
-| 自选股情报 | `watchlist_intel` | 持续采集 | RSS/东财/雪球/efinance | **需新增 ORM**, A23 |
+| 自选股情报 | `watchlist_intel` | 持续采集 | RSS/东财/雪球/efinance | ✅ A23 |
+|| 全球市场快照 | `global_market_snapshot` | 每日快照 | yfinance/新浪/akshare | ✅ A42 |
+
+---
+
+### A-iii. 多层数据采集扩展 — Tier 1 补齐 + Tier 2 全球情报 (10 项, ~5 天) ✅
+
+> 设计原则: Tier 1 (交易标的) 需要 4-5 个冗余源确保可靠, Tier 2 (情报信号) 轻量采集 2-3 源用于 SentimentDaily.global_mood 合成。
+> 全球市场数据（美股/港股/VIX/黄金/原油/外汇/国债/期货基差/财经新闻）不是交易标的,
+> 而是作为 A 股盘前情报信号 — 全球市场联动分析。
+
+#### P0.1-A39: Tier 1 可转债源补齐 (1源→5源) ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `eastmoney_collector.py`, `tushare_collector.py`, `adata_collector.py`, `data_sources.json` |
+| **工作量** | 0.5 天 |
+
+新增: eastmoney `fetch_cb_list`/`fetch_cb_kline`, tushare `query_cb_basic`/`query_cb_daily`, adata `get_cb_list`/`get_cb_market`。
+fallback_chains: `["xtquant", "akshare", "tushare", "eastmoney", "adata"]`
+
+#### P0.1-A40: Tier 1 ETF 源补齐 (3源→5源) ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `eastmoney_collector.py`, `data_sources.json` |
+| **工作量** | 0.3 天 |
+
+新增: eastmoney `fetch_etf_list`/`fetch_etf_kline`, xtquant 加入 fallback_chains。
+fallback_chains: `["xtquant", "akshare", "tushare", "adata", "eastmoney"]`
+
+#### P0.1-A41: Tier 1 财务数据源补齐 (3源→5源) ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `eastmoney_collector.py`, `data_sources.json` |
+| **工作量** | 0.3 天 |
+
+新增: eastmoney `fetch_financial` (三大报表), xtquant 加入 fallback_chains。
+fallback_chains: `["xtquant", "baostock", "akshare", "tushare", "eastmoney"]`
+
+#### P0.1-A42: GlobalMarketSnapshot ORM 模型 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | data |
+| **文件** | `src/data/models.py` |
+| **工作量** | 0.2 天 |
+
+新增 `global_market_snapshot` 表: trade_date, symbol, asset_class, close_price, change_pct, source, raw_data。
+唯一约束: (trade_date, symbol, source)。用于存储外围市场原始快照供情绪引擎合成。
+
+#### P0.1-A43: data_sources.json Tier 2 源定义 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect |
+| **文件** | `src/datacollect/data_sources.json` |
+| **工作量** | 0.2 天 |
+
+新增 3 个 Tier 2 源: yfinance (全球市场主力), sina_global (新浪备用), rss_aggregator (财经新闻)。
+新增 9 条 Tier 2 fallback_chains: global_index, vix, gold, crude_oil, forex, bond_yield, ftse_a50, futures_basis, financial_news。
+
+#### P0.1-A44: YfinanceCollector 全球市场采集器 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `src/datacollect/collectors/yfinance_collector.py` |
+| **工作量** | 0.5 天 |
+
+Tier 2 主力源。覆盖: S&P500/NASDAQ/DJI/HSI/NIKKEI/FTSE/DAX (全球指数), VIX, XAUUSD (黄金),
+WTI/BRENT (原油), USDCNY/DXY (外汇), US10Y/US2Y (国债), FTSE_A50 (富时中国A50)。
+
+#### P0.1-A45: SinaGlobalCollector 新浪全球行情采集器 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `src/datacollect/collectors/sina_global_collector.py` |
+| **工作量** | 0.5 天 |
+
+Tier 2 备用源。通过新浪 `hq.sinajs.cn` HTTP API 获取全球指数/外汇/商品期货实时快照。
+解析 `var hq_str_` 格式响应。
+
+#### P0.1-A46: NewsRssCollector 财经新闻 RSS 采集器 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect/collectors |
+| **文件** | `src/datacollect/collectors/news_rss_collector.py` |
+| **工作量** | 0.3 天 |
+
+通过 RSSHub 代理采集中文财经新闻: 财联社快讯、华尔街见闻、东方财富资讯、财新网。
+用于 news_sentiment_score 计算。
+
+#### P0.1-A47: SentimentBridge 情报→情绪桥接 ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | datacollect |
+| **文件** | `src/datacollect/sentiment_bridge.py` |
+| **工作量** | 0.5 天 |
+
+从 GlobalMarketSnapshot 查询当日快照, 计算 SentimentDaily 字段:
+- 直接映射: fx_usdcny, gold_price_usd, crude_oil_usd
+- 合成 global_mood: SPX涨跌 + VIX恐慌 + 黄金避险 + 人民币汇率 + 富时A50 加权 → clip(-1, +1)
+
+#### P0.1-A48: OpenClaw 外部推送 ingest API ✅
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | api |
+| **文件** | `src/api/routers/sentiment_router.py` |
+| **工作量** | 0.3 天 |
+
+新增 `POST /api/sentiment/ingest/external` 端点。接收 OpenClaw Cron 推送的情报数据
+(gold_price_usd, crude_oil_usd, news_sentiment_score 等), merge 到 SentimentDaily,
+写入 SentimentIngestLog 审计日志。与 datacollect 直采的数据互补。

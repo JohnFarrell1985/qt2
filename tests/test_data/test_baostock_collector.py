@@ -81,12 +81,16 @@ class TestInit:
     def test_source_name(self, collector):
         assert collector.SOURCE == "baostock"
 
+    def test_initially_not_logged_in(self, collector):
+        assert collector._logged_in is False
+        assert collector._bs is None
+
 
 # ====================================================================
-# _login
+# _ensure_login
 # ====================================================================
 
-class TestLogin:
+class TestEnsureLogin:
 
     @patch.dict("sys.modules", {"baostock": MagicMock()})
     def test_login_success(self, collector):
@@ -94,9 +98,10 @@ class TestLogin:
         mock_bs = sys.modules["baostock"]
         mock_bs.login.return_value = _make_login_result("0")
 
-        bs = collector._login()
+        bs = collector._ensure_login()
         assert bs is mock_bs
         mock_bs.login.assert_called_once()
+        assert collector._logged_in is True
 
     @patch.dict("sys.modules", {"baostock": MagicMock()})
     def test_login_failure_raises(self, collector):
@@ -105,12 +110,22 @@ class TestLogin:
         mock_bs.login.return_value = _make_login_result("1", "auth error")
 
         with pytest.raises(RuntimeError, match="login 失败"):
-            collector._login()
+            collector._ensure_login()
 
     def test_import_error(self, collector):
         with patch.dict("sys.modules", {"baostock": None}):
             with pytest.raises((RuntimeError, ImportError)):
-                collector._login()
+                collector._ensure_login()
+
+    @patch.dict("sys.modules", {"baostock": MagicMock()})
+    def test_reuses_session(self, collector):
+        import sys
+        mock_bs = sys.modules["baostock"]
+        mock_bs.login.return_value = _make_login_result("0")
+
+        collector._ensure_login()
+        collector._ensure_login()
+        mock_bs.login.assert_called_once()
 
 
 # ====================================================================
@@ -154,7 +169,6 @@ class TestQueryHistoryKData:
 
         df = collector.query_history_k_data("sh.600000", "2024-01-01", "2024-01-03")
         assert len(df) == 1
-        mock_bs.logout.assert_called_once()
 
     @patch.dict("sys.modules", {"baostock": MagicMock(), "pandas": pd})
     def test_minute_kline_no_turn_fields(self, collector):
@@ -170,7 +184,7 @@ class TestQueryHistoryKData:
         assert len(df) == 1
 
     @patch.dict("sys.modules", {"baostock": MagicMock(), "pandas": pd})
-    def test_logout_on_error(self, collector):
+    def test_query_error_raises(self, collector):
         import sys
         mock_bs = sys.modules["baostock"]
         mock_bs.login.return_value = _make_login_result("0")
@@ -182,15 +196,13 @@ class TestQueryHistoryKData:
 
         with pytest.raises(RuntimeError, match="query_history_k_data_plus 失败"):
             collector.query_history_k_data("sh.600000", "2024-01-01", "2024-01-03")
-        mock_bs.logout.assert_called_once()
 
     def test_limiter_acquire_called(self, collector, mock_limiter):
-        with patch.object(collector, "_login") as mock_login:
-            mock_bs = MagicMock()
-            mock_login.return_value = mock_bs
+        with patch.object(collector, "_ensure_login"):
+            collector._bs = MagicMock()
             rs = _make_result_data([], ["date"])
             rs.error_code = "0"
-            mock_bs.query_history_k_data_plus.return_value = rs
+            collector._bs.query_history_k_data_plus.return_value = rs
 
             collector.query_history_k_data("sh.600000", "2024-01-01", "2024-01-03")
             mock_limiter.acquire.assert_called_once()
@@ -213,7 +225,6 @@ class TestFinancialQueries:
 
         df = collector.query_stock_basic()
         assert len(df) == 1
-        mock_bs.logout.assert_called_once()
 
     @patch.dict("sys.modules", {"baostock": MagicMock(), "pandas": pd})
     def test_query_profit_data(self, collector):
@@ -270,7 +281,7 @@ class TestCollect:
             collector.collect(task)
 
     def test_private_method_blocked(self, collector):
-        task = CollectTask(params={"func_name": "_login"})
+        task = CollectTask(params={"func_name": "_ensure_login"})
         with pytest.raises(AttributeError, match="没有公开方法"):
             collector.collect(task)
 
@@ -313,12 +324,45 @@ class TestCollect:
 class TestHealthCheck:
 
     def test_healthy(self, collector):
-        with patch.object(collector, "_login") as mock_login:
-            mock_bs = MagicMock()
-            mock_login.return_value = mock_bs
+        with patch.object(collector, "_ensure_login"):
             assert collector.health_check() is True
-            mock_bs.logout.assert_called_once()
 
     def test_unhealthy(self, collector):
-        with patch.object(collector, "_login", side_effect=RuntimeError("fail")):
+        with patch.object(collector, "_ensure_login", side_effect=RuntimeError("fail")):
             assert collector.health_check() is False
+
+
+# ====================================================================
+# close / context manager
+# ====================================================================
+
+class TestCloseAndContextManager:
+
+    @patch.dict("sys.modules", {"baostock": MagicMock()})
+    def test_close_calls_logout(self, collector):
+        import sys
+        mock_bs = sys.modules["baostock"]
+        mock_bs.login.return_value = _make_login_result("0")
+
+        collector._ensure_login()
+        collector.close()
+        mock_bs.logout.assert_called_once()
+        assert collector._logged_in is False
+
+    def test_close_noop_when_not_logged_in(self, collector):
+        collector.close()
+        assert collector._logged_in is False
+
+    @patch.dict("sys.modules", {"baostock": MagicMock()})
+    def test_context_manager(self, mock_limiter):
+        import sys
+        mock_bs = sys.modules["baostock"]
+        mock_bs.login.return_value = _make_login_result("0")
+        mock_bs.query_stock_basic.return_value = _make_result_data(
+            [["sh.600000", "test"]], ["code", "name"],
+        )
+
+        with BaostockCollector(limiter=mock_limiter) as c:
+            c.query_stock_basic()
+
+        mock_bs.logout.assert_called_once()

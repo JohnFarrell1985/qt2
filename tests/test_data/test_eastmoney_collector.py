@@ -289,6 +289,159 @@ class TestHealthCheck:
 
 
 # ====================================================================
+# _cb_secid
+# ====================================================================
+
+class TestCbSecid:
+
+    def test_sz_cb(self):
+        assert EastmoneyCollector._cb_secid("123456") == "0.123456"
+
+    def test_sh_cb(self):
+        assert EastmoneyCollector._cb_secid("110001") == "1.110001"
+
+    def test_fallback(self):
+        assert EastmoneyCollector._cb_secid("600000") == "1.600000"
+
+
+# ====================================================================
+# _etf_secid
+# ====================================================================
+
+class TestEtfSecid:
+
+    def test_sh_etf_51x(self):
+        assert EastmoneyCollector._etf_secid("510300") == "1.510300"
+
+    def test_sh_etf_58x(self):
+        assert EastmoneyCollector._etf_secid("588000") == "1.588000"
+
+    def test_sz_etf_15x(self):
+        assert EastmoneyCollector._etf_secid("159915") == "0.159915"
+
+    def test_sz_etf_16x(self):
+        assert EastmoneyCollector._etf_secid("169101") == "0.169101"
+
+
+# ====================================================================
+# fetch_cb_list
+# ====================================================================
+
+class TestFetchCbList:
+
+    def test_parses_diff(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({
+            "rc": 0,
+            "data": {
+                "diff": [
+                    {"f12": "123456", "f14": "某转债", "f2": 105.3, "f3": 0.5, "f5": 50000, "f6": 5265000},
+                ],
+            },
+        })
+        df = collector.fetch_cb_list()
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 1
+        assert df.iloc[0]["code"] == "123456"
+
+    def test_empty(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({"rc": 0, "data": {"diff": []}})
+        df = collector.fetch_cb_list()
+        assert len(df) == 0
+
+
+# ====================================================================
+# fetch_cb_kline
+# ====================================================================
+
+class TestFetchCbKline:
+
+    def test_sh_cb_secid(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({"rc": 0, "data": {"klines": []}})
+        collector.fetch_cb_kline("110001")
+        params = mock_client.get.call_args[1]["params"]
+        assert params["secid"] == "1.110001"
+
+    def test_sz_cb_secid(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({"rc": 0, "data": {"klines": []}})
+        collector.fetch_cb_kline("123456")
+        params = mock_client.get.call_args[1]["params"]
+        assert params["secid"] == "0.123456"
+
+
+# ====================================================================
+# fetch_etf_list
+# ====================================================================
+
+class TestFetchEtfList:
+
+    def test_parses_diff(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({
+            "rc": 0,
+            "data": {
+                "diff": [
+                    {"f12": "510300", "f14": "沪深300ETF", "f2": 4.2, "f3": 0.8, "f5": 200000, "f6": 840000},
+                ],
+            },
+        })
+        df = collector.fetch_etf_list()
+        assert len(df) == 1
+        assert df.iloc[0]["code"] == "510300"
+
+    def test_empty(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({"rc": 0, "data": {"diff": []}})
+        assert len(collector.fetch_etf_list()) == 0
+
+
+# ====================================================================
+# fetch_etf_kline
+# ====================================================================
+
+class TestFetchEtfKline:
+
+    def test_sh_etf_secid(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({"rc": 0, "data": {"klines": []}})
+        collector.fetch_etf_kline("510300")
+        params = mock_client.get.call_args[1]["params"]
+        assert params["secid"] == "1.510300"
+
+
+# ====================================================================
+# fetch_financial
+# ====================================================================
+
+class TestFetchFinancial:
+
+    def test_income_report(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({
+            "result": {
+                "data": [
+                    {"SECURITY_CODE": "000001", "REPORT_DATE": "2023-12-31", "TOTAL_REVENUE": 100000},
+                ],
+                "count": 1,
+            },
+            "success": True,
+        })
+        df = collector.fetch_financial("000001", report_type="income")
+        assert len(df) == 1
+
+    def test_empty_result(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({
+            "result": {"data": [], "count": 0},
+            "success": True,
+        })
+        df = collector.fetch_financial("000001")
+        assert len(df) == 0
+
+    def test_none_result(self, collector, mock_client):
+        mock_client.get.return_value = _make_response({
+            "result": None,
+            "success": False,
+        })
+        df = collector.fetch_financial("000001")
+        assert len(df) == 0
+
+
+# ====================================================================
 # func_for_data_type
 # ====================================================================
 
@@ -298,6 +451,9 @@ class TestFuncForDataType:
         assert EastmoneyCollector.func_for_data_type("stock_list") == "fetch_stock_list"
         assert EastmoneyCollector.func_for_data_type("daily_kline") == "fetch_kline"
         assert EastmoneyCollector.func_for_data_type("realtime") == "fetch_realtime"
+        assert EastmoneyCollector.func_for_data_type("cb") == "fetch_cb_list"
+        assert EastmoneyCollector.func_for_data_type("etf") == "fetch_etf_list"
+        assert EastmoneyCollector.func_for_data_type("financial") == "fetch_financial"
 
     def test_unknown_type(self):
-        assert EastmoneyCollector.func_for_data_type("cb") is None
+        assert EastmoneyCollector.func_for_data_type("nonexistent") is None

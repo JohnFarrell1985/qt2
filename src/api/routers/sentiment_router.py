@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from src.api.deps import SessionDep
 from src.common.logger import get_logger
@@ -103,6 +104,80 @@ def trigger_ingest(session: SessionDep, trade_date: Optional[date] = None):
         "trade_date": trade_date.isoformat(),
         "status": "success",
         "indicators": indicators,
+    }
+
+
+class ExternalIngestPayload(BaseModel):
+    """OpenClaw / 外部系统推送的情报数据"""
+    trade_date: Optional[date] = None
+    source_name: str = "openclaw"
+    schedule_slot: str = "pre_market"
+    gold_price_usd: Optional[float] = None
+    crude_oil_usd: Optional[float] = None
+    fx_usdcny: Optional[float] = None
+    news_sentiment_score: Optional[float] = None
+    futures_basis: Optional[float] = None
+    xueqiu_sentiment: Optional[float] = None
+    global_mood: Optional[float] = None
+    key_events: Optional[list] = None
+    extra: Optional[dict] = None
+
+
+@router.post("/ingest/external")
+def ingest_external(payload: ExternalIngestPayload, session: SessionDep):
+    """接收外部系统(OpenClaw)推送的情报数据, merge 到 SentimentDaily。
+
+    与 datacollect 直采的数据互补 — 取较新值覆盖。
+    """
+    target_date = payload.trade_date or date.today()
+
+    update_fields = {}
+    for field_name in [
+        "gold_price_usd", "crude_oil_usd", "fx_usdcny",
+        "news_sentiment_score", "futures_basis", "xueqiu_sentiment",
+        "global_mood",
+    ]:
+        value = getattr(payload, field_name, None)
+        if value is not None:
+            update_fields[field_name] = value
+
+    if payload.key_events is not None:
+        update_fields["key_events"] = payload.key_events
+    if payload.extra is not None:
+        update_fields["extra"] = payload.extra
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="无有效字段可更新")
+
+    existing = session.query(SentimentDaily).filter_by(trade_date=target_date).first()
+    if existing:
+        for key, value in update_fields.items():
+            setattr(existing, key, value)
+        existing.updated_at = datetime.now()
+    else:
+        row = SentimentDaily(trade_date=target_date, **update_fields)
+        session.add(row)
+
+    log = SentimentIngestLog(
+        trade_date=target_date,
+        source_name=payload.source_name,
+        schedule_slot=payload.schedule_slot,
+        raw_data=update_fields,
+        cleaned_data=update_fields,
+        status="success",
+        collected_at=datetime.now(),
+    )
+    session.add(log)
+
+    logger.info(
+        "[情绪API] %s external ingest from %s: %d fields",
+        target_date, payload.source_name, len(update_fields),
+    )
+    return {
+        "trade_date": target_date.isoformat(),
+        "source": payload.source_name,
+        "status": "success",
+        "fields_updated": list(update_fields.keys()),
     }
 
 

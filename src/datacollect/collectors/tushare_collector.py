@@ -144,6 +144,29 @@ class TushareCollector(BaseCollector):
             end_date=end_date,
         )
 
+    def query_cb_basic(self, **kwargs: Any) -> Any:
+        """可转债基本信息。"""
+        return self.query("cb_basic", **kwargs)
+
+    def query_cb_daily(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> Any:
+        """可转债日线行情。"""
+        params: dict[str, str] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self.query("cb_daily", **params)
+
     # ----------------------------------------------------------------
     # BaseCollector 抽象方法实现
     # ----------------------------------------------------------------

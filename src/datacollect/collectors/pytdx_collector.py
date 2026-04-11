@@ -2,6 +2,9 @@
 
 通过 BaseCollector 接口统一管理, 内置限流和错误处理。
 pytdx 仅在函数内部延迟导入, CI 环境无需安装该 SDK。
+
+连接生命周期: 首次查询时自动 connect, 之后复用连接;
+查询失败时自动重置并重试一次; 可通过 close() 或 context manager 主动释放。
 """
 from __future__ import annotations
 
@@ -37,6 +40,7 @@ class PytdxCollector(BaseCollector):
     - 支持实时行情和历史 K 线
     - 股票代码为纯 6 位数字, market=0 深圳, market=1 上海
     - 自动探测最快服务器
+    - 连接复用: connect 一次, 多次查询, 最终 close() 释放
     """
 
     SOURCE = "pytdx"
@@ -50,6 +54,15 @@ class PytdxCollector(BaseCollector):
             )
         super().__init__(limiter)
         self._best_ip: dict[str, Any] | None = None
+        self._api: Any = None
+        self._connected: bool = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def _select_best_ip(self) -> dict[str, Any]:
         """探测最快的通达信服务器 (结果缓存)。"""
@@ -68,8 +81,8 @@ class PytdxCollector(BaseCollector):
         logger.info("pytdx 最佳服务器: %s:%s", ip_info.get("ip"), ip_info.get("port"))
         return self._best_ip
 
-    def _connect_api(self):
-        """创建并连接 TdxHq_API 实例 (延迟导入)。
+    def _ensure_connected(self):
+        """确保 TdxHq_API 已连接 (延迟导入 + 单次 connect)。
 
         Returns:
             已连接的 TdxHq_API 实例
@@ -77,6 +90,9 @@ class PytdxCollector(BaseCollector):
         Raises:
             RuntimeError: pytdx 不可用或连接失败
         """
+        if self._connected and self._api is not None:
+            return self._api
+
         try:
             from pytdx.hq import TdxHq_API
         except ImportError:
@@ -85,7 +101,42 @@ class PytdxCollector(BaseCollector):
         ip_info = self._select_best_ip()
         api = TdxHq_API()
         api.connect(ip_info["ip"], int(ip_info["port"]))
+        self._api = api
+        self._connected = True
+        logger.debug("pytdx 连接已建立: %s:%s", ip_info["ip"], ip_info["port"])
         return api
+
+    def close(self) -> None:
+        """主动释放 pytdx 连接。"""
+        if self._connected and self._api is not None:
+            try:
+                self._api.disconnect()
+                logger.debug("pytdx 连接已释放")
+            except Exception as e:
+                logger.warning("pytdx disconnect 异常: %s", e)
+            finally:
+                self._connected = False
+                self._api = None
+
+    def _reset_connection(self) -> None:
+        """重置连接状态, 用于查询失败后重连。"""
+        if self._api is not None:
+            try:
+                self._api.disconnect()
+            except Exception:
+                pass
+        self._connected = False
+        self._api = None
+
+    def _query_with_retry(self, query_fn, *args, **kwargs):
+        """执行查询, 连接错误时重置并重试一次。"""
+        try:
+            return query_fn(*args, **kwargs)
+        except (ConnectionError, OSError, RuntimeError) as e:
+            logger.warning("pytdx 查询失败, 尝试重连: %s", e)
+            self._reset_connection()
+            self._ensure_connected()
+            return query_fn(*args, **kwargs)
 
     def get_security_bars(
         self,
@@ -107,23 +158,24 @@ class PytdxCollector(BaseCollector):
         if self._limiter:
             self._limiter.acquire()
 
-        api = self._connect_api()
-        try:
-            df = api.get_security_bars(category, market, code, start, count)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                import pandas as pd
-                logger.warning(
-                    "pytdx K线数据为空: market=%d code=%s category=%d",
-                    market, code, category,
-                )
-                return pd.DataFrame()
-            logger.debug(
-                "pytdx K线查询: market=%d code=%s category=%d (%d 行)",
-                market, code, category, len(df),
+        self._ensure_connected()
+
+        def _do_query():
+            return self._api.get_security_bars(category, market, code, start, count)
+
+        df = self._query_with_retry(_do_query)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            import pandas as pd
+            logger.warning(
+                "pytdx K线数据为空: market=%d code=%s category=%d",
+                market, code, category,
             )
-            return df
-        finally:
-            api.disconnect()
+            return pd.DataFrame()
+        logger.debug(
+            "pytdx K线查询: market=%d code=%s category=%d (%d 行)",
+            market, code, category, len(df),
+        )
+        return df
 
     def get_security_quotes(self, stock_list: list[tuple[int, str]]):
         """获取实时行情快照。
@@ -134,17 +186,18 @@ class PytdxCollector(BaseCollector):
         if self._limiter:
             self._limiter.acquire()
 
-        api = self._connect_api()
-        try:
-            df = api.get_security_quotes(stock_list)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                import pandas as pd
-                logger.warning("pytdx 实时行情为空: %s", stock_list)
-                return pd.DataFrame()
-            logger.debug("pytdx 实时行情: %d 只股票", len(df))
-            return df
-        finally:
-            api.disconnect()
+        self._ensure_connected()
+
+        def _do_query():
+            return self._api.get_security_quotes(stock_list)
+
+        df = self._query_with_retry(_do_query)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            import pandas as pd
+            logger.warning("pytdx 实时行情为空: %s", stock_list)
+            return pd.DataFrame()
+        logger.debug("pytdx 实时行情: %d 只股票", len(df))
+        return df
 
     def get_security_list(self, market: int, start: int = 0):
         """获取股票列表。
@@ -156,17 +209,18 @@ class PytdxCollector(BaseCollector):
         if self._limiter:
             self._limiter.acquire()
 
-        api = self._connect_api()
-        try:
-            df = api.get_security_list(market, start)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                import pandas as pd
-                logger.warning("pytdx 股票列表为空: market=%d", market)
-                return pd.DataFrame()
-            logger.debug("pytdx 股票列表: market=%d (%d 行)", market, len(df))
-            return df
-        finally:
-            api.disconnect()
+        self._ensure_connected()
+
+        def _do_query():
+            return self._api.get_security_list(market, start)
+
+        df = self._query_with_retry(_do_query)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            import pandas as pd
+            logger.warning("pytdx 股票列表为空: market=%d", market)
+            return pd.DataFrame()
+        logger.debug("pytdx 股票列表: market=%d (%d 行)", market, len(df))
+        return df
 
     def get_index_bars(
         self,
@@ -188,22 +242,23 @@ class PytdxCollector(BaseCollector):
         if self._limiter:
             self._limiter.acquire()
 
-        api = self._connect_api()
-        try:
-            df = api.get_index_bars(category, market, code, start, count)
-            if df is None or (hasattr(df, "empty") and df.empty):
-                import pandas as pd
-                logger.warning(
-                    "pytdx 指数K线为空: market=%d code=%s", market, code,
-                )
-                return pd.DataFrame()
-            logger.debug(
-                "pytdx 指数K线: market=%d code=%s (%d 行)",
-                market, code, len(df),
+        self._ensure_connected()
+
+        def _do_query():
+            return self._api.get_index_bars(category, market, code, start, count)
+
+        df = self._query_with_retry(_do_query)
+        if df is None or (hasattr(df, "empty") and df.empty):
+            import pandas as pd
+            logger.warning(
+                "pytdx 指数K线为空: market=%d code=%s", market, code,
             )
-            return df
-        finally:
-            api.disconnect()
+            return pd.DataFrame()
+        logger.debug(
+            "pytdx 指数K线: market=%d code=%s (%d 行)",
+            market, code, len(df),
+        )
+        return df
 
     def collect(self, task: CollectTask) -> CollectResult:
         """执行采集任务 — 从 task.params 读取 func_name 和参数。
@@ -244,8 +299,7 @@ class PytdxCollector(BaseCollector):
     def health_check(self) -> bool:
         """尝试连接通达信服务器验证可用性。"""
         try:
-            api = self._connect_api()
-            api.disconnect()
+            self._ensure_connected()
             return True
         except Exception as e:
             logger.warning("pytdx 健康检查失败: %s", e)

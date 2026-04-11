@@ -45,6 +45,7 @@ class DataSourceDef:
     rate: float = 1.0
     burst: int = 5
     capabilities: list[str] = field(default_factory=list)
+    max_concurrent: int = 10
     history_depth_years: int = 10
     supports_realtime: bool = False
     enabled: bool = True

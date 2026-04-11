@@ -75,7 +75,7 @@ class TestInit:
     @patch("src.datacollect.collectors.pytdx_collector.TokenBucketLimiter")
     def test_default_limiter(self, mock_tbl):
         mock_tbl.for_domain.return_value = MagicMock()
-        c = PytdxCollector()
+        PytdxCollector()
         mock_tbl.for_domain.assert_called_once()
 
     def test_source_name(self, collector):
@@ -83,6 +83,10 @@ class TestInit:
 
     def test_best_ip_initially_none(self, collector):
         assert collector._best_ip is None
+
+    def test_initially_not_connected(self, collector):
+        assert collector._connected is False
+        assert collector._api is None
 
 
 # ====================================================================
@@ -112,10 +116,10 @@ class TestSelectBestIp:
 
 
 # ====================================================================
-# _connect_api
+# _ensure_connected
 # ====================================================================
 
-class TestConnectApi:
+class TestEnsureConnected:
 
     def test_connects_to_best_ip(self, collector, mock_api, mock_best_ip):
         collector._best_ip = mock_best_ip
@@ -124,9 +128,21 @@ class TestConnectApi:
             import sys
             sys.modules["pytdx.hq"].TdxHq_API = MagicMock(return_value=mock_api)
 
-            api = collector._connect_api()
+            api = collector._ensure_connected()
             mock_api.connect.assert_called_once_with("119.147.212.81", 7709)
             assert api is mock_api
+            assert collector._connected is True
+
+    def test_reuses_connection(self, collector, mock_api, mock_best_ip):
+        collector._best_ip = mock_best_ip
+
+        with patch.dict("sys.modules", {"pytdx": MagicMock(), "pytdx.hq": MagicMock()}):
+            import sys
+            sys.modules["pytdx.hq"].TdxHq_API = MagicMock(return_value=mock_api)
+
+            collector._ensure_connected()
+            collector._ensure_connected()
+            mock_api.connect.assert_called_once()
 
 
 # ====================================================================
@@ -140,34 +156,28 @@ class TestGetSecurityBars:
         fake_df = pd.DataFrame({"open": [10.0], "close": [10.5]})
         mock_api.get_security_bars.return_value = fake_df
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_security_bars("600000", MARKET_SH, category=9, count=100)
 
         assert len(df) == 1
         mock_api.get_security_bars.assert_called_once_with(9, MARKET_SH, "600000", 0, 100)
-        mock_api.disconnect.assert_called_once()
 
     def test_empty_result(self, collector, mock_api):
         mock_api.get_security_bars.return_value = None
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_security_bars("600000", MARKET_SH)
 
         assert isinstance(df, pd.DataFrame)
         assert df.empty
 
-    def test_disconnect_on_error(self, collector, mock_api):
-        mock_api.get_security_bars.side_effect = Exception("network error")
-
-        with patch.object(collector, "_connect_api", return_value=mock_api):
-            with pytest.raises(Exception, match="network error"):
-                collector.get_security_bars("600000", MARKET_SH)
-        mock_api.disconnect.assert_called_once()
-
     def test_limiter_acquire_called(self, collector, mock_limiter, mock_api):
         mock_api.get_security_bars.return_value = pd.DataFrame({"a": [1]})
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             collector.get_security_bars("600000", MARKET_SH)
         mock_limiter.acquire.assert_called_once()
 
@@ -182,16 +192,17 @@ class TestGetSecurityQuotes:
         fake_df = pd.DataFrame({"code": ["600000"], "price": [10.5]})
         mock_api.get_security_quotes.return_value = fake_df
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_security_quotes([(MARKET_SH, "600000")])
 
         assert len(df) == 1
-        mock_api.disconnect.assert_called_once()
 
     def test_empty_result(self, collector, mock_api):
         mock_api.get_security_quotes.return_value = pd.DataFrame()
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_security_quotes([(MARKET_SH, "600000")])
 
         assert df.empty
@@ -207,7 +218,8 @@ class TestGetSecurityList:
         fake_df = pd.DataFrame({"code": ["600000", "600001"]})
         mock_api.get_security_list.return_value = fake_df
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_security_list(MARKET_SH)
 
         assert len(df) == 2
@@ -224,11 +236,11 @@ class TestGetIndexBars:
         fake_df = pd.DataFrame({"open": [3000.0], "close": [3050.0]})
         mock_api.get_index_bars.return_value = fake_df
 
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
+            collector._api = mock_api
             df = collector.get_index_bars("000001", MARKET_SH)
 
         assert len(df) == 1
-        mock_api.disconnect.assert_called_once()
 
 
 # ====================================================================
@@ -248,7 +260,7 @@ class TestCollect:
             collector.collect(task)
 
     def test_private_method_blocked(self, collector):
-        task = CollectTask(params={"func_name": "_connect_api"})
+        task = CollectTask(params={"func_name": "_ensure_connected"})
         with pytest.raises(AttributeError, match="没有公开方法"):
             collector.collect(task)
 
@@ -287,10 +299,46 @@ class TestCollect:
 class TestHealthCheck:
 
     def test_healthy(self, collector, mock_api):
-        with patch.object(collector, "_connect_api", return_value=mock_api):
+        with patch.object(collector, "_ensure_connected", return_value=mock_api):
             assert collector.health_check() is True
-            mock_api.disconnect.assert_called_once()
 
     def test_unhealthy(self, collector):
-        with patch.object(collector, "_connect_api", side_effect=RuntimeError("no server")):
+        with patch.object(collector, "_ensure_connected", side_effect=RuntimeError("no server")):
             assert collector.health_check() is False
+
+
+# ====================================================================
+# close / context manager
+# ====================================================================
+
+class TestCloseAndContextManager:
+
+    def test_close_disconnects(self, collector, mock_api, mock_best_ip):
+        collector._best_ip = mock_best_ip
+
+        with patch.dict("sys.modules", {"pytdx": MagicMock(), "pytdx.hq": MagicMock()}):
+            import sys
+            sys.modules["pytdx.hq"].TdxHq_API = MagicMock(return_value=mock_api)
+
+            collector._ensure_connected()
+            collector.close()
+            mock_api.disconnect.assert_called_once()
+            assert collector._connected is False
+
+    def test_close_noop_when_not_connected(self, collector):
+        collector.close()
+        assert collector._connected is False
+
+    def test_context_manager(self, mock_limiter, mock_api, mock_best_ip):
+        fake_df = pd.DataFrame({"a": [1]})
+        mock_api.get_security_bars.return_value = fake_df
+
+        with patch.dict("sys.modules", {"pytdx": MagicMock(), "pytdx.hq": MagicMock()}):
+            import sys
+            sys.modules["pytdx.hq"].TdxHq_API = MagicMock(return_value=mock_api)
+
+            with PytdxCollector(limiter=mock_limiter) as c:
+                c._best_ip = mock_best_ip
+                c.get_security_bars("600000", MARKET_SH)
+
+            mock_api.disconnect.assert_called_once()

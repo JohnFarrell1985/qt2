@@ -34,6 +34,11 @@ dependencies = [
     "tushare>=1.4",
     "adata>=2.9",
     "pytdx>=1.72",
+    # A-share Trading Calendar (A27 DataFreshnessMonitor)
+    "exchange_calendars>=4.5",
+    # Tier 2 Global Market Data
+    "yfinance>=0.2",
+    "feedparser>=6.0",
     # Config & Utils
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",

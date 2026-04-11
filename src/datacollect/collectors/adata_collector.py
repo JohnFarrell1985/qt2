@@ -130,6 +130,24 @@ class AdataCollector(BaseCollector):
             concept_code=concept_code,
         )
 
+    def get_cb_list(self) -> Any:
+        """获取全部可转债列表。"""
+        return self.call_adata("bond.info", "all_code")
+
+    def get_cb_market(self, stock_code: str, start_date: str = "") -> Any:
+        """获取可转债行情数据。
+
+        Args:
+            stock_code: 可转债代码
+            start_date: 起始日期 (如 "2023-01-01")
+        """
+        return self.call_adata(
+            "bond.market",
+            "get_market",
+            stock_code=stock_code,
+            start_date=start_date,
+        )
+
     # ----------------------------------------------------------------
     # BaseCollector 抽象方法实现
     # ----------------------------------------------------------------

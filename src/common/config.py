@@ -282,6 +282,32 @@ class DatacollectConfig(BaseSettings):
     archive_days: int = Field(default=90, alias="DATACOLLECT_ARCHIVE_DAYS")
     impersonate: str = Field(default="chrome", alias="DATACOLLECT_IMPERSONATE")
 
+    # A28: per-source concurrency
+    global_concurrency: int = Field(default=50, alias="DATACOLLECT_GLOBAL_CONCURRENCY")
+
+    # A33: Write buffer
+    write_buffer_size: int = Field(default=200, alias="DATACOLLECT_WRITE_BUFFER_SIZE")
+    write_flush_interval: float = Field(default=1.0, alias="DATACOLLECT_WRITE_FLUSH_INTERVAL")
+    write_batch_size: int = Field(default=5000, alias="DATACOLLECT_WRITE_BATCH_SIZE")
+
+    # A37: Memory chunk threshold
+    chunk_threshold: int = Field(default=100000, alias="DATACOLLECT_CHUNK_THRESHOLD")
+
+    # A38: Proxy pool
+    proxy_enabled: bool = Field(default=False, alias="DATACOLLECT_PROXY_ENABLED")
+    proxy_urls: str = Field(default="", alias="DATACOLLECT_PROXY_URLS")
+    proxy_rotate_strategy: str = Field(default="round_robin", alias="DATACOLLECT_PROXY_ROTATE_STRATEGY")
+    proxy_health_check_interval: int = Field(default=300, alias="DATACOLLECT_PROXY_HEALTH_CHECK_INTERVAL")
+    proxy_blacklist_cooldown: int = Field(default=600, alias="DATACOLLECT_PROXY_BLACKLIST_COOLDOWN")
+
+    # Tier 2: Global market intelligence sources
+    yfinance_rate: float = Field(default=0.5, alias="DATACOLLECT_YFINANCE_RATE")
+    yfinance_burst: int = Field(default=10, alias="DATACOLLECT_YFINANCE_BURST")
+    sina_rate: float = Field(default=0.2, alias="DATACOLLECT_SINA_RATE")
+    sina_burst: int = Field(default=3, alias="DATACOLLECT_SINA_BURST")
+    rss_rate: float = Field(default=1.0, alias="DATACOLLECT_RSS_RATE")
+    rss_burst: int = Field(default=5, alias="DATACOLLECT_RSS_BURST")
+
 
 # ================================================================
 # 情绪引擎
