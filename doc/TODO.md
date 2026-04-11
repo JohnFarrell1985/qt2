@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (索引)
 
-> 最后更新: 2026-04-05
+> 最后更新: 2026-04-02
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -15,11 +15,12 @@
 | 优先级 | 文档 | 项目数 | 预估工作量 | 核心价值 |
 |--------|------|--------|-----------|---------|
 | ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
-| **P0.1** | [TODO-P01.md](TODO-P01.md) | 15 项 | ~9.5 天 | **数据采集 + 数据清洗** (爬虫攻防, 从 P0 拆出, 暂缓) |
-| **P1** | [TODO-P1.md](TODO-P1.md) | 26 项 | ~55 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 + 可观测 |
+| **P0.1** | [TODO-P01.md](TODO-P01.md) | 30 项 | ~21 天 | **数据采集 + 数据清洗** (爬虫攻防 + 数据质量 + 死信/幂等/新鲜度 + 异步并发/代理/写缓冲) |
+| **P1** | [TODO-P1.md](TODO-P1.md) | 25 项 | ~53 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 |
 | **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
-| **合计** | — | **72 项** (剩余) | **~113.5 天** | P0 已完成, 其余待实施 |
+| **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
+| **合计** | — | **92 项** (剩余) | **~134 天** | P0 已完成, 其余待实施 |
 
 ---
 
@@ -77,6 +78,22 @@
 | P0-11 | datacollect 模块初始化 | datacollect | 0.5 天 |
 | P0-12 | LLMClient 统一客户端 | dataclean | 1 天 |
 | P0-13~19 | dataclean 其余 7 项 | dataclean | 3 天 |
+| **A18~A23** | **反爬加固 + 自选股情报 (6 项)** | **datacollect** | **~5 天** |
+| **A24** | **DataValidator 数据质量校验层** | **datacollect** | **1 天** |
+| **A25** | **collect_dead_letter 死信队列** | **datacollect** | **0.5 天** |
+| **A26** | **CollectTask 幂等性 (idempotency_key)** | **datacollect** | **0.5 天** |
+| **A27** | **DataFreshnessMonitor 新鲜度监控** | **datacollect** | **0.5 天** |
+| **A28** | **data_sources.json 配置统一** | **datacollect** | **0.5 天** |
+| **A29** | **BaseCollector.collect_stream() 流式持久化** | **datacollect** | **0.5 天** |
+| **A30** | **AsyncCollectEngine 异步采集引擎 (双层 Semaphore + to_thread)** | **datacollect** | **2 天** |
+| **A31** | **AsyncSmartHttpClient (curl_cffi AsyncSession)** | **datacollect** | **0.5 天** |
+| **A32** | **AsyncTokenBucketLimiter 异步限流器** | **datacollect** | **0.5 天** |
+| **A33** | **WriteBehindBuffer 写缓冲层 (asyncio.Queue)** | **data** | **1 天** |
+| **A34** | **BulkWriter COPY 协议 + 优化批量写入 (asyncpg)** | **data** | **1 天** |
+| **A35** | **CollectorConnectionPool 连接复用 (baostock/pytdx)** | **datacollect** | **0.5 天** |
+| **A36** | **Pipeline 背压设计 (三阶段 Queue)** | **datacollect** | **0.5 天** |
+| **A37** | **内存高效分块处理 (chunk + CoW)** | **datacollect** | **0.5 天** |
+| **A38** | **ProxyPoolManager 代理 IP 轮换 (per-IP 限流)** | **datacollect** | **1.5 天** |
 
 ### P1: 重要 → [详见 TODO-P1.md](TODO-P1.md)
 
@@ -107,7 +124,7 @@
 | **P1-23** | **轻量级事件总线 (从 P3-03 提升)** | **common** | **3 天** |
 | **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
 | **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
-| **P1-26** | **可观测性 (structlog + 飞书机器人告警)** | **monitoring** | **2 天** |
+| ~~**P1-26**~~ | ~~可观测性 (structlog + 飞书机器人告警)~~ → **已合并至 P4** | — | — |
 
 ### P2: 增强 → [详见 TODO-P2.md](TODO-P2.md)
 
@@ -144,12 +161,24 @@
 | P3-02 | 实验管理 (MLflow + Trace) | ml | 2 天 |
 | ~~P3-03~~ | ~~轻量级事件总线~~ → **已提升至 P1-23** | — | — |
 | P3-04 | 数据版本化 | data | 2 天 |
-| P3-05 | ProxyPool 代理池 | datacollect | 1 天 |
+| ~~P3-05~~ | ~~ProxyPool 代理池~~ → **已提升至 P0.1-A38 (ProxyPoolManager)** | — | — |
 | ~~P3-06~~ | ~~本地 FinBERT NLP~~ → 已合并至 P2-19~P2-21 | distill | — |
 | P3-07 | GenericExtraction Schema | dataclean | 0.5 天 |
 | P3-08 | 热门股/一日游识别 | ml | 2 天 |
 | P3-09 | 行业轮动引擎 | sectorwatch | 3 天 |
 | P3-10 | 宏观经济引擎 | macrotrack | 3 天 |
+
+### P4: 全栈可观测性 → [详见 TODO-P4.md](TODO-P4.md)
+
+| # | 任务 | 模块 | 工作量 |
+|---|------|------|--------|
+| **P4-01** | **OpenTelemetry SDK 链路追踪埋点** | **common** | **2 天** |
+| **P4-02** | **Prometheus 业务指标埋点** | **common / api** | **2 天** |
+| **P4-03** | **结构化日志 → Loki 管线 (structlog)** | **common** | **1.5 天** |
+| **P4-04** | **Grafana 看板 (4 张)** | **ops** | **3 天** |
+| **P4-05** | **告警管线 (Alertmanager → 飞书)** | **ops** | **1.5 天** |
+| **P4-06** | **基础设施部署 (Docker Compose)** | **ops** | **1.5 天** |
+| **P4-07** | **collect_metrics 持久化 ORM** | **datacollect** | **0.5 天** |
 
 ---
 
@@ -185,8 +214,19 @@
 | **调度** | APScheduler | >=3.11 (stable) | ✅ 稳定3.11.2 (4.0仍alpha) | 定时采集 |
 | **事件** | blinker | >=1.9 | ✅ | 模块解耦 (P1-23) |
 | **容错** | tenacity | >=9.0 | ✅ | 重试+熔断 (P1-25) |
-| **日志** | structlog | >=25.1 | ✅ | 结构化日志 (P1-26) |
+| **日志** | structlog | >=25.1 | ✅ | 结构化日志 (P4-03) |
+| **链路追踪** | opentelemetry-sdk | >=1.30 | ✅ | 分布式追踪 (P4-01) |
+| | opentelemetry-exporter-otlp | >=1.30 | ✅ | OTLP → Jaeger (P4-01) |
+| **指标** | prometheus_client | >=0.21 | ✅ | Prometheus 埋点 (P4-02) |
+| **可观测基础设施** | Jaeger | v2.14+ | ✅ | 链路追踪 (P4-06) |
+| | Loki | 3.6+ | ✅ | 日志聚合 (P4-06) |
+| | Prometheus | latest | ✅ | 指标存储 (P4-06) |
+| | Grafana | 12.4+ | ✅ | 统一看板 (P4-06) |
+| | Alertmanager | latest | ✅ | 告警路由 (P4-05) |
 | **数据质量** | pandera | >=0.23 | ✅ | DataFrame schema 校验 (P1-24) |
+| **数据新鲜度** | exchange_calendars | >=4.5 | ✅ | A 股交易日历 (A27) |
+| **异步 DB** | asyncpg | >=0.30 | ✅ | PostgreSQL 异步驱动 + COPY 协议 (A34) |
+| **异步限流** | aiolimiter | >=1.2 | ✅ | Leaky Bucket 异步限流器 (A32 可选) |
 | **数据库** | PostgreSQL | >=16 | ✅ | JSONB 存储 |
 | | SQLAlchemy | >=2.0 | ✅ 稳定2.0.48 (2.1.0b1已发布) | ORM |
 | | Alembic | >=1.15 | ✅ | DB schema 迁移 (已部署) |
@@ -233,7 +273,10 @@
 Phase 0 — ✅ 已完成 (Bug 修复 + 基础设施)
 
 Phase 0.1 — 数据采集 + 清洗 (下一步):
-  P0-05~11  datacollect 核心 (HTTP客户端/限流/采集器/注册表, 含幂等性)
+  A01~A07   datacollect 核心 (HTTP客户端/限流/采集器/注册表)
+  A18~A23   反爬加固 (自适应限流/熔断/哨兵/健康仪表盘/自选股)
+  A24~A29   架构加固 (数据质量/死信/幂等/新鲜度/配置统一/流式持久化)
+  A30~A38   高性能加固 (异步引擎/代理轮换/写缓冲/COPY批量/连接复用/背压/内存优化)
   P0-12~19  dataclean 核心 (LLM客户端/Schema/清洗器)
 
 Phase 1 (第 5-9 周):
@@ -248,7 +291,6 @@ Phase 1 (第 5-9 周):
   P1-23     轻量级事件总线 (blinker, 模块解耦)
   P1-24     数据质量监控 + Pandera Schema 校验
   P1-25     系统级容错 & 降级 (Tenacity/熔断)
-  P1-26     可观测性 (structlog + 飞书机器人告警)
 
 Phase 2 (第 9-13 周):
   P1-03~04  因子/模型监控 (含因子拥挤度检测)
@@ -263,4 +305,11 @@ Phase 2 (第 9-13 周):
 
 Phase 3 (第 14 周+):
   P3-01~10  按需选择实现 (SHAP/MLflow/数据版本化/行业轮动/宏观)
+
+Phase 4 — 全栈可观测性 (与其他 Phase 并行推进):
+  P4-03     structlog 结构化日志 (可提前, 无外部依赖)
+  P4-07     collect_metrics ORM (可提前)
+  P4-01~02  OpenTelemetry + Prometheus 埋点
+  P4-06     Docker Compose 基础设施部署 (Jaeger/Loki/Prometheus/Grafana)
+  P4-04~05  Grafana 看板 + 告警规则
 ```

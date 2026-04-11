@@ -1,8 +1,8 @@
 # P1: 重要 (量化核心 + 模块完善 + ETF 轮动 + 多源因子)
 
-> 最后更新: 2026-04-05
+> 最后更新: 2026-04-12
 >
-> 26 项 | 预估工作量 ~55 天 (含 P3-03 提升 + 新增 4 项)
+> 25 项 | 预估工作量 ~53 天 (含 P3-03 提升 + 新增 4 项, P1-26 已合并至 P4)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -1389,84 +1389,14 @@ class DegradationManager:
 
 ---
 
-### P1-26: 可观测性 (结构化日志 + 告警)
+### ~~P1-26: 可观测性 (结构化日志 + 告警)~~ → **已合并至 P4**
 
-| 属性 | 内容 |
-|------|------|
-| **模块** | common / monitoring |
-| **文件** | `src/common/logging_config.py`, `src/monitoring/alerter.py` |
-| **工作量** | 2 天 |
-
-**为什么要做:**
-系统有 20+ 模块, 实盘环境下出了问题需要快速定位。当前使用基础 `logging`, 没有结构化字段, 无法按 strategy/factor/trade_id 过滤, 无法自动告警。
-
-**业界最佳实践:**
-- **structlog**: 结构化日志库, 每条日志自动携带上下文 (strategy_name, factor, stock_code)
-- **JSON 格式**: 便于 ELK/Grafana Loki 等后端解析
-- **分级告警**: WARNING/ERROR/CRITICAL → 飞书机器人 (复用已有 OpenClaw 飞书 Bot)
-- **Sentry**: 异常自动收集 (Python SDK, 免费 5000 events/月)
-
-**落地方案:**
-```python
-import structlog
-
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-)
-
-log = structlog.get_logger()
-log.info("signal_generated", strategy="lgb_multi_factor", stock="600519.SH", score=0.85)
-# → {"timestamp":"2026-04-05T10:30:00","level":"info","event":"signal_generated","strategy":"lgb_multi_factor","stock":"600519.SH","score":0.85}
-```
-
-**告警集成 (飞书机器人, 复用 OpenClaw 已有 Bot):**
-```python
-import base64, hashlib, hmac, time, json, requests
-
-class FeishuAlerter:
-    """飞书自定义机器人告警 (HMAC-SHA256 签名校验)"""
-    def __init__(self, webhook_url: str, secret: str):
-        self.webhook_url = webhook_url  # https://open.feishu.cn/open-apis/bot/v2/hook/xxx
-        self.secret = secret
-
-    def _sign(self) -> tuple[str, str]:
-        timestamp = str(int(time.time()))
-        key = f"{timestamp}\n{self.secret}".encode()
-        sign = base64.b64encode(hmac.new(key, b"", hashlib.sha256).digest()).decode()
-        return timestamp, sign
-
-    def send(self, level: str, title: str, details: dict):
-        timestamp, sign = self._sign()
-        color = {"CRITICAL": "red", "ERROR": "orange", "WARNING": "yellow"}.get(level, "blue")
-        card = {
-            "header": {"template": color, "title": {"tag": "plain_text", "content": f"[{level}] {title}"}},
-            "elements": [{"tag": "div", "text": {
-                "tag": "lark_md",
-                "content": "\n".join(f"**{k}**: {v}" for k, v in details.items()),
-            }}],
-        }
-        payload = {"timestamp": timestamp, "sign": sign, "msg_type": "interactive", "card": json.dumps(card)}
-        requests.post(self.webhook_url, json=payload, timeout=5)
-
-class AlertRouter:
-    """根据级别路由告警"""
-    def __init__(self, feishu: FeishuAlerter):
-        self.feishu = feishu
-
-    def route(self, level: str, title: str, details: dict | None = None):
-        if level in ("WARNING", "ERROR", "CRITICAL"):
-            self.feishu.send(level, title, details or {})
-        log.log(level.lower(), title, **(details or {}))
-```
-
-**参考文档:**
-- [structlog](https://www.structlog.org/) — 结构化日志
-- [Sentry for Python](https://docs.sentry.io/platforms/python/)
-- [飞书自定义机器人 Webhook](https://open.feishu.cn/document/common-capabilities/message-card/getting-started/send-message-cards-with-a-custom-bot)
-- [飞书消息卡片搭建工具](https://open.feishu.cn/tool/cardbuilder)
+> **状态: 已合并**
+>
+> 原 P1-26 的 structlog 结构化日志和飞书告警已扩展为完整的全栈可观测性设计,
+> 编号 P4-01~P4-07，涵盖 OpenTelemetry 链路追踪、Prometheus 指标、Loki 日志管线、
+> Grafana 看板、Alertmanager 告警等。
+>
+> 详见: [TODO-P4.md](TODO-P4.md)
 
 ---
