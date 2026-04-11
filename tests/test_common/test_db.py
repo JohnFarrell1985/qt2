@@ -1,13 +1,41 @@
-"""Tests for src/common/db.py"""
+"""Tests for src/common/db.py
+
+Uses real PostgreSQL with an isolated schema (ut_db_test) to match production.
+"""
 import pytest
-from unittest.mock import patch, MagicMock
-from sqlalchemy import Column, Integer, String, text
+from unittest.mock import patch
+from sqlalchemy import Column, Integer, String, text, create_engine, inspect
 from sqlalchemy.orm import Session
+
+from src.common.config import settings
+
+UT_SCHEMA = "ut_db_test"
+
+_pg_available = None
+
+
+def _check_pg():
+    global _pg_available
+    if _pg_available is not None:
+        return _pg_available
+    try:
+        engine = create_engine(settings.database.url, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        _pg_available = True
+    except Exception:
+        _pg_available = False
+    return _pg_available
+
+
+pytestmark = pytest.mark.skipif(
+    not _check_pg(), reason="PostgreSQL not available"
+)
 
 
 class TestDatabase:
-    """All tests patch settings.database.url to use sqlite in-memory and
-    reset module-level singletons before each test."""
+    """Tests use a dedicated PostgreSQL schema to avoid polluting other data."""
 
     @pytest.fixture(autouse=True)
     def _reset_db_module(self):
@@ -24,10 +52,10 @@ class TestDatabase:
     @pytest.fixture
     def patched_settings(self):
         with patch("src.common.db.settings") as mock_settings:
-            mock_settings.database.url = "sqlite:///:memory:"
-            mock_settings.database.pool_size = 5
-            mock_settings.database.max_overflow = 10
-            mock_settings.database.pool_timeout = 30
+            mock_settings.database.url = settings.database.url
+            mock_settings.database.pool_size = 2
+            mock_settings.database.max_overflow = 3
+            mock_settings.database.pool_timeout = 10
             mock_settings.database.pool_recycle = 1800
             yield mock_settings
 
@@ -35,7 +63,7 @@ class TestDatabase:
         from src.common.db import get_engine
         engine = get_engine()
         assert engine is not None
-        assert "sqlite" in str(engine.url)
+        assert "postgresql" in str(engine.url)
 
     def test_get_engine_returns_singleton(self, patched_settings):
         from src.common.db import get_engine
@@ -57,52 +85,80 @@ class TestDatabase:
     def test_get_session_commits_on_success(self, patched_settings):
         from src.common.db import get_session, get_engine, Base
 
-        class DummyModel(Base):
-            __tablename__ = "dummy_commit_test"
-            id = Column(Integer, primary_key=True)
-            name = Column(String(50))
-
         engine = get_engine()
-        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {UT_SCHEMA} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {UT_SCHEMA}"))
+            conn.commit()
 
-        with get_session() as session:
-            session.add(DummyModel(id=1, name="test"))
+        try:
+            class DummyCommit(Base):
+                __tablename__ = "dummy_commit_test"
+                __table_args__ = {"schema": UT_SCHEMA}
+                id = Column(Integer, primary_key=True)
+                name = Column(String(50))
 
-        with get_session() as session:
-            result = session.execute(text("SELECT name FROM dummy_commit_test WHERE id=1"))
-            row = result.fetchone()
-            assert row is not None
-            assert row[0] == "test"
+            DummyCommit.__table__.create(bind=engine, checkfirst=True)
+
+            with get_session() as session:
+                session.execute(text(f"SET search_path TO {UT_SCHEMA}, public"))
+                session.add(DummyCommit(id=1, name="test"))
+
+            with get_session() as session:
+                session.execute(text(f"SET search_path TO {UT_SCHEMA}, public"))
+                result = session.execute(
+                    text(f"SELECT name FROM {UT_SCHEMA}.dummy_commit_test WHERE id=1")
+                )
+                row = result.fetchone()
+                assert row is not None
+                assert row[0] == "test"
+        finally:
+            with engine.connect() as conn:
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {UT_SCHEMA} CASCADE"))
+                conn.commit()
 
     def test_get_session_rollbacks_on_error(self, patched_settings):
         from src.common.db import get_session, get_engine, Base
 
-        class DummyModel2(Base):
-            __tablename__ = "dummy_rollback_test"
-            id = Column(Integer, primary_key=True)
-            name = Column(String(50))
-
         engine = get_engine()
-        Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            conn.execute(text(f"DROP SCHEMA IF EXISTS {UT_SCHEMA} CASCADE"))
+            conn.execute(text(f"CREATE SCHEMA {UT_SCHEMA}"))
+            conn.commit()
 
-        with get_session() as session:
-            session.add(DummyModel2(id=1, name="committed"))
+        try:
+            class DummyRollback(Base):
+                __tablename__ = "dummy_rollback_test"
+                __table_args__ = {"schema": UT_SCHEMA}
+                id = Column(Integer, primary_key=True)
+                name = Column(String(50))
 
-        with pytest.raises(RuntimeError):
+            DummyRollback.__table__.create(bind=engine, checkfirst=True)
+
             with get_session() as session:
-                session.add(DummyModel2(id=2, name="should_rollback"))
-                raise RuntimeError("force rollback")
+                session.execute(text(f"SET search_path TO {UT_SCHEMA}, public"))
+                session.add(DummyRollback(id=1, name="committed"))
 
-        with get_session() as session:
-            result = session.execute(text("SELECT count(*) FROM dummy_rollback_test"))
-            assert result.scalar() == 1
+            with pytest.raises(RuntimeError):
+                with get_session() as session:
+                    session.execute(text(f"SET search_path TO {UT_SCHEMA}, public"))
+                    session.add(DummyRollback(id=2, name="should_rollback"))
+                    raise RuntimeError("force rollback")
+
+            with get_session() as session:
+                result = session.execute(
+                    text(f"SELECT count(*) FROM {UT_SCHEMA}.dummy_rollback_test")
+                )
+                assert result.scalar() == 1
+        finally:
+            with engine.connect() as conn:
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {UT_SCHEMA} CASCADE"))
+                conn.commit()
 
     def test_get_session_closes_session(self, patched_settings):
         from src.common.db import get_session
         with get_session() as session:
             assert isinstance(session, Session)
-        # After context exit the session should be closed — attempting to use it
-        # would raise; we just verify no exception during the context exit.
 
     def test_init_database_calls_create_all(self, patched_settings):
         from src.common.db import init_database, Base, get_engine

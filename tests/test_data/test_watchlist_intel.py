@@ -213,8 +213,18 @@ class TestSyncFromQmt:
     @patch("src.datacollect.watchlist_intel.get_session")
     def test_sync_from_qmt_no_sdk(self, mock_get_session):
         """xtquant unavailable → graceful fallback."""
-        sync = WatchlistSync()
-        result = sync.sync_from_qmt()
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _block_xtquant(name, *args, **kwargs):
+            if name == "xtquant" or name.startswith("xtquant."):
+                raise ImportError("mocked: xtquant not installed")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=_block_xtquant):
+            sync = WatchlistSync()
+            result = sync.sync_from_qmt()
 
         assert result["error"] == "xtquant_unavailable"
         assert result["added"] == 0

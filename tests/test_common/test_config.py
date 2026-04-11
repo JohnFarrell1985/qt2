@@ -30,8 +30,8 @@ class TestDatabaseConfig:
         assert "asdf" not in cfg.url
 
     def test_custom_values(self):
-        cfg = DatabaseConfig(url="sqlite:///test.db", pool_size=3, max_overflow=6)
-        assert cfg.url == "sqlite:///test.db"
+        cfg = DatabaseConfig(url="postgresql://localhost:5432/test_db", pool_size=3, max_overflow=6)
+        assert cfg.url == "postgresql://localhost:5432/test_db"
         assert cfg.pool_size == 3
         assert cfg.max_overflow == 6
 

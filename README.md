@@ -2,7 +2,7 @@
 
 基于 **三档策略引擎** + **多源因子管线** + **市场情绪引擎** + **ETF 全球轮动** + **LLM 数据清洗** + **知识蒸馏** + **迅投 QMT** 的散户量化投资系统。
 
-> 82 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent
+> 63 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent | Python 3.13
 
 ---
 
@@ -27,13 +27,13 @@
 │ SmartHttp     │───────────▶│  │ LLM 数据清洗  │  │          │  Rule / Score   │
 │ (curl_cffi)   │            │  │ DeepSeek/Qwen │  │          │  / ML (LGB)     │
 │               │            │  └──────┬───────┘  │          │                 │
-│ AkshareSDK    │            │         │          │          │  ETF 全球轮动    │
-│ OpenClaw      │            │  ┌──────▼───────┐  │   ┌─────▶│  VAA/DAA/CAA    │
-│ Tavily API    │            │  │  情绪引擎     │  │   │      │                 │
-│ Playwright    │            │  │  6 维合成指数  │──┼───┘      │  可转债双低     │
+│ akshare/QMT   │            │         │          │          │  ETF 全球轮动    │
+│ yfinance/sina │            │  ┌──────▼───────┐  │   ┌─────▶│  VAA/DAA/CAA    │
+│ efinance/RSS  │            │  │  情绪引擎     │  │   │      │                 │
+│ OpenClaw      │            │  │  6 维合成指数  │──┼───┘      │  可转债双低     │
 │               │            │  │  宏观状态分类  │  │          └────────┬────────┘
-│ TokenBucket   │            │  └──────────────┘  │                   │
-│ 令牌桶限流    │            │                    │          ┌────────▼────────┐
+│ 异步并发引擎  │            │  └──────────────┘  │                   │
+│ 六层反爬体系  │            │                    │          ┌────────▼────────┐
 └───────────────┘            │  ┌──────────────┐  │          │   买卖执行体系   │
                              │  │  知识蒸馏     │  │          │                 │
         ┌───────────────┐    │  │  LLM Teacher  │  │          │ PositionMonitor │
@@ -81,7 +81,7 @@
 | 回测引擎 | `src/backtest/` | ✅ 已实现 | 统一回测管道 + DSR + 涨跌停模拟 |
 | 交易模块 | `src/trading/` | ✅ 已实现 | QMT 交易 + 风控 + 模拟盘 |
 | API 服务 | `src/api/` | ✅ 已实现 | FastAPI 路由 + Swagger |
-| 数据采集 | `src/datacollect/` | 📋 设计完成 | 五层反爬架构 + 令牌桶 + 幂等采集 |
+| 数据采集 | `src/datacollect/` | ✅ 已实现 | 六层反爬 + 异步并发引擎 + 多源 fallback (48 项) |
 | 数据清洗 | `src/dataclean/` | 📋 设计完成 | LLM 清洗 + Schema 注册表 + 三级降级 |
 | 情绪引擎 | `src/sentiment/` | 📋 设计完成 | 6 维合成指数 + 宏观状态 + 策略 Profile |
 | ETF 轮动 | `src/strategy/etf_rotation/` | 📋 设计完成 | VAA/DAA/CAA + 崩盘保护 + 全球配置 |
@@ -123,10 +123,16 @@
 | | jqdatasdk | >=1.9 | 聚宽因子 (可选) |
 | **组合优化** | skfolio | >=0.15 | 100+ 组合模型 (sklearn 兼容) |
 | | cvxpy | >=1.5 | 凸优化求解 |
-| **数据采集** | curl_cffi | >=0.14 | TLS 指纹伪装 (HTTP/3) |
-| | Playwright | >=1.59 | 浏览器级采集 |
-| | akshare | >=1.18 | A 股免费数据 |
-| | tavily-python | >=0.5 | AI 搜索 API |
+| **数据采集** | curl_cffi | >=0.15 | TLS 指纹伪装 (反爬核心) |
+| | akshare | >=1.18 | A 股免费数据 (主力源) |
+| | yfinance | >=0.2 | 全球市场 (美股/VIX/黄金/外汇) |
+| | efinance | >=0.4 | A 股资金面 (北向/融资/龙虎榜) |
+| | baostock | >=0.8 | A 股历史 K 线 + 财务 |
+| | tushare | >=1.4 | A 股/可转债/ETF |
+| | adata | >=2.9 | 多源融合 A 股数据 |
+| | feedparser | >=6.0 | RSS 财经新闻聚合 |
+| | Playwright | >=1.40 | 浏览器级采集 (可选) |
+| | tavily-python | >=0.5 | AI 搜索兜底 (可选) |
 | **LLM / NLP** | openai SDK | >=2.0 | DeepSeek / Qwen 统一客户端 |
 | | FinBERT2 | 2025 | 中文金融情感模型 |
 | | transformers | >=5.0 | HuggingFace 推理 |
@@ -231,10 +237,10 @@ docker compose up -d
 | [用户手册](doc/08-用户手册.md) | 快速上手、策略选择、实战教程 |
 | [运维部署](doc/09-运维部署.md) | Docker、环境变量、定时任务 |
 | [市场情绪引擎](doc/11-市场情绪引擎.md) | 情绪特征、合成指数、宏观分类、策略 Profile |
-| [数据采集模块](doc/12-数据采集模块.md) | 五层采集架构、反爬 (curl_cffi)、调度 |
+| [数据采集模块](doc/12-数据采集模块.md) | 六层反爬、异步并发引擎、多源 fallback、48 项全部完成 |
 | [数据清洗与 LLM](doc/13-数据清洗与LLM.md) | LLM 清洗管道、Schema 注册表、降级策略 |
 | [ETF 资产配置轮动](doc/14-ETF资产配置轮动.md) | VAA/DAA/CAA 策略族、候选池、崩盘保护 |
-| **[TODO 待办清单](doc/TODO.md)** | **82 项: P0 Bug 修复 → P3 长期优化** |
+| **[TODO 待办清单](doc/TODO.md)** | **63 项剩余: P0+P0.1 已完成, P1~P4 待实施** |
 
 ---
 
