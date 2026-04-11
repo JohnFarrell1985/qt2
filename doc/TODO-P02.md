@@ -73,7 +73,7 @@ class LLMClient:
 | P0-13 | `BaseCleaner` + `CleanResult` 抽象基类 | `src/dataclean/base.py` | 0.5 天 |
 | P0-14 | `SentimentExtraction` Pydantic Schema (情绪分/实体/事件类型) | `src/dataclean/schemas/sentiment.py` | 0.5 天 |
 | P0-15 | `SentimentCleaner` LLM 清洗器 | `src/dataclean/cleaners/sentiment_cleaner.py` | 1 天 |
-| P0-16 | `PassthroughCleaner` 直通清洗器 (akshare DataFrame) | `src/dataclean/cleaners/passthrough_cleaner.py` | 0.5 天 |
+| P0-16 | `PassthroughCleaner` 直通清洗器 (已结构化 list[dict]) | `src/dataclean/cleaners/passthrough_cleaner.py` | 0.5 天 |
 | P0-17 | `RuleCleaner` 规则降级清洗 (关键词+正则) | `src/dataclean/cleaners/rule_cleaner.py` | 0.5 天 |
 | P0-18 | 情绪清洗 System Prompt 模板 | `src/dataclean/prompts/sentiment_prompt.py` | 0.5 天 |
 | P0-19 | 模块初始化 + `.env` 参数 | `src/dataclean/__init__.py` + config | 0.5 天 |
@@ -82,7 +82,10 @@ class LLMClient:
 原始数据格式混杂 (HTML、JSON、纯文本)，需要经过清洗转换为标准 Pydantic Schema 后才能入库。三层清洗器 (LLM → 规则 → 直通) 形成降级链:
 - **SentimentCleaner**: LLM 做精准情绪抽取 (成本 ~¥0.002/条，精度高)
 - **RuleCleaner**: LLM 不可用时的正则/关键词兜底 (免费，精度一般)
-- **PassthroughCleaner**: akshare 返回的已结构化 DataFrame 直接入库
+- **PassthroughCleaner**: 采集器返回的已结构化 `list[dict]` 直接入库
+
+> **本地推理模型选型 (2026 Q2 结论)**: FinBERT2-Base (125M, 情绪分类) + Qwen3-0.6B (600M, 结构化抽取)。
+> TinyFinBERT 已淘汰 (英文专用)。详见 [13-数据清洗与LLM.md § 模型选型](13-数据清洗与LLM.md)。
 
 **参考文档:** 详见 [doc/13-数据清洗与LLM.md](13-数据清洗与LLM.md)
 

@@ -150,7 +150,7 @@ class LLMClient:
 Phase 1 (当前)              Phase 2 (P2 阶段)           Phase 3 (P2-P3)
 ───────────────            ──────────────────          ──────────────────
 DeepSeek API (主)          双教师标注                    全本地推理
-Qwen API (备)       →      蒸馏 TinyFinBERT     →      数据飞轮
+Qwen API (备)       →      蒸馏 FinBERT2-Base   →      数据飞轮
 规则清洗 (兜底)             ONNX 本地部署                API 仅兜底 5%
 ```
 
@@ -161,8 +161,8 @@ Qwen API (备)       →      蒸馏 TinyFinBERT     →      数据飞轮
 | **Phase 1: 主力 API** | **DeepSeek V3** | 情绪打分 + 事件抽取 + 蒸馏标注 | ¥1/百万 token | ¥2/百万 token | 支持 `json_object` |
 | Phase 1: 备选 API | Qwen3.5-Plus (百炼) | DeepSeek 不可用时降级 | ¥2/百万 token | ¥12/百万 token | 支持 |
 | Phase 1: 复杂任务 | DeepSeek R1 | 研报精读, 长逻辑链, 蒸馏 Judge | ¥4/百万 token | ¥16/百万 token | 支持 |
-| **Phase 2-3: 本地推理** | **TinyFinBERT 14.5M (ONNX)** | 情绪分类 (-1/0/+1), 95% 流量 | 0 元 | 0 元 | — |
-| Phase 2-3: 本地推理 | FinBERT2-Base 110M (ONNX) | 高精度情绪 + 事件抽取 | 0 元 | 0 元 | — |
+| **Phase 2-3: 本地分类** | **FinBERT2-Base 125M (ONNX)** | 中文金融情绪分类 (-1/0/+1), 95% 流量 | 0 元 | 0 元 | — (encoder) |
+| Phase 2-3: 本地抽取 | Qwen3-0.6B + LoRA (GGUF) | 结构化 JSON 抽取 (事件/风险/行业) | 0 元 | 0 元 | 支持 |
 
 **为什么 DeepSeek 是主力而非百炼 Qwen**:
 - DeepSeek V3 价格仅 Qwen-Plus 的 **1/6** (输出 ¥2 vs ¥12)
@@ -198,16 +198,19 @@ RuleCleaner (规则清洗 — cleaners/rule_cleaner.py)
 
 Phase 2-3 (本地推理 + API 兜底) 的降级路径:
 
-TinyFinBERT / FinBERT2 本地 ONNX (95% 流量)
+情绪分类任务:
+FinBERT2-Base 本地 ONNX (95% 流量, CPU ~5ms)
     │ 置信度 < 0.7 → 进入飞轮队列
     ▼
 DeepSeek V3 API (低置信样本兜底)
-    │ 失败
+    │ 失败 → RuleCleaner
+
+结构化抽取任务 (事件/风险/行业):
+Qwen3-0.6B + LoRA 本地 (CPU ~50ms)
+    │ 输出校验失败 → API 兜底
     ▼
-Qwen3.5-Plus API (备选)
-    │ 失败
-    ▼
-RuleCleaner (最终兜底)
+DeepSeek V3 API
+    │ 失败 → RuleCleaner
 ```
 
 ### 本地蒸馏模型集成 (Phase 2-3)
@@ -217,18 +220,18 @@ RuleCleaner (最终兜底)
 ```python
 # src/dataclean/cleaners/distilled_cleaner.py
 
-class DistilledCleaner(BaseCleaner):
-    """本地蒸馏模型清洗器 — Phase 2-3 的主力清洗器"""
+class DistilledSentimentCleaner(BaseCleaner):
+    """FinBERT2-Base 本地情绪分类 — Phase 2-3 的主力清洗器 (encoder, 判别式)"""
 
     def __init__(self):
         self.local_model = ORTModelForSequenceClassification.from_pretrained(
-            settings.distill_model_path  # models/distilled/onnx-int8/
+            settings.distill_model_path  # models/finbert2-base/onnx-int8/
         )
         self.tokenizer = AutoTokenizer.from_pretrained(settings.distill_model_path)
         self.llm_fallback = LLMClient(settings)
 
     def clean(self, raw_data: str) -> CleanResult:
-        inputs = self.tokenizer(raw_data, return_tensors="np", truncation=True)
+        inputs = self.tokenizer(raw_data, return_tensors="np", truncation=True, max_length=512)
         logits = self.local_model(**inputs).logits
         probs = softmax(logits, axis=-1)
         max_prob = float(probs.max())
@@ -241,8 +244,8 @@ class DistilledCleaner(BaseCleaner):
                 schema_name="DistilledSentiment",
                 cleaned_data={"news_sentiment_score": score, "label": label},
                 raw_input=raw_data,
-                llm_usage={"provider": "local_distilled",
-                           "model": settings.distill_student_model,
+                llm_usage={"provider": "local_finbert2",
+                           "model": "FinBERT2-Base",
                            "tokens_in": 0, "tokens_out": 0},
                 is_fallback=False,
             )
@@ -251,16 +254,70 @@ class DistilledCleaner(BaseCleaner):
             return self.llm_fallback_clean(raw_data)
 ```
 
-**已验证可用的蒸馏基座模型**:
+**Phase 2-3 本地推理模型选型 (2026 Q2 调研结论)**:
 
-| 模型 | 参数 | 推理速度 | 适用场景 | 来源 |
-|------|------|---------|---------|------|
-| TinyFinBERT | 14.5M | ~2ms (CPU) | 情绪分类 (推荐默认) | arXiv:2409.18999 |
-| FinBERT2-Base | 110M | ~15ms (GPU) | 高精度情绪 + 事件抽取 | github.com/valuesimplex/FinBERT |
-| Qwen3.5-0.8B | 800M | ~20ms (GPU) | 多任务 + 复杂结构化抽取 | 官方小模型, 可 LoRA 微调 |
-| DeepSeek-R1-Distill-Qwen-1.5B | 1.5B | ~30ms (GPU) | 长文本理解, 研报分析 | 官方发布 |
+本项目聚焦 **A 股中文金融数据**, 经全网调研后确定 "两模型分工" 方案:
 
-> ⚠️ 网络上流传的 "Qwen3.5-Distill-8B" "FinQwen-Distill-2B" "NewsDistill-3B" 等型号经核实**不存在**, 不可作为选型依据。
+| 模型 | 参数量 | 架构 | 推理速度 | 适用场景 | 中文金融支持 | 来源 |
+|------|--------|------|---------|---------|------------|------|
+| **FinBERT2-Base** | 125M | Encoder (RoBERTa) | ~5ms (CPU) / ~2ms (GPU) | 情绪分类 (-1/0/+1) | ✅ 原生中文金融预训练 | github.com/valuesimplex/FinBERT2 |
+| **Qwen3-0.6B** | 600M | Decoder (GPT) | ~50ms (CPU) / ~15ms (GPU) | 结构化 JSON 抽取 (事件/风险/行业) | ✅ 中文原生, 可 LoRA 微调 | Qwen 官方 |
+
+**为什么只需两个模型**:
+
+| 淘汰模型 | 淘汰原因 |
+|----------|---------|
+| ~~TinyFinBERT 14.5M~~ | 英文预训练, 不支持中文; 在中文金融语料上准确率不可接受 |
+| ~~DeepSeek-R1-Distill-Qwen-1.5B~~ | 定位推理而非分类/抽取, 本地推理慢且参数冗余; 复杂推理已有 DeepSeek R1 API 兜底 |
+| ~~Qwen3.5-0.8B~~ | 该型号实际不存在, 正确型号为 Qwen3-0.6B |
+
+**两模型分工 — Encoder 判别 + Decoder 生成**:
+
+```
+                      原始新闻文本
+                          │
+              ┌───────────┴───────────┐
+              ▼                       ▼
+     FinBERT2-Base (125M)      Qwen3-0.6B + LoRA (600M)
+     [Encoder / 判别式]         [Decoder / 生成式]
+              │                       │
+     情绪三分类 (-1/0/+1)       JSON 结构化抽取
+     置信度 + softmax           事件 / 风险 / 行业信号
+              │                       │
+     ~5ms / CPU 可部署          ~50ms / CPU 可部署
+     ONNX INT8 量化             GGUF 4-bit 量化
+              │                       │
+     置信度 < 0.7               Schema 校验失败
+         → 飞轮队列 + API 兜底      → API 兜底
+```
+
+**FinBERT2-Base 的优势 (情绪分类)**:
+- 基于 **中文金融语料** (财报/公告/新闻) 继续预训练的 RoBERTa
+- Encoder 架构天然适合分类任务, 延迟极低
+- 可直接对接 HuggingFace `transformers` + ONNX Runtime, 零额外依赖
+- ONNX INT8 量化后模型体积 ~60MB, 纯 CPU 即可生产部署
+
+**Qwen3-0.6B 的优势 (结构化抽取)**:
+- 600M 参数, 支持 32K 上下文, 能直接生成 JSON
+- 中文原生训练, 金融术语覆盖好
+- 支持 LoRA 微调 (用 DeepSeek 标注数据做教师), 成本低
+- GGUF 4-bit 量化后 ~400MB, 家用 CPU 可运行 (llama.cpp / ollama)
+
+> ⚠️ 网络上流传的 "Qwen3.5-Distill-8B" "FinQwen-Distill-2B" "NewsDistill-3B" "Qwen3.5-0.8B" 等型号经核实**不存在**, 不可作为选型依据。
+
+### 硬件灵活部署 (同一代码, 多硬件适配)
+
+本地推理模型支持从家用 CPU 到 A800 服务器的全场景部署, **代码零修改, 仅改 `.env` 配置**:
+
+| 硬件 | FinBERT2 后端 | Qwen3 后端 | batch size | 延迟 |
+|------|--------------|-----------|------------|------|
+| 家用 CPU | ONNX Runtime CPU | llama-cpp CPU | 4 / 1 | ~5ms / ~50ms |
+| RTX 4060 Ti | ONNX Runtime GPU | llama-cpp GPU | 32 / 4 | ~2ms / ~15ms |
+| RTX 4090 | ONNX Runtime GPU | llama-cpp GPU | 64 / 8 | ~1ms / ~10ms |
+| A800 / A100 80GB | ONNX Runtime GPU | **vLLM** BF16 | 256 / 32 | <1ms / ~5ms |
+
+通过 `src/common/device_config.py` 运行时自动探测 GPU 型号, 自动选择最优 profile (precision / batch size / backend)。
+也可通过 `DEVICE_PROFILE=a800` 手动指定。详见 [15-硬件配置指南 § 九](15-硬件配置指南.md)。
 
 ---
 
@@ -592,6 +649,82 @@ risk = RiskAlertCleaner(llm).clean(raw_news)
 
 ---
 
+## 数据采集 → 数据清洗 对接规范
+
+### 采集模块落盘格式
+
+数据采集模块 (`src/datacollect/`) 通过 `CollectResult` 统一返回, `data` 字段为 `list[dict]`。落盘到 PostgreSQL 后形成以下表结构:
+
+| DB 表 | 采集器来源 | 关键字段 | dataclean 消费方式 |
+|--------|-----------|---------|-------------------|
+| `global_market_snapshot` | yfinance / sina_global | `symbol`, `close_price`, `change_pct`, `trade_date`, `raw_data`, `source` | **PassthroughCleaner** — 结构化数值, 直接映射 |
+| `watchlist_intel` | WatchlistIntelCollector (akshare) | `code`, `intel_type`, `title`, `content`, `source`, `url`, `published_at` | **SentimentCleaner / StockEventCleaner** — `title + content` 拼接后送 LLM |
+| `collect_log` | 所有采集器 | `task_id`, `source`, `status`, `records_count`, `elapsed_ms` | 不参与清洗, 仅运维 |
+
+### RSS 新闻 → 清洗器映射
+
+RSS 采集器 (`NewsRssCollector`) 返回的 `list[dict]` 字段为:
+
+```
+title, summary, link, source, source_key, published_at (datetime | None)
+```
+
+与 `WatchlistIntel` 表字段名不完全一致, 对接时需要字段映射:
+
+| RSS 字段 | WatchlistIntel 字段 | 清洗器入参 |
+|----------|-------------------|-----------|
+| `title` | `title` | 直接使用 |
+| `summary` | `content` | 映射 |
+| `link` | `url` | 映射 |
+| `source` | `source` | 直接使用 |
+| `published_at` (datetime) | `published_at` (str) | **需统一为 datetime** |
+
+### 全球行情 → 清洗器映射
+
+yfinance / sina_global 返回结构一致:
+
+```python
+{"symbol": "SPX", "close_price": 5200.0, "change_pct": 0.35, "trade_date": date, "raw": {...}}
+```
+
+落盘到 `global_market_snapshot` 后, `SentimentBridge` 直接从 DB 读取计算全局情绪字段 (`fx_usdcny`, `gold_price_usd` 等), 不经过 LLM 清洗。
+
+### 数据流全景
+
+```
+[采集层 datacollect]                    [清洗层 dataclean]                 [分析层]
+─────────────────                      ─────────────────                 ──────────
+NewsRssCollector                                                        sentiment/
+  → list[dict]  ─── 落盘 ──→ watchlist_intel ─── title+content ──→ SentimentCleaner
+  (title,summary,link)                           (中文新闻)          StockEventCleaner
+                                                                    RiskAlertCleaner
+
+WatchlistIntelCollector                                             stockradar/
+  → list[dict]  ─── 落盘 ──→ watchlist_intel ─── title+content ──→ StockEventCleaner
+  (title,content,url)                            (个股情报)
+
+YfinanceCollector                                                   sentiment/
+SinaGlobalCollector    ─── 落盘 ──→ global_market_snapshot ────────→ SentimentBridge
+  → list[dict]                      (symbol,close,change_pct)       (直接数值计算)
+  (symbol,close_price)
+
+EastmoneyCollector                                                  fundflow/
+TushareCollector       ─── 落盘 ──→ 对应业务表 ──→ PassthroughCleaner / FundFlowCleaner
+AdataCollector                      (结构化数据)
+```
+
+### 已知对接差异 & 解决方案
+
+| # | 差异 | 影响 | 解决方案 |
+|---|------|------|---------|
+| 1 | RSS `published_at` 为 `datetime`, WatchlistIntel 为 `str` | 时间过滤逻辑不一致 | **Phase 1 实现**: 入库前统一转 `datetime`, 字段类型改为 `TIMESTAMP` |
+| 2 | RSS 的 `summary` 对应 WatchlistIntel 的 `content` | 字段名不一致 | **映射层**: `NewsRssCollector.collect()` 或入库函数中做 rename |
+| 3 | WatchlistIntelCollector `metadata` 缺 `task_id`/`elapsed_ms` | 日志追踪不完整 | **增强**: 补齐 `metadata` 字段 |
+| 4 | yfinance `raw` 为 OHLCV dict, sina_global `raw` 为 `parts` list | `raw_data` 结构不统一 | **不影响清洗**: `raw_data` 仅存档, 清洗器不依赖此字段 |
+| 5 | `base.py` 文档写 "data 通常为 DataFrame" 但实际为 `list[dict]` | 文档误导 | **已确认**: 所有采集器均返回 `list[dict]`, 文档需同步更新 |
+
+---
+
 ## 可扩展的分析引擎
 
 | # | 引擎 | 分析内容 | Schema | 对策略的价值 | 优先级 |
@@ -623,11 +756,20 @@ QWEN_API_KEY=                           # https://dashscope.console.aliyun.com
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen-plus                    # qwen-plus (备选) / qwen-max (复杂任务)
 
-# ── 蒸馏模型 (Phase 2-3) ──
+# ── 本地推理模型 (Phase 2-3) ──
 DISTILL_ENABLED=false                   # Phase 2 启用后改为 true
-DISTILL_MODEL_PATH=models/distilled/onnx-int8/  # 本地蒸馏模型路径
-DISTILL_STUDENT_MODEL=TinyFinBERT       # TinyFinBERT / FinBERT2
 DISTILL_FLYWHEEL_LOW_CONF_THRESHOLD=0.7 # 低于此置信度 → 飞轮队列 + API 兜底
+# 情绪分类 (FinBERT2-Base, encoder, ONNX)
+FINBERT2_MODEL_PATH=models/finbert2-base/onnx-int8/
+# 结构化抽取 (Qwen3-0.6B, decoder, GGUF/vLLM)
+QWEN3_LOCAL_MODEL_PATH=models/qwen3-0.6b/gguf-q4/
+QWEN3_LOCAL_CONTEXT_LENGTH=4096         # 本地推理上下文长度
+
+# ── 硬件适配 (详见 15-硬件配置指南.md § 九) ──
+# 留空则自动探测 GPU; 可选: cpu / rtx4060ti / rtx4090 / a10 / a800 / a100
+DEVICE_PROFILE=
+# QWEN3_BACKEND=vllm              # 手动覆盖推理后端 (仅 A800/A100)
+# QWEN3_GPU_MEM_UTIL=0.3          # vLLM 显存占用比例
 
 # ── LLM 调用参数 ──
 LLM_TEMPERATURE=0.1                     # 低温度=高确定性
@@ -638,8 +780,14 @@ LLM_TIMEOUT=30                          # 超时 (秒)
 ### Python 依赖
 
 ```bash
+# Phase 1 (API 清洗)
 openai>=1.0             # DeepSeek/Qwen API (兼容 SDK)
 pydantic>=2.0           # Schema 校验 (已有)
+
+# Phase 2-3 (本地推理, 按需安装)
+transformers>=4.40      # FinBERT2-Base tokenizer + model
+onnxruntime>=1.17       # FinBERT2 ONNX 推理 (CPU, 无需 GPU 版)
+llama-cpp-python>=0.3   # Qwen3-0.6B GGUF 本地推理 (可选, 也可用 ollama CLI)
 ```
 
 ---
@@ -667,11 +815,19 @@ OpenClaw 端 (C1) 优先: 它自带 LLM，收集完直接结构化推送。qt-qu
 ### Q: 6 个引擎全部要实现吗?
 不需要。P0 只做情绪引擎。其他按优先级逐步添加。三层架构保证后续扩展零重构。
 
-### Q: 家用显卡能跑本地 NLP 吗?
-TinyFinBERT (14.5M) 纯 CPU 即可, 推理 <2ms; FinBERT2 (110M) < 2GB 显存, GTX 1060 够用。ONNX INT8 量化后体积再减半。Phase 1 可先用 DeepSeek API (¥0.5/月), Phase 2-3 切到本地推理后成本归零。
+### Q: 家用硬件能跑本地 NLP 吗?
+**FinBERT2-Base (125M)**: ONNX INT8 量化后 ~60MB, 纯 CPU 推理 ~5ms, 无需显卡。
+**Qwen3-0.6B**: GGUF Q4 量化后 ~400MB, CPU 推理 ~50ms (llama.cpp / ollama), 无需显卡。
+两个模型加起来 < 500MB 内存, 任何现代笔记本电脑都能运行。Phase 1 先用 DeepSeek API (¥0.5/月), Phase 2-3 切到本地推理后成本归零。
 
 ### Q: 为什么不用百炼作为主力 LLM?
 DeepSeek V3 价格仅 Qwen-Plus 的 1/6 (输出 ¥2 vs ¥12/百万 token), 且在逻辑推理和低幻觉方面更强。头部量化机构 (九坤/幻方) 均不依赖云端 API, 自建模型+蒸馏是主线。百炼 Qwen 作为备选教师和降级方案保留, 但不建议作为主力。详见"LLM 选型策略"章节。
 
-### Q: 蒸馏模型什么时候可用?
-P2-19~P2-21 覆盖完整蒸馏管线 (标注 → 训练 → 评估 → 部署 → 飞轮)。在此之前, Phase 1 的 DeepSeek API 清洗方案已经可以满足日频策略的需要, 成本极低。
+### Q: 本地推理模型什么时候可用?
+P2-19~P2-21 覆盖完整蒸馏管线 (标注 → 训练 → 评估 → 部署 → 飞轮)。FinBERT2-Base 的 Sentiment 分类可以直接用预训练权重, 零样本即可工作; Qwen3-0.6B 需要用 DeepSeek 标注数据做 LoRA 微调。在此之前, Phase 1 的 DeepSeek API 清洗方案已经满足日频策略需要, 成本极低。
+
+### Q: 为什么淘汰 TinyFinBERT?
+TinyFinBERT 是基于英文 FinBERT 的知识蒸馏版本 (14.5M), **仅支持英文**。本项目的数据源 (36kr/东方财富/新浪) 全是中文, TinyFinBERT 在中文金融语料上准确率远低于 FinBERT2-Base, 不适用。
+
+### Q: 为什么淘汰 DeepSeek-R1-Distill-Qwen-1.5B?
+该模型定位是"推理蒸馏", 擅长长链逻辑推导, 而非分类/抽取。对于复杂推理任务, 项目已有 DeepSeek R1 API; 对于本地分类/抽取, FinBERT2 + Qwen3-0.6B 更高效。1.5B 参数在 CPU 上推理 ~100ms, 性价比不如 0.6B。

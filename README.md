@@ -134,7 +134,8 @@
 | | Playwright | >=1.40 | 浏览器级采集 (可选) |
 | | tavily-python | >=0.5 | AI 搜索兜底 (可选) |
 | **LLM / NLP** | openai SDK | >=2.0 | DeepSeek / Qwen 统一客户端 |
-| | FinBERT2 | 2025 | 中文金融情感模型 |
+| | FinBERT2-Base | 125M (2025) | 中文金融情绪分类 (Encoder, ONNX) |
+| | Qwen3-0.6B | 600M (2025) | 结构化 JSON 抽取 (Decoder, GGUF) |
 | | transformers | >=5.0 | HuggingFace 推理 |
 | **蒸馏** | setfit | >=1.1 | 少样本冷启动 (8 例/类) |
 | | peft (LoRA) | >=0.18 | 参数高效微调 |
@@ -274,8 +275,8 @@ docker compose up -d
 | NVIDIA Data Flywheel Blueprint | NVIDIA (2025) | 生产级金融蒸馏, 49-70B→1-8B, 成本降 98% |
 | TensorZero | TensorZero (2025) | 程序化策展 + 微调, 5-30x 降本 |
 | SetFit | HuggingFace (2022) | 8 样本/类达 RoBERTa-Large 水平 |
-| TinyFinBERT | arXiv:2409.18999 (2024) | 14.5M 参数, GPT 蒸馏, 99% 保留率 |
-| FinBERT2 | valuesimplex (2025) | 最强中文金融 NLP (32B token 预训练) |
+| FinBERT2 | valuesimplex (2025) | 最强中文金融 NLP (32B token 预训练, 125M) |
+| Qwen3-0.6B | Qwen 官方 (2025) | 600M decoder, 32K 上下文, 中文原生 |
 | TinyLoRA | arXiv (2026.03) | 仅 13 参数微调达 91.8% GSM8K |
 | EvasionBench | arXiv:2601.09142 (2026) | 多模型共识 + 分歧挖掘 |
 

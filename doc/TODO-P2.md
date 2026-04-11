@@ -191,8 +191,9 @@ P2-19~P2-21 蒸馏模型训练完成后, `feature_builder.py` 需要对接本地
 ```
 news_sentiment_score 数据来源降级链:
 
-TinyFinBERT / FinBERT2 本地 ONNX (Phase 2-3 目标态, 95% 流量)
-    │ 置信度 < 0.7 → 飞轮队列 + API 兜底
+FinBERT2-Base 本地 ONNX — 情绪分类 (Phase 2-3 目标态, 95% 流量)
+Qwen3-0.6B + LoRA 本地 GGUF — 结构化抽取
+    │ 置信度 < 0.7 / Schema 校验失败 → 飞轮队列 + API 兜底
     ▼
 DeepSeek V3 API (低置信样本 + Phase 1 全量)
     │ 失败/超时
@@ -514,13 +515,14 @@ CREATE INDEX idx_distill_confidence ON distill_labels (confidence);
 | Phase 1: 主训练 | LoRA SFT | P2-19 的 `easy_set` (万级) | 1-3 小时 | 接近教师水平 (F1 ~90%) |
 | Phase 2: 强化 | DPO 偏好对齐 | P2-19 的 `hard_set` (千级) | 0.5-1 小时 | 边界样本提升 (+2-3%) |
 
-**学生模型选择 (3 档):**
+**学生模型选择 (2 档, 2026 Q2 调研结论):**
 
-| 学生模型 | 参数量 | LoRA 训练显存 | 推理速度 | 适用场景 |
-|----------|--------|-------------|---------|---------|
-| FinBERT2-Base | 110M | ~4GB | ~15ms | 高精度情感 + 事件抽取 |
-| TinyFinBERT | 14.5M | ~2GB | ~2ms | 情感分类 (推荐默认) |
-| Qwen2.5-0.5B | 500M | ~6GB | ~20ms | 多任务 + 复杂结构化抽取 |
+| 学生模型 | 参数量 | 架构 | LoRA 训练显存 | 推理速度 | 适用场景 |
+|----------|--------|------|-------------|---------|---------|
+| **FinBERT2-Base** | 125M | Encoder | ~4GB | ~5ms (CPU) | 中文金融情绪分类 (推荐默认) |
+| **Qwen3-0.6B** | 600M | Decoder | ~6GB | ~50ms (CPU) | 结构化 JSON 抽取 (事件/风险/行业) |
+
+> ~~TinyFinBERT (14.5M)~~ 已淘汰: 英文预训练, 不支持中文金融语料。详见 [13-数据清洗与LLM](13-数据清洗与LLM.md)。
 
 **技术选型:**
 
@@ -535,9 +537,10 @@ CREATE INDEX idx_distill_confidence ON distill_labels (confidence);
 
 **参考文档:**
 - SetFit 冷启动: [github.com/SetFit/setfit](https://github.com/SetFit/setfit) — 8 样本/类达到 RoBERTa-Large 水平
-- TinyFinBERT: [arXiv:2409.18999](https://arxiv.org/abs/2409.18999) — 14.5M 参数, GPT 增强蒸馏, 99% 保留率
-- TinyLoRA: [MarkTechPost 2026.03](https://www.marktechpost.com/2026/03/24/this-ai-paper-introduces-tinylora/) — 仅 13 参数微调达 91.8% GSM8K
 - FinBERT2: [github.com/valuesimplex/FinBERT](https://github.com/valuesimplex/FinBERT) — 最强中文金融 NLP (32B token 预训练)
+- Qwen3-0.6B: [Qwen 官方](https://huggingface.co/Qwen/Qwen3-0.6B) — 600M 参数, 32K 上下文, 中文原生
+- TinyLoRA: [MarkTechPost 2026.03](https://www.marktechpost.com/2026/03/24/this-ai-paper-introduces-tinylora/) — 仅 13 参数微调达 91.8% GSM8K
+- ~~TinyFinBERT: [arXiv:2409.18999](https://arxiv.org/abs/2409.18999) — 已淘汰, 英文专用~~
 - TensorZero: [tensorzero.com](https://www.tensorzero.com/blog/fine-tuned-small-llms-can-beat-large-ones-at-5-30x-lower-cost-with-programmatic-data-curation/) — 程序化策展 5-30x 成本降低
 
 **落地方案:**
@@ -737,11 +740,11 @@ DISTILL_MODEL_PATH=models/distilled/       # 蒸馏模型存储路径
 
 | 场景 | 蒸馏应用 | 对应模块 | 学生模型推荐 |
 |------|---------|---------|-------------|
-| 金融情感分析 | 多教师共识 → LoRA SFT | sentiment (P2-13) | TinyFinBERT 14.5M |
-| 事件驱动量化 | 利好/利空/重组 → 多标签分类 | stockradar (P2-15) | FinBERT2-Base 110M |
-| 风险预警 | 黑天鹅/政策突变 → 二分类 | riskmonitor (P2-17) | TinyFinBERT 14.5M |
-| 结构化抽取 | 财报/公告 → JSON | dataclean | Qwen2.5-0.5B |
-| 语义 Alpha | 文本→768d 向量→LGB 特征 | ml/factor | FinBERT2-Base 110M |
+| 金融情感分析 | 多教师共识 → LoRA SFT | sentiment (P2-13) | **FinBERT2-Base 125M** (encoder) |
+| 事件驱动量化 | 利好/利空/重组 → 多标签分类 | stockradar (P2-15) | FinBERT2-Base 125M (encoder) |
+| 风险预警 | 黑天鹅/政策突变 → 二分类 | riskmonitor (P2-17) | FinBERT2-Base 125M (encoder) |
+| 结构化抽取 | 财报/公告 → JSON | dataclean | **Qwen3-0.6B** (decoder) |
+| 语义 Alpha | 文本→768d 向量→LGB 特征 | ml/factor | FinBERT2-Base 125M (encoder) |
 
 **关键参考文献 (全部 2025-2026):**
 
@@ -752,8 +755,9 @@ DISTILL_MODEL_PATH=models/distilled/       # 蒸馏模型存储路径
 | NVIDIA Data Flywheel (2025) | 生产级金融蒸馏蓝图, 成本降 98% | [GitHub](https://github.com/NVIDIA-AI-Blueprints/ai-model-distillation-for-financial-data) |
 | TensorZero (2025.07) | 程序化策展 + 微调 = 5-30x 降本 | [Blog](https://www.tensorzero.com/blog/fine-tuned-small-llms-can-beat-large-ones-at-5-30x-lower-cost-with-programmatic-data-curation/) |
 | SetFit (HuggingFace) | 8 样本/类冷启动, 无需 prompt | [GitHub](https://github.com/SetFit/setfit) |
-| TinyFinBERT (2024) | 14.5M 参数, GPT 增强蒸馏, 99% 保留率 | [arXiv:2409.18999](https://arxiv.org/abs/2409.18999) |
-| FinBERT2 (2025) | 最强中文金融 NLP (32B token 预训练) | [GitHub](https://github.com/valuesimplex/FinBERT) |
+| FinBERT2 (2025) | 最强中文金融 NLP (32B token 预训练, 125M) | [GitHub](https://github.com/valuesimplex/FinBERT) |
+| Qwen3-0.6B (2025) | 600M decoder, 32K 上下文, 中文原生 | [HuggingFace](https://huggingface.co/Qwen/Qwen3-0.6B) |
+| ~~TinyFinBERT (2024)~~ | ~~已淘汰: 英文专用, 不适合中文金融~~ | ~~[arXiv:2409.18999](https://arxiv.org/abs/2409.18999)~~ |
 | TinyLoRA (2026.03) | 仅 13 参数微调达 91.8% GSM8K | [MarkTechPost](https://www.marktechpost.com/2026/03/24/this-ai-paper-introduces-tinylora/) |
 
 ---
