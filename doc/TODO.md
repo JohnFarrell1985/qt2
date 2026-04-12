@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (索引)
 
-> 最后更新: 2026-04-11
+> 最后更新: 2026-04-12
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -16,11 +16,11 @@
 |--------|------|--------|-----------|---------|
 | ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
 | ~~**P0.1**~~ | ✅ 已完成 → [12-数据采集模块](12-数据采集模块.md) + [13-数据清洗与LLM](13-数据清洗与LLM.md) | ~~57 项~~ | ~~~24 天~~ | 数据采集 (A01-A48) + 数据清洗 (P0-12~20) — **全部完成** |
-| **P1** | [TODO-P1.md](TODO-P1.md) | 25 项 | ~53 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 |
+| **P1** | [TODO-P1.md](TODO-P1.md) | 30 项 | ~61 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 + **架构改进 (标的池分类/交易规则引擎/UniverseProvider)** |
 | **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
 | **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
-| **合计** | — | **63 项** (剩余) | **~114 天** | P0 + P0.1 已完成, 其余待实施 |
+| **合计** | — | **68 项** (剩余) | **~122 天** | P0 + P0.1 已完成, 其余待实施 |
 
 ---
 
@@ -53,6 +53,8 @@
 | 行业轮动 | `src/sectorwatch/` | doc/13 引擎扩展章节 |
 | 宏观经济 | `src/macrotrack/` | doc/13 引擎扩展章节 |
 | **ETF 轮动** | `src/strategy/etf_rotation/` | [TODO-P1.md P1-20](TODO-P1.md#p1-20-etf-全球资产轮动策略-tactical-asset-allocation) |
+| **标的池分类/交易规则** | `src/strategy/trading_rules.py` (新增) | [TODO-P1.md P1-27](TODO-P1.md#p1-27-标的池分类与交易规则引擎-a股港股etf两融) |
+| **UniverseProvider** | `src/data/universe_provider.py` (新增) | [TODO-P1.md P1-28](TODO-P1.md#p1-28-universeprovider-统一抽象接口) |
 | **知识蒸馏** | `src/distill/` | [TODO-P2.md P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型) |
 
 ---
@@ -100,6 +102,11 @@
 | **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
 | **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
 | ~~**P1-26**~~ | ~~可观测性 (structlog + 飞书机器人告警)~~ → **已合并至 P4** | — | — |
+| **P1-27** | **标的池分类与交易规则引擎 (A股/港股/ETF/两融)** | **strategy/data** | **3 天** |
+| **P1-28** | **UniverseProvider 统一抽象接口** | **data/strategy** | **1 天** |
+| **P1-29** | **策略自动发现与注册** | **strategy** | **0.5 天** |
+| **P1-30** | **BaseFactor ABC + FactorRegistry** | **factor** | **1 天** |
+| **P1-31** | **FactorPool 版本追溯** | **factor** | **0.5 天** |
 
 ### P2: 增强 → [详见 TODO-P2.md](TODO-P2.md)
 
@@ -252,6 +259,9 @@ Phase 0.1 — ✅ 已完成 (数据采集 + 清洗):
   P0-12~20  dataclean 9 项全部完成 (LLM客户端/Schema/清洗器/Prompt/Config)
 
 Phase 1 (第 5-9 周):
+  ★ P1-27~28  标的池分类 + 交易规则引擎 + UniverseProvider (A股/港股/ETF/两融, 最优先)
+  P1-29     策略自动发现与注册 (OCP, 0.5天)
+  P1-30     BaseFactor ABC + FactorRegistry (因子一等公民, P1-21 前置)
   P1-01~02  Purged CV + Walk-Forward 重训练 (含 Regime-Aware)
   P1-05~06  组合优化 + 风险归因
   P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
@@ -263,6 +273,7 @@ Phase 1 (第 5-9 周):
   P1-23     轻量级事件总线 (blinker, 模块解耦)
   P1-24     数据质量监控 + Pandera Schema 校验
   P1-25     系统级容错 & 降级 (Tenacity/熔断)
+  P1-31     FactorPool 版本追溯 (0.5天)
 
 Phase 2 (第 9-13 周):
   P1-03~04  因子/模型监控 (含因子拥挤度检测)

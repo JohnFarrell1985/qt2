@@ -113,6 +113,22 @@ class BacktestConfig(BaseSettings):
     max_total_position_pct: float = Field(default=0.80, alias="BACKTEST_MAX_TOTAL_POSITION_PCT")
     max_holdings: int = Field(default=5, alias="BACKTEST_MAX_HOLDINGS")
 
+    # A 股交易费率
+    commission_rate: float = Field(default=0.000115, alias="FEE_COMMISSION_RATE")
+    commission_min: float = Field(default=5.0, alias="FEE_COMMISSION_MIN")
+    stamp_tax_rate: float = Field(default=0.0005, alias="FEE_STAMP_TAX_RATE")
+    transfer_fee_rate: float = Field(default=0.00002, alias="FEE_TRANSFER_FEE_RATE")
+
+    # 港股通交易费率
+    hk_commission_rate: float = Field(default=0.0003, alias="FEE_HK_COMMISSION_RATE")
+    hk_commission_min: float = Field(default=5.0, alias="FEE_HK_COMMISSION_MIN")
+    hk_stamp_tax_rate: float = Field(default=0.001, alias="FEE_HK_STAMP_TAX_RATE")
+    hk_trading_fee_rate: float = Field(default=0.0000565, alias="FEE_HK_TRADING_FEE_RATE")
+    hk_transaction_levy_rate: float = Field(default=0.000027, alias="FEE_HK_TRANSACTION_LEVY_RATE")
+    hk_frc_levy_rate: float = Field(default=0.0000015, alias="FEE_HK_FRC_LEVY_RATE")
+    hk_settlement_fee_rate: float = Field(default=0.000042, alias="FEE_HK_SETTLEMENT_FEE_RATE")
+    hk_settlement_fee_min: float = Field(default=2.0, alias="FEE_HK_SETTLEMENT_FEE_MIN")
+
 
 class RiskConfig(BaseSettings):
     model_config = _SHARED_CFG

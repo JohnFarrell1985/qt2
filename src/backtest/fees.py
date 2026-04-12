@@ -1,9 +1,9 @@
 """
 交易费用计算模块 - A股 & 港股通
 
-A股费用 (2024年标准):
-- 佣金: 万分之三 (双向, 单笔最低5元)
-- 印花税: 千分之一 (仅卖出)
+A股费用 (2024年标准, 印花税 2023.08.28 减半):
+- 佣金: 券商协商 (默认万1.15, 双向, 单笔最低5元)
+- 印花税: 千分之零点五 (仅卖出, 2023年8月28日起)
 - 过户费: 万分之零点二 (双向, 仅沪市)
 
 港股通费用 (2026年标准, 沪港通/深港通):
@@ -13,20 +13,38 @@ A股费用 (2024年标准):
 - 交易征费: 万分之零点二七 (双向, 证监会收取)
 - 会财局征费: 万分之零点零一五 (双向)
 - 股份交收费: 万分之零点四二 (双向, 最低2港元)
+
+费率可通过 env/.env.trading 中的 FEE_* 环境变量配置,
+也可在代码中直接构造 FeeConfig/HKFeeConfig 覆盖。
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
 import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.common.config import BacktestConfig
 
 
 # ======== 费率配置 ========
 
 @dataclass
 class FeeConfig:
-    """A股交易费率配置"""
-    commission_rate: float = 0.0003
+    """A股交易费率配置 (默认值从 env/.env.trading 的 FEE_* 读取)"""
+    commission_rate: float = 0.000115      # 万1.15
     commission_min: float = 5.0
-    stamp_tax_rate: float = 0.001
+    stamp_tax_rate: float = 0.0005         # 千0.5 (2023.08.28 起)
     transfer_fee_rate: float = 0.00002
+
+    @classmethod
+    def from_settings(cls, cfg: BacktestConfig) -> FeeConfig:
+        return cls(
+            commission_rate=cfg.commission_rate,
+            commission_min=cfg.commission_min,
+            stamp_tax_rate=cfg.stamp_tax_rate,
+            transfer_fee_rate=cfg.transfer_fee_rate,
+        )
 
 
 @dataclass
@@ -40,6 +58,19 @@ class HKFeeConfig:
     frc_levy_rate: float = 0.0000015       # 会财局征费
     settlement_fee_rate: float = 0.000042  # 股份交收费
     settlement_fee_min: float = 2.0        # 交收费最低 2港元
+
+    @classmethod
+    def from_settings(cls, cfg: BacktestConfig) -> HKFeeConfig:
+        return cls(
+            commission_rate=cfg.hk_commission_rate,
+            commission_min=cfg.hk_commission_min,
+            stamp_tax_rate=cfg.hk_stamp_tax_rate,
+            trading_fee_rate=cfg.hk_trading_fee_rate,
+            transaction_levy_rate=cfg.hk_transaction_levy_rate,
+            frc_levy_rate=cfg.hk_frc_levy_rate,
+            settlement_fee_rate=cfg.hk_settlement_fee_rate,
+            settlement_fee_min=cfg.hk_settlement_fee_min,
+        )
 
 
 # ======== 费用明细 ========

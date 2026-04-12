@@ -301,8 +301,8 @@ def main():
     p_trade.add_argument("--sell", required=True, help="卖出日期 YYYY-MM-DD")
     p_trade.add_argument("--qty", type=int, help="买入数量(股)")
     p_trade.add_argument("--amount", type=float, help="买入金额(元)")
-    p_trade.add_argument("--commission", type=float, help="佣金费率 (默认0.0003)")
-    p_trade.add_argument("--stamp-tax", type=float, help="印花税率 (默认0.001)")
+    p_trade.add_argument("--commission", type=float, help="佣金费率 (默认0.000115, 万1.15)")
+    p_trade.add_argument("--stamp-tax", type=float, help="印花税率 (默认0.0005, 千0.5)")
     p_trade.add_argument("--json", action="store_true", help="同时输出JSON格式")
     p_trade.set_defaults(func=cmd_trade)
 

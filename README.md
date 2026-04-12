@@ -1,8 +1,8 @@
 # A 股量化因子迭代平台
 
-基于 **三档策略引擎** + **多源因子管线** + **市场情绪引擎** + **ETF 全球轮动** + **LLM 数据清洗** + **知识蒸馏** + **迅投 QMT** 的散户量化投资系统。
+基于 **三档策略引擎** + **多源因子管线** + **市场情绪引擎** + **ETF 全球轮动** + **多品种交易规则** + **LLM 数据清洗** + **知识蒸馏** + **迅投 QMT** 的散户量化投资系统。
 
-> 63 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent | Python 3.13
+> 68 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent | Python 3.13
 
 ---
 
@@ -85,6 +85,7 @@
 | 数据清洗 | `src/dataclean/` | ✅ 已实现 | instructor + LLM 清洗 + Schema + 三级降级 (P0-12~20, 9 项) |
 | 情绪引擎 | `src/sentiment/` | 📋 设计完成 | 6 维合成指数 + 宏观状态 + 策略 Profile |
 | ETF 轮动 | `src/strategy/etf_rotation/` | 📋 设计完成 | VAA/DAA/CAA + 崩盘保护 + 全球配置 |
+| 标的池/交易规则 | `src/strategy/trading_rules.py` | 📋 设计完成 | A股/港股/ETF/两融分类 + 按品种交易规则引擎 |
 | 知识蒸馏 | `src/distill/` | 📋 设计完成 | 多教师共识 + LoRA/DPO + 数据飞轮 |
 | 组合优化 | `src/portfolio/` | 📋 设计完成 | CAA/MVO + skfolio + Barra 风险归因 |
 | 系统监控 | `src/monitoring/` | 📋 设计完成 | 因子衰减 + 模型漂移 + 拥挤度 + 飞书告警 |
@@ -244,7 +245,7 @@ docker compose up -d
 | [数据采集模块](doc/12-数据采集模块.md) | 六层反爬、异步并发引擎、多源 fallback、48 项全部完成 |
 | [数据清洗与 LLM](doc/13-数据清洗与LLM.md) | instructor + LLM 清洗、Schema 注册表、降级策略 |
 | [ETF 资产配置轮动](doc/14-ETF资产配置轮动.md) | VAA/DAA/CAA 策略族、候选池、崩盘保护 |
-| **[TODO 待办清单](doc/TODO.md)** | **63 项剩余: P0+P0.1 已完成, P1~P4 待实施** |
+| **[TODO 待办清单](doc/TODO.md)** | **68 项剩余: P0+P0.1 已完成, P1~P4 待实施** |
 
 ---
 

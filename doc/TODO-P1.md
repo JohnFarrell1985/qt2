@@ -1,8 +1,8 @@
-# P1: 重要 (量化核心 + 模块完善 + ETF 轮动 + 多源因子)
+# P1: 重要 (量化核心 + 模块完善 + ETF 轮动 + 多源因子 + 架构改进)
 
 > 最后更新: 2026-04-12
 >
-> 25 项 | 预估工作量 ~53 天 (含 P3-03 提升 + 新增 4 项, P1-26 已合并至 P4)
+> 30 项 | 预估工作量 ~61 天 (含 P3-03 提升 + 新增 P1-27~P1-31 架构改进, P1-26 已合并至 P4)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -1386,6 +1386,392 @@ class DegradationManager:
 - [Tenacity](https://tenacity.readthedocs.io/) — Python 重试库
 - [Circuit Breaker Pattern (Martin Fowler)](https://martinfowler.com/bliki/CircuitBreaker.html)
 - [Resilience4j Design Patterns](https://resilience4j.readme.io/docs/circuitbreaker)
+
+---
+
+### P1-27: 标的池分类与交易规则引擎 (A股/港股/ETF/两融)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | strategy / data |
+| **文件** | `src/strategy/instrument_pool.py` (扩展), `src/strategy/trading_rules.py` (新增), `src/data/models.py` (扩展 `InstrumentPool`) |
+| **工作量** | 3 天 |
+| **优先级** | **最高 — 架构审查新增, 建议首批实施** |
+
+**为什么要做:**
+
+当前 `instrument_pool` 的 `asset_type` 仅支持 `stock` / `cb` / `etf` 三种, 且只用于 **池筛选** (决定走 DB 还是 QMT 板块)。系统没有按资产类型区分交易规则, 所有标的统一适用 A 股规则。这在以下场景会导致严重问题:
+
+| 资产类型 | 交易制度 | 涨跌幅限制 | 印花税 | T+0 | 保证金 | 当前系统处理 |
+|----------|----------|-----------|--------|-----|--------|------------|
+| **A 股主板** | T+1 | ±10% | 0.05% | ❌ | — | ✅ 正确 |
+| **A 股科创板** | T+1 | ±20% (前5日无限制) | 0.05% | ❌ | — | ⚠️ 涨跌幅硬编码 10% |
+| **A 股创业板** | T+1 | ±20% | 0.05% | ❌ | — | ⚠️ 涨跌幅硬编码 10% |
+| **A 股北交所** | T+1 | ±30% | 0.05% | ❌ | — | ❌ 未支持 |
+| **港股通** | T+0 | 无涨跌幅 | 0 | ✅ | — | ❌ T+1 校验错误 |
+| **ETF (场内)** | T+0 (跨境) / T+1 (境内) | 无涨跌幅 (多数) | 0 | 部分 | — | ⚠️ 统一 T+1 |
+| **可转债** | T+0 | ±20% (临停) | 0 | ✅ | — | ⚠️ T+1 校验错误 |
+| **两融标的** | T+1 | 同底层 | 同底层 | ❌ | 保证金比例 | ❌ 未支持融券卖出 |
+
+**不做的后果:**
+1. ETF 轮动策略 (P1-20) 中跨境 ETF 支持 T+0, 但 `SignalArbiter` 统一按 T+1 校验会阻止当日买卖
+2. 可转债策略当日买入后无法当日止损 (实际可转债 T+0)
+3. 港股通标的被错误限制涨跌幅 10%, 导致止损/止盈判断失准
+4. 科创板/创业板 ±20% 涨跌幅被 10% 硬编码截断, 涨跌停模拟失真
+5. 两融标的无法利用融券做空 (对冲策略的前提)
+
+**落地方案:**
+
+**子任务 1: 资产类型枚举与交易规则表** (1 天)
+
+```python
+from enum import Enum
+from dataclasses import dataclass
+
+class AssetType(str, Enum):
+    A_STOCK_MAIN = "a_stock_main"       # A股主板
+    A_STOCK_STAR = "a_stock_star"       # A股科创板 (688xxx)
+    A_STOCK_GEM = "a_stock_gem"         # A股创业板 (300xxx)
+    A_STOCK_BSE = "a_stock_bse"         # A股北交所 (8xxxxx/4xxxxx)
+    HK_CONNECT = "hk_connect"           # 港股通
+    ETF_DOMESTIC = "etf_domestic"       # 境内ETF (T+1)
+    ETF_CROSS_BORDER = "etf_cross_border"  # 跨境/商品ETF (T+0)
+    CONVERTIBLE_BOND = "cb"             # 可转债 (T+0)
+    MARGIN_LONG = "margin_long"         # 两融-融资标的
+    MARGIN_SHORT = "margin_short"       # 两融-融券标的
+
+@dataclass(frozen=True)
+class TradingRule:
+    """资产交易规则"""
+    asset_type: AssetType
+    t_plus_n: int                     # T+0=0, T+1=1
+    price_limit_pct: float | None     # 涨跌幅限制 (None=无限制)
+    stamp_tax_rate: float             # 印花税率 (卖出)
+    min_lot_size: int                 # 最小交易单位 (股/手)
+    can_short: bool                   # 是否可做空
+    margin_ratio: float | None        # 保证金比例 (仅两融)
+    session_hours: str                # 交易时段
+
+TRADING_RULES: dict[AssetType, TradingRule] = {
+    AssetType.A_STOCK_MAIN: TradingRule(
+        asset_type=AssetType.A_STOCK_MAIN,
+        t_plus_n=1, price_limit_pct=0.10, stamp_tax_rate=0.0005,
+        min_lot_size=100, can_short=False, margin_ratio=None,
+        session_hours="09:30-11:30,13:00-15:00",
+    ),
+    AssetType.A_STOCK_STAR: TradingRule(
+        asset_type=AssetType.A_STOCK_STAR,
+        t_plus_n=1, price_limit_pct=0.20, stamp_tax_rate=0.0005,
+        min_lot_size=200, can_short=False, margin_ratio=None,
+        session_hours="09:30-11:30,13:00-15:00",
+    ),
+    AssetType.A_STOCK_GEM: TradingRule(
+        asset_type=AssetType.A_STOCK_GEM,
+        t_plus_n=1, price_limit_pct=0.20, stamp_tax_rate=0.0005,
+        min_lot_size=100, can_short=False, margin_ratio=None,
+        session_hours="09:30-11:30,13:00-15:00",
+    ),
+    AssetType.HK_CONNECT: TradingRule(
+        asset_type=AssetType.HK_CONNECT,
+        t_plus_n=0, price_limit_pct=None, stamp_tax_rate=0.0,
+        min_lot_size=1, can_short=False, margin_ratio=None,
+        session_hours="09:30-12:00,13:00-16:00",
+    ),
+    AssetType.ETF_CROSS_BORDER: TradingRule(
+        asset_type=AssetType.ETF_CROSS_BORDER,
+        t_plus_n=0, price_limit_pct=None, stamp_tax_rate=0.0,
+        min_lot_size=100, can_short=False, margin_ratio=None,
+        session_hours="09:30-11:30,13:00-15:00",
+    ),
+    AssetType.CONVERTIBLE_BOND: TradingRule(
+        asset_type=AssetType.CONVERTIBLE_BOND,
+        t_plus_n=0, price_limit_pct=0.20, stamp_tax_rate=0.0,
+        min_lot_size=10, can_short=False, margin_ratio=None,
+        session_hours="09:30-11:30,13:00-15:00",
+    ),
+    # ... 其余类型
+}
+```
+
+**子任务 2: 代码→资产类型自动推断** (0.5 天)
+
+```python
+def infer_asset_type(code: str) -> AssetType:
+    """根据证券代码自动推断资产类型"""
+    prefix = code[:3] if len(code) >= 9 else code[:2]
+    suffix = code.split(".")[-1] if "." in code else ""
+
+    if suffix == "HK" or code.startswith("HK"):
+        return AssetType.HK_CONNECT
+    if code.startswith("688") or code.startswith("689"):
+        return AssetType.A_STOCK_STAR
+    if code.startswith("300") or code.startswith("301"):
+        return AssetType.A_STOCK_GEM
+    if code.startswith("8") or code.startswith("4"):
+        return AssetType.A_STOCK_BSE
+    if code.startswith("51") or code.startswith("159"):
+        return _classify_etf(code)  # 进一步区分境内/跨境
+    if code.startswith("11") or code.startswith("12"):
+        return AssetType.CONVERTIBLE_BOND
+    return AssetType.A_STOCK_MAIN
+```
+
+**子任务 3: SignalArbiter / PositionSizer 接入交易规则** (1.5 天)
+
+```python
+class SignalArbiter:
+    def _check_t_plus_n(self, signal: Signal, holdings: list) -> bool:
+        rule = TRADING_RULES[infer_asset_type(signal.code)]
+        if rule.t_plus_n == 0:
+            return True  # T+0 允许当日买卖
+        # T+1: 检查今日买入的不能卖出
+        return signal.code not in self._today_bought
+
+    def _check_price_limit(self, signal: Signal, price: float, prev_close: float) -> bool:
+        rule = TRADING_RULES[infer_asset_type(signal.code)]
+        if rule.price_limit_pct is None:
+            return True  # 无涨跌幅限制
+        return abs(price / prev_close - 1) <= rule.price_limit_pct
+```
+
+**参考文档:**
+- 深交所交易规则: [szse.cn](https://www.szse.cn/lawrules/rule/)
+- 上交所交易规则: [sse.com.cn](http://www.sse.com.cn/lawandrules/)
+- 港股通交易规则: [hkex.com.cn](https://www.hkex.com.cn/)
+- 两融业务规则: [csrc.gov.cn](http://www.csrc.gov.cn/)
+- QMT 港股通/两融 API: [迅投文档](https://dict.thinktrader.net/)
+
+---
+
+### P1-28: UniverseProvider 统一抽象接口
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | data / strategy |
+| **文件** | 新增 `src/data/universe_provider.py`, 修改 `src/strategy/instrument_pool.py`, `src/strategy/orchestrator.py` |
+| **工作量** | 1 天 |
+| **优先级** | **高 — 架构审查新增, 建议与 P1-27 一起实施** |
+
+**为什么要做:**
+
+当前系统有两套 "标的来源", 职责交叉:
+1. `UniverseManager` — PIT 回测侧, 回答 "某日哪些股票可交易" (仅 A 股)
+2. `InstrumentPoolManager` — 策略侧, 从 DB 或 QMT 板块获取代码列表 (`BUILTIN_POOLS`)
+
+问题:
+- ETF 池、港股通池、两融池都没有纳入 `UniverseManager` 的 PIT 管理
+- `InstrumentPoolManager._apply_filter_rules` 的 `asset_type` 分支是 if/elif 硬编码, 新增品种需改代码
+- 回测时 ETF/可转债也需要 PIT 数据 (避免幸存者偏差), 但 `StockUniverse` 表只记股票
+
+**落地方案:**
+
+```python
+from abc import ABC, abstractmethod
+
+class UniverseProvider(ABC):
+    """统一标的池提供者接口"""
+
+    @abstractmethod
+    def get_codes(self, trade_date: date, **filters) -> list[str]:
+        """返回指定日期可交易的标的代码列表 (PIT 安全)"""
+        ...
+
+    @abstractmethod
+    def get_asset_type(self, code: str) -> AssetType:
+        """返回标的的资产类型"""
+        ...
+
+class AStockUniverseProvider(UniverseProvider):
+    """A 股 (主板/科创/创业/北交) — 基于现有 UniverseManager"""
+    ...
+
+class ETFUniverseProvider(UniverseProvider):
+    """ETF (境内 + 跨境) — 基于 QMT 板块 + PIT 过滤"""
+    ...
+
+class HKConnectUniverseProvider(UniverseProvider):
+    """港股通 — 基于港股通名单 (每月更新)"""
+    ...
+
+class CBUniverseProvider(UniverseProvider):
+    """可转债 — 基于转债列表 + 到期/退市过滤"""
+    ...
+
+class MarginUniverseProvider(UniverseProvider):
+    """两融标的 — 基于交易所两融标的名单"""
+    ...
+
+class CompositeUniverseProvider(UniverseProvider):
+    """组合式提供者 — 根据 pool 配置的 asset_type 委托到具体 Provider"""
+
+    def __init__(self):
+        self._providers: dict[AssetType, UniverseProvider] = {}
+
+    def register(self, asset_type: AssetType, provider: UniverseProvider):
+        self._providers[asset_type] = provider
+```
+
+**与 P1-27 的关系:** P1-27 定义了 `AssetType` 和 `TradingRule`; P1-28 让每种 `AssetType` 都有对应的 `UniverseProvider`, 两者共同构成完整的 "标的分类 + 交易规则" 体系。
+
+---
+
+### P1-29: 策略自动发现与注册
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | strategy |
+| **文件** | `src/strategy/__init__.py` (修改), `src/strategy/orchestrator.py` (修改) |
+| **工作量** | 0.5 天 |
+| **优先级** | **中 — 架构审查新增** |
+
+**为什么要做:**
+
+当前 `orchestrator.py` 中通过硬编码 import 注册所有策略:
+
+```python
+from src.strategy.rules.momentum import MomentumBreakout
+from src.strategy.rules.mean_reversion import MeanReversion
+# ... 逐个 import
+```
+
+每新增一个策略都要修改 `orchestrator.py`, 违反开闭原则 (OCP)。RD-Agent 和 Qlib 都使用注册表模式自动发现策略。
+
+**落地方案:**
+
+```python
+# src/strategy/__init__.py
+import importlib
+import pkgutil
+
+_STRATEGY_REGISTRY: dict[str, type] = {}
+
+def register_strategy(name: str):
+    """装饰器: 自动注册策略"""
+    def decorator(cls):
+        _STRATEGY_REGISTRY[name] = cls
+        return cls
+    return decorator
+
+def discover_strategies():
+    """自动扫描 src/strategy/rules/ 下所有 BaseStrategy 子类"""
+    import src.strategy.rules as rules_pkg
+    for _, module_name, _ in pkgutil.walk_packages(
+        rules_pkg.__path__, prefix=rules_pkg.__name__ + "."
+    ):
+        importlib.import_module(module_name)
+    return _STRATEGY_REGISTRY
+
+# 策略侧使用:
+@register_strategy("momentum_breakout")
+class MomentumBreakout(BaseStrategy):
+    ...
+```
+
+---
+
+### P1-30: BaseFactor ABC + FactorRegistry (因子一等公民)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | 新增 `src/factor/base.py`, 修改 `src/factor/factor_pool.py` |
+| **工作量** | 1 天 |
+| **优先级** | **中 — 架构审查新增, 建议在 P1-21 之前实施** |
+
+**为什么要做:**
+
+当前因子以 "函数" 形式散落在 `factor_calc.py` 中, 没有统一的抽象基类。这导致:
+- 因子没有统一的元数据 (名称/类别/数据源/版本/计算窗口)
+- 无法自动发现和注册因子
+- P1-21 引入 Alpha158 + 迅投后, 因子数量从 11 个膨胀到 300+, 缺乏管理框架
+
+**落地方案:**
+
+```python
+from abc import ABC, abstractmethod
+
+class BaseFactor(ABC):
+    """因子抽象基类 — 所有因子的一等公民"""
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def category(self) -> str: ...
+
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+
+    @property
+    def data_source(self) -> str:
+        return "ohlcv"
+
+    @property
+    def lookback_days(self) -> int:
+        return 60
+
+    @abstractmethod
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """计算单只标的的因子值"""
+        ...
+
+class FactorRegistry:
+    """因子注册表 — 自动发现 + 元数据管理"""
+    _factors: dict[str, BaseFactor] = {}
+
+    @classmethod
+    def register(cls, factor: BaseFactor):
+        cls._factors[factor.name] = factor
+
+    @classmethod
+    def get(cls, name: str) -> BaseFactor:
+        return cls._factors[name]
+
+    @classmethod
+    def list_by_category(cls, category: str) -> list[BaseFactor]:
+        return [f for f in cls._factors.values() if f.category == category]
+```
+
+---
+
+### P1-31: FactorPool 版本追溯
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | `src/factor/factor_pool.py`, Alembic 迁移 |
+| **工作量** | 0.5 天 |
+| **优先级** | **低 — 架构审查新增, 可在 P1-21/P1-30 之后** |
+
+**为什么要做:**
+
+因子的有效性会随时间变化。记录因子版本可以:
+- 追溯 "某次回测用了哪个版本的因子计算逻辑"
+- 对比不同版本因子的 IC/ICIR 衰减曲线
+- 在因子迭代时保留历史基准
+
+**落地方案:**
+
+```python
+# factor_pool.py 表扩展
+class FactorMeta(Base):
+    __tablename__ = "factor_meta"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    factor_name = Column(String(100), nullable=False)
+    version = Column(String(20), nullable=False, default="1.0.0")
+    category = Column(String(50))
+    data_source = Column(String(50))
+    description = Column(Text)
+    ic_mean = Column(Float)
+    icir = Column(Float)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("factor_name", "version"),)
+```
 
 ---
 

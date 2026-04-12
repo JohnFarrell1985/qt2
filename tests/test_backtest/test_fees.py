@@ -24,9 +24,9 @@ from src.backtest.fees import (
 class TestFeeConfig:
     def test_defaults(self):
         cfg = FeeConfig()
-        assert cfg.commission_rate == 0.0003
+        assert cfg.commission_rate == 0.000115  # 万1.15
         assert cfg.commission_min == 5.0
-        assert cfg.stamp_tax_rate == 0.001
+        assert cfg.stamp_tax_rate == 0.0005     # 千0.5 (2023.08.28 起)
         assert cfg.transfer_fee_rate == 0.00002
 
     def test_custom(self):
@@ -136,7 +136,7 @@ class TestCalcBuyFees:
 
     def test_commission_calculated(self):
         fees = calc_buy_fees(100.0, 1000, "000001")
-        expected = round(100_000 * 0.0003, 2)
+        expected = round(100_000 * 0.000115, 2)
         assert fees.commission == expected
 
     def test_transfer_fee_value_sh(self):
@@ -158,7 +158,7 @@ class TestCalcBuyFees:
 class TestCalcSellFees:
     def test_stamp_tax_on_sell(self):
         fees = calc_sell_fees(10.0, 1000, "600000")
-        expected = round(10_000 * 0.001, 2)
+        expected = round(10_000 * 0.0005, 2)
         assert fees.stamp_tax == expected
 
     def test_sh_stock_has_transfer_fee(self):
