@@ -120,7 +120,7 @@ class HypothesisFeedback:
 ### ~~P3-03: 轻量级事件总线~~ → **已提升至 P1-23**
 
 > 此任务因架构审查发现其为多模块协作的基础设施, 已提升至 P1-23。
-> 详见 [TODO-P1.md](TODO-P1.md) P1-23。
+> 详见 [TODO-P13.md](TODO-P13.md) P1-23。
 
 ---
 

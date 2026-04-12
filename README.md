@@ -2,7 +2,7 @@
 
 基于 **三档策略引擎** + **多源因子管线** + **市场情绪引擎** + **ETF 全球轮动** + **多品种交易规则** + **LLM 数据清洗** + **知识蒸馏** + **迅投 QMT** 的散户量化投资系统。
 
-> 68 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent | Python 3.13
+> 80 项待办 | [TODO 总览](doc/TODO.md) | 对标 Microsoft Qlib / RD-Agent / TradingAgents | Python 3.13
 
 ---
 
@@ -87,8 +87,10 @@
 | ETF 轮动 | `src/strategy/etf_rotation/` | 📋 设计完成 | VAA/DAA/CAA + 崩盘保护 + 全球配置 |
 | 标的池/交易规则 | `src/strategy/trading_rules.py` | 📋 设计完成 | A股/港股/ETF/两融分类 + 按品种交易规则引擎 |
 | 知识蒸馏 | `src/distill/` | 📋 设计完成 | 多教师共识 + LoRA/DPO + 数据飞轮 |
-| 组合优化 | `src/portfolio/` | 📋 设计完成 | CAA/MVO + skfolio + Barra 风险归因 |
+| 组合优化 | `src/portfolio/` | 📋 设计完成 | CAA/MVO + skfolio + Riskfolio-Lib + Barra 风险归因 |
 | 系统监控 | `src/monitoring/` | 📋 设计完成 | 因子衰减 + 模型漂移 + 拥挤度 + 飞书告警 |
+| LLM 因子挖掘 | `src/factor/llm_mining/` | 📋 设计完成 | QuantaAlpha 进化式因子挖掘 + embedding 去重 (远期) |
+| RAG 投研 | `src/research/` | 📋 设计完成 | FinBERT2 检索 + RAG 知识库 + 多智能体投研 (远期) |
 
 ---
 
@@ -245,7 +247,7 @@ docker compose up -d
 | [数据采集模块](doc/12-数据采集模块.md) | 六层反爬、异步并发引擎、多源 fallback、48 项全部完成 |
 | [数据清洗与 LLM](doc/13-数据清洗与LLM.md) | instructor + LLM 清洗、Schema 注册表、降级策略 |
 | [ETF 资产配置轮动](doc/14-ETF资产配置轮动.md) | VAA/DAA/CAA 策略族、候选池、崩盘保护 |
-| **[TODO 待办清单](doc/TODO.md)** | **68 项剩余: P0+P0.1 已完成, P1~P4 待实施** |
+| **[TODO 待办清单](doc/TODO.md)** | **80 项剩余: P0+P0.1 已完成, P1.1(风险)/P1.2(ROI)/P1.3(工程)/P2~P4 待实施** |
 
 ---
 
@@ -274,7 +276,14 @@ docker compose up -d
 | 文献 | 作者 / 来源 | 核心贡献 |
 |------|------------|---------|
 | RD-Agent: Data-Centric Multi-Agent | Microsoft (2025), arXiv:2505.15155 | LLM 驱动因子-模型联合进化, Thompson Sampling Bandit |
+| QuantaAlpha | arXiv:2602.07085 (2026) | LLM 进化式 Alpha 因子挖掘, CSI 300 IC=0.15, 年化 27.75% |
 | FactorEngine | arXiv:2603.16365 (2026) | LLM 引导程序级因子挖掘, SOTA IC/ICIR |
+| FactorMiner | arXiv:2602.14670 (2026) | 技能+经验记忆因子挖掘, Embedding 去重 |
+| Agentic Factor Investing | arXiv:2603.14288 (2026) | 自主信号闭环, 硬性 OOS + 经济叙事检查 |
+| Drift Regime Gating | arXiv:2511.12490 (2025) | 仅在漂移体制下激活价值/反转因子, OOS Sharpe 提升 |
+| PPO Adaptive Alpha | arXiv:2509.01393 (2026) | PPO 动态调整多路 alpha 信号权重 |
+| AlphaForgeBench | arXiv:2602.18481 (2026) | LLM 交易智能体行为不稳定, 应输出 alpha 再回测 |
+| CARAG | EACL 2026 | 因果-时序 RAG, 财报后价格冲击预测 |
 | ODA-Fin | arXiv:2603.07223 (2026) | 难度感知金融蒸馏, 8B 超越同规模 SOTA |
 | NVIDIA Data Flywheel Blueprint | NVIDIA (2025) | 生产级金融蒸馏, 49-70B→1-8B, 成本降 98% |
 | TensorZero | TensorZero (2025) | 程序化策展 + 微调, 5-30x 降本 |
@@ -304,6 +313,14 @@ docker compose up -d
 | [oronimbus/tactical-aa](https://github.com/oronimbus/tactical-asset-allocation) | - | TAA 回测框架 |
 | [JoinQuant jqfactor_analyzer](https://github.com/JoinQuant/jqfactor_analyzer) | 130+ | 因子分析工具 |
 | [Qlib Alpha158](https://github.com/microsoft/qlib/blob/main/qlib/contrib/data/handler.py) | (Qlib 内置) | 158 个量价因子 |
+| [TradingAgents](https://github.com/TauricResearch/TradingAgents) | 49k+ | 多角色 LLM 交易智能体 |
+| [alphalens](https://github.com/quantopian/alphalens) | 4.2k+ | 因子 IC/分层分析标准工具 |
+| [Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) | 4k+ | 战术配置 + 风险预算 |
+| [PyPortfolioOpt](https://github.com/robertmartin8/PyPortfolioOpt) | 5.6k+ | HRP / Black-Litterman |
+| [FinRL](https://github.com/AI4Finance-Foundation/FinRL) | 14k+ | 金融强化学习 |
+| [OpenBB](https://github.com/OpenBB-finance/OpenBB) | 65k+ | 金融数据 + AI Agent 工作台 |
+| [vectorbt](https://github.com/polakowo/vectorbt) | 7k+ | 极速向量化回测 |
+| [FinGPT](https://github.com/AI4Finance-Foundation/FinGPT) | 14k+ | 开源金融 LLM |
 
 ---
 

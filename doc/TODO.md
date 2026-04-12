@@ -16,11 +16,13 @@
 |--------|------|--------|-----------|---------|
 | ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
 | ~~**P0.1**~~ | ✅ 已完成 → [12-数据采集模块](12-数据采集模块.md) + [13-数据清洗与LLM](13-数据清洗与LLM.md) | ~~57 项~~ | ~~~24 天~~ | 数据采集 (A01-A48) + 数据清洗 (P0-12~20) — **全部完成** |
-| **P1** | [TODO-P1.md](TODO-P1.md) | 30 项 | ~61 天 | 量化核心 + 监控 + ETF 轮动 + 多源因子 + DSR + 事件总线 + 容错 + **架构改进 (标的池分类/交易规则引擎/UniverseProvider)** |
-| **P2** | [TODO-P2.md](TODO-P2.md) | 22 项 | ~35 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 |
+| **P1.1** | [TODO-P11.md](TODO-P11.md) | 11 项 | ~22 天 | **系统风险 (最优先)** — 交易规则/标签泄露/过拟合/因子失效/容错降级 |
+| **P1.2** | [TODO-P12.md](TODO-P12.md) | 14 项 | ~41 天 | **赚钱效应 ROI (次优先)** — ETF 轮动/多源因子/组合优化/情绪引擎/择时信号 |
+| **P1.3** | [TODO-P13.md](TODO-P13.md) | 11 项 | ~9 天 | **工程化 (再次之)** — 模块完善/事件总线/自动注册/版本管理 |
+| **P2** | [TODO-P2.md](TODO-P2.md) | 28 项 | ~55 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 + **研究驱动前沿 (LLM因子挖掘/RAG投研/多智能体/PPO加权)** |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
 | **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
-| **合计** | — | **68 项** (剩余) | **~122 天** | P0 + P0.1 已完成, 其余待实施 |
+| **合计** | — | **80 项** (剩余) | **~153 天** | P0 + P0.1 已完成, 其余待实施 |
 
 ---
 
@@ -52,10 +54,12 @@
 | 风险预警 | `src/riskmonitor/` | doc/13 引擎扩展章节 |
 | 行业轮动 | `src/sectorwatch/` | doc/13 引擎扩展章节 |
 | 宏观经济 | `src/macrotrack/` | doc/13 引擎扩展章节 |
-| **ETF 轮动** | `src/strategy/etf_rotation/` | [TODO-P1.md P1-20](TODO-P1.md#p1-20-etf-全球资产轮动策略-tactical-asset-allocation) |
-| **标的池分类/交易规则** | `src/strategy/trading_rules.py` (新增) | [TODO-P1.md P1-27](TODO-P1.md#p1-27-标的池分类与交易规则引擎-a股港股etf两融) |
-| **UniverseProvider** | `src/data/universe_provider.py` (新增) | [TODO-P1.md P1-28](TODO-P1.md#p1-28-universeprovider-统一抽象接口) |
+| **ETF 轮动** | `src/strategy/etf_rotation/` | [TODO-P12.md P1-20](TODO-P12.md) |
+| **标的池分类/交易规则** | `src/strategy/trading_rules.py` (新增) | [TODO-P11.md P1-27](TODO-P11.md) |
+| **UniverseProvider** | `src/data/universe_provider.py` (新增) | [TODO-P11.md P1-28](TODO-P11.md) |
 | **知识蒸馏** | `src/distill/` | [TODO-P2.md P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型) |
+| **LLM 因子挖掘** | `src/factor/llm_mining/` (新增) | [TODO-P2.md P2-23](TODO-P2.md#p2-23-llm-进化式因子挖掘-quantaalpha-风格) |
+| **RAG 投研知识库** | `src/research/` (新增) | [TODO-P2.md P2-25~P2-27](TODO-P2.md#p2-25-rag-投研知识库) |
 
 ---
 
@@ -72,17 +76,45 @@
 > - **数据采集** (A01-A48, 48 项): 全部完成 → [12-数据采集模块.md](12-数据采集模块.md#实现完成总览-48-项-全部-)
 > - **数据清洗** (P0-12~P0-20, 9 项): 全部完成 → [13-数据清洗与LLM.md](13-数据清洗与LLM.md#实现完成总览-p0-12--p0-20-全部-)
 
-### P1: 重要 → [详见 TODO-P1.md](TODO-P1.md)
+### P1.1: 系统风险 (最优先) → [详见 TODO-P11.md](TODO-P11.md)
 
 | # | 任务 | 模块 | 工作量 |
 |---|------|------|--------|
+| **P1-27** | **标的池分类与交易规则引擎 (A股/港股/ETF/两融)** | **strategy/data** | **3 天** |
+| **P1-28** | **UniverseProvider 统一抽象接口** | **data/strategy** | **1 天** |
 | P1-01 | Purged Walk-Forward CV | ml | 2-3 天 |
-| P1-02 | Rolling 重训练 + Bandit | ml | 3 天 |
+| **P1-32** | **分数 Kelly + 回撤自适应仓位缩减** | **strategy** | **1.5 天** |
+| **P1-35** | **Regime 门控信号过滤 (Drift Filter)** | **strategy** | **2 天** |
 | P1-03 | 因子衰减监控 | monitoring | 2 天 |
 | P1-04 | 模型漂移检测 | monitoring | 2 天 |
+| P1-07 | 换手率约束 | strategy | 1 天 |
+| **P1-22** | **Deflated Sharpe Ratio / 多重检验修正** | **backtest** | **1.5 天** |
+| **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
+| **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
+
+### P1.2: 赚钱效应 ROI (次优先) → [详见 TODO-P12.md](TODO-P12.md)
+
+| # | 任务 | 模块 | 工作量 |
+|---|------|------|--------|
+| **P1-20** | **ETF 全球资产轮动策略** | **strategy** | **7-10 天** |
+| **P1-21** | **多源因子管线 (Alpha158+迅投+自动筛选)** | **factor** | **4-5 天** |
 | P1-05 | 组合优化器 (CAA/skfolio) | portfolio | 5-7 天 |
 | P1-06 | 风险归因 (Barra 简化) | portfolio | 3 天 |
-| P1-07 | 换手率约束 | strategy | 1 天 |
+| P1-02 | Rolling 重训练 + Bandit | ml | 3 天 |
+| **P1-30** | **BaseFactor ABC + FactorRegistry** | **factor** | **1 天** |
+| P1-16 | 6维情绪合成指数 | sentiment | 1.5 天 |
+| P1-17 | 宏观状态分类器 | sentiment | 2 天 |
+| P1-18 | Orchestrator 集成 Profile | strategy | 1.5 天 |
+| P1-19 | 情绪 API 完整化 | sentiment | 1.5 天 |
+| **P1-33** | **北向资金流 Regime 信号** | **sentiment** | **1.5 天** |
+| **P1-34** | **alphalens 标准因子质量门控** | **factor** | **1.5 天** |
+| **P1-36** | **Riskfolio-Lib ETF 风险预算优化** | **portfolio** | **2 天** |
+| **P1-37** | **跨资产 Regime 上下文 (情绪引擎增强)** | **sentiment** | **2 天** |
+
+### P1.3: 工程化 (再次之) → [详见 TODO-P13.md](TODO-P13.md)
+
+| # | 任务 | 模块 | 工作量 |
+|---|------|------|--------|
 | P1-08 | CollectRouter 自适应路由 | datacollect | 1.5 天 |
 | P1-09 | OpenClawReceiver | datacollect | 1 天 |
 | P1-10 | XtdataCollector | datacollect | 1 天 |
@@ -91,22 +123,10 @@
 | P1-13 | RiskAlert Schema | dataclean | 0.5 天 |
 | P1-14 | Schema + Prompt 注册表 | dataclean | 1 天 |
 | P1-15 | 清洗日志 ORM | dataclean | 0.5 天 |
-| P1-16 | 6维情绪合成指数 | sentiment | 1.5 天 |
-| P1-17 | 宏观状态分类器 | sentiment | 2 天 |
-| P1-18 | Orchestrator 集成 Profile | strategy | 1.5 天 |
-| P1-19 | 情绪 API 完整化 | sentiment | 1.5 天 |
-| **P1-20** | **ETF 全球资产轮动策略** | **strategy** | **7-10 天** |
-| **P1-21** | **多源因子管线 (Alpha158+迅投+自动筛选)** | **factor** | **4-5 天** |
-| **P1-22** | **Deflated Sharpe Ratio / 多重检验修正** | **backtest** | **1.5 天** |
 | **P1-23** | **轻量级事件总线 (从 P3-03 提升)** | **common** | **3 天** |
-| **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
-| **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
-| ~~**P1-26**~~ | ~~可观测性 (structlog + 飞书机器人告警)~~ → **已合并至 P4** | — | — |
-| **P1-27** | **标的池分类与交易规则引擎 (A股/港股/ETF/两融)** | **strategy/data** | **3 天** |
-| **P1-28** | **UniverseProvider 统一抽象接口** | **data/strategy** | **1 天** |
 | **P1-29** | **策略自动发现与注册** | **strategy** | **0.5 天** |
-| **P1-30** | **BaseFactor ABC + FactorRegistry** | **factor** | **1 天** |
 | **P1-31** | **FactorPool 版本追溯** | **factor** | **0.5 天** |
+| ~~**P1-26**~~ | ~~可观测性 (structlog + 飞书机器人告警)~~ → **已合并至 P4** | — | — |
 
 ### P2: 增强 → [详见 TODO-P2.md](TODO-P2.md)
 
@@ -134,6 +154,12 @@
 | P2-20 | 学生模型分层训练 (SetFit+LoRA+DPO) | distill | 3 天 |
 | P2-21 | 数据飞轮 + 生产部署 (ONNX) | distill | 2.5 天 |
 | **P2-22** | **配置管理迁移 (.env → TOML 分层)** | **common** | **2 天** |
+| **P2-23** | **LLM 进化式因子挖掘 (QuantaAlpha 风格)** | **factor** | **5 天** |
+| **P2-24** | **因子 Embedding 去重与经验记忆** | **factor** | **2 天** |
+| **P2-25** | **RAG 投研知识库** | **research** | **4 天** |
+| **P2-26** | **FinBERT2 + Qwen 双塔检索/生成** | **research** | **3 天** |
+| **P2-27** | **多智能体投研架构 (TradingAgents 参考)** | **research** | **5 天** |
+| **P2-28** | **PPO 自适应 Alpha 动态加权** | **ml** | **3 天** |
 
 ### P3: 长期 → [详见 TODO-P3.md](TODO-P3.md)
 
@@ -178,6 +204,8 @@
 | | Trace (自研) | - | - | 实验历史记忆链 + 智能过滤 (借鉴 RD-Agent) |
 | **组合优化** | CLA (自研) | - | - | CAA 核心: Critical Line Algorithm (Keller 2015) |
 | | skfolio | **>=0.15** | ✅ 最新0.15.7 (2026.03) | 组合优化 (sklearn 兼容, 100+模型) |
+| | Riskfolio-Lib | **>=7.2** | ✅ | 战术配置 + 风险预算 + 24+ 凸风险度量 (P1-36) |
+| | PyPortfolioOpt | >=1.5 | ✅ | HRP / Black-Litterman (可选) |
 | | cvxpy | >=1.5 | ✅ | 凸优化求解 |
 | **数据采集** | curl_cffi | **>=0.14** | ✅ 最新0.15.0 (+HTTP/3指纹) | TLS 指纹伪装 |
 | | Playwright | **>=1.59** | ✅ 最新1.59.1 (2026.04) | 浏览器采集 |
@@ -185,6 +213,7 @@
 | | tavily-python | >=0.5 | ✅ 2026.03 | 搜索 API |
 | **因子** | jqdatasdk | >=1.9 | ✅ | 聚宽因子库 (可选) |
 | | jqfactor_analyzer | >=2.4 | ✅ 2025 | 聚宽因子分析 (可选) |
+| | alphalens-reloaded | >=0.0.14 | ✅ | 因子 IC/分层/换手标准分析 (P1-34) |
 | **LLM** | openai SDK | **>=2.0** | ✅ 最新2.30.0 (2026.03) ⚠️ 1.x→2.x | DeepSeek/Qwen 统一客户端 |
 | | pydantic | >=2.6 | ✅ | Schema 定义 |
 | **NLP** | FinBERT2 | 2025 | ✅ 最新 | 中文金融情感 |
@@ -246,6 +275,20 @@
 | **SetFit** | 2.2k+ | 少样本学习框架, 8样本/类达 RoBERTa-Large 水平 | [github.com/SetFit/setfit](https://github.com/SetFit/setfit) |
 | **Bailey & López de Prado (2014)** | - | Deflated Sharpe Ratio, 多重检验修正标杆 | *Journal of Portfolio Management* 2014 |
 | **Pandera** | 3.5k+ | DataFrame schema 校验 (Pydantic 风格) | [pandera.readthedocs.io](https://pandera.readthedocs.io/) |
+| **TradingAgents** | 49k+ | 多角色 LLM 交易智能体 (基本面/情绪/技术/辩论/风控) | [github.com/TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) |
+| **OpenBB** | 65k+ | 金融数据与 AI Agent 工作台 (多源统一接口) | [github.com/OpenBB-finance/OpenBB](https://github.com/OpenBB-finance/OpenBB) |
+| **FinRL** | 14k+ | 金融强化学习框架 (Gym 环境 + DRL 训练) | [github.com/AI4Finance-Foundation/FinRL](https://github.com/AI4Finance-Foundation/FinRL) |
+| **vectorbt** | 7k+ | 极速向量化回测与参数扫描 | [github.com/polakowo/vectorbt](https://github.com/polakowo/vectorbt) |
+| **Riskfolio-Lib** | 4k+ | 战术资产配置 + 24+ 凸风险度量 + 风险预算 | [github.com/dcajasn/Riskfolio-Lib](https://github.com/dcajasn/Riskfolio-Lib) |
+| **PyPortfolioOpt** | 5.6k+ | HRP / Black-Litterman / 协方差压缩 | [github.com/robertmartin8/PyPortfolioOpt](https://github.com/robertmartin8/PyPortfolioOpt) |
+| **alphalens** | 4.2k+ | 因子 IC/分层/换手分析 (Quantopian 标准) | [github.com/quantopian/alphalens](https://github.com/quantopian/alphalens) |
+| **AKShare** | 18k+ | A 股免费数据 (含北向/融资/宏观) | [github.com/akfamily/akshare](https://github.com/akfamily/akshare) |
+| **QuantaAlpha (2026)** | 640+ | LLM 进化式 Alpha 因子挖掘 (CSI 300 IC=0.15) | [arXiv:2602.07085](https://arxiv.org/abs/2602.07085) |
+| **ATLAS (2026)** | - | Adaptive-OPRO 多智能体交易 (动态 prompt 优化) | [arXiv:2510.15949](https://arxiv.org/abs/2510.15949) |
+| **FactorMiner (2026)** | - | 技能+经验记忆因子挖掘 (embedding 去重) | [arXiv:2602.14670](https://arxiv.org/abs/2602.14670) |
+| **Alpha-R1 (2026)** | - | RL + 推理模型做情境化因子筛选 | [arXiv:2512.23515](https://arxiv.org/abs/2512.23515) |
+| **Fin-R1** | - | Qwen2.5-7B + RL 中文金融推理 (SUFE Lab) | GitHub: SUFE-AIFLM-Lab/Fin-R1 |
+| **FinGPT** | 14k+ | 开源金融 LLM 生态 (LoRA 适配) | [github.com/AI4Finance-Foundation/FinGPT](https://github.com/AI4Finance-Foundation/FinGPT) |
 
 ---
 
@@ -258,26 +301,37 @@ Phase 0.1 — ✅ 已完成 (数据采集 + 清洗):
   A01~A38   datacollect 48 项全部完成 (HTTP客户端/限流/反爬/架构/高性能)
   P0-12~20  dataclean 9 项全部完成 (LLM客户端/Schema/清洗器/Prompt/Config)
 
-Phase 1 (第 5-9 周):
-  ★ P1-27~28  标的池分类 + 交易规则引擎 + UniverseProvider (A股/港股/ETF/两融, 最优先)
-  P1-29     策略自动发现与注册 (OCP, 0.5天)
-  P1-30     BaseFactor ABC + FactorRegistry (因子一等公民, P1-21 前置)
-  P1-01~02  Purged CV + Walk-Forward 重训练 (含 Regime-Aware)
-  P1-05~06  组合优化 + 风险归因
-  P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
-  P1-12~15  dataclean 完善 (扩展Schema/注册表)
-  P1-16~19  sentiment 完善 (合成指数/分类器/Profile集成)
-  P1-20     ETF 全球资产轮动策略 (含幸存者偏差处理)
-  P1-21     多源因子管线 (Alpha158+迅投+自动筛选)
+Phase 1a — P1.1 系统风险 (第 5-7 周, 最优先):
+  ★ P1-27~28  标的池分类 + 交易规则引擎 + UniverseProvider (A股/港股/ETF/两融)
+  P1-32     分数 Kelly + 回撤自适应仓位 (1.5天, 直接提升风控)
+  P1-35     Regime 门控信号过滤 (2天, 策略信号精细化)
+  P1-01     Purged Walk-Forward CV (防标签泄露)
+  P1-03~04  因子衰减 + 模型漂移监控
+  P1-07     换手率约束
   P1-22     Deflated Sharpe Ratio / 多重检验修正
-  P1-23     轻量级事件总线 (blinker, 模块解耦)
   P1-24     数据质量监控 + Pandera Schema 校验
   P1-25     系统级容错 & 降级 (Tenacity/熔断)
+
+Phase 1b — P1.2 赚钱效应 ROI (第 7-11 周, 次优先):
+  P1-30     BaseFactor ABC + FactorRegistry (因子一等公民, P1-21 前置)
+  P1-33     北向资金流 Regime 信号 (1.5天, A 股特有 alpha)
+  P1-34     alphalens 因子质量门控 (1.5天, 因子准入标准化)
+  P1-02     Rolling Walk-Forward 重训练 + Bandit
+  P1-05~06  组合优化 + 风险归因
+  P1-16~19  sentiment 完善 (合成指数/分类器/Profile集成)
+  P1-37     跨资产 Regime 上下文 (2天, 增强 P1-17 宏观分类)
+  P1-20     ETF 全球资产轮动策略 (含幸存者偏差处理)
+  P1-21     多源因子管线 (Alpha158+迅投+自动筛选)
+  P1-36     Riskfolio-Lib ETF 风险预算 (2天, 增强 P1-05/P1-20)
+
+Phase 1c — P1.3 工程化 (第 11-12 周, 与 1b 可并行):
+  P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
+  P1-12~15  dataclean 完善 (扩展Schema/注册表)
+  P1-23     轻量级事件总线 (blinker, 模块解耦)
+  P1-29     策略自动发现与注册 (OCP, 0.5天)
   P1-31     FactorPool 版本追溯 (0.5天)
 
-Phase 2 (第 9-13 周):
-  P1-03~04  因子/模型监控 (含因子拥挤度检测)
-  P1-07     换手率约束
+Phase 2 (第 12-16 周):
   P2-01~03  量化增强 (滑点/XGB/绩效)
   P2-05~06  交易成本归因 + 多周期标签
   P2-07~14  采集+清洗+情绪高级功能
@@ -285,8 +339,13 @@ Phase 2 (第 9-13 周):
   P2-18     RD-Agent 式自动因子-模型联合迭代 (Bandit+Trace+IC去重)
   P2-19~21  知识蒸馏 (多教师共识标注/LoRA分层训练/数据飞轮部署)
   P2-22     配置管理迁移 (.env → TOML 分层)
+  ★ P2-23   LLM 进化式因子挖掘 (QuantaAlpha 风格, 5天, 最高 ROI)
+  P2-24     因子 Embedding 去重 (与 P2-23 协同)
+  P2-25~26  RAG 投研知识库 + FinBERT2 双塔
+  P2-27     多智能体投研架构 (TradingAgents 参考, 远期)
+  P2-28     PPO 自适应 Alpha 加权 (在 P1-35 之后考虑, 远期)
 
-Phase 3 (第 14 周+):
+Phase 3 (第 17 周+):
   P3-01~10  按需选择实现 (SHAP/MLflow/数据版本化/行业轮动/宏观)
 
 Phase 4 — 全栈可观测性 (与其他 Phase 并行推进):

@@ -1,8 +1,8 @@
-# P2: 增强 (高级功能 + 扩展引擎)
+# P2: 增强 (高级功能 + 扩展引擎 + 研究驱动前沿)
 
-> 最后更新: 2026-04-05
+> 最后更新: 2026-04-12
 >
-> 22 项 | 预估工作量 ~35 天 (P2-04 已完成, 新增 P2-22)
+> 28 项 | 预估工作量 ~55 天 (P2-04 已完成, 新增 P2-22~P2-28 研究驱动前沿)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -834,5 +834,216 @@ class Settings(BaseSettings):
 - [Python tomllib (3.11+)](https://docs.python.org/3/library/tomllib.html)
 - [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
 - [12-Factor Config](https://12factor.net/config)
+
+---
+
+### P2-23: LLM 进化式因子挖掘 (QuantaAlpha 风格)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | 新增 `src/factor/llm_mining/` (evolve.py, sandbox.py, evaluator.py) |
+| **工作量** | 5 天 |
+| **优先级** | **高 — 研究驱动, 最高 ROI 潜力** |
+
+**为什么要做:**
+
+2026 年前沿研究表明, LLM 引导的进化式因子挖掘在 A 股 (CSI 300/500) 上取得了显著超额收益:
+- **QuantaAlpha** (arXiv:2602.07085): 轨迹级变异/交叉, CSI 300 IC 0.1501, 年化 27.75%, 回撤 7.98%
+- **FactorEngine** (arXiv:2603.16365): 因子=可执行代码, 逻辑修改与参数搜索分离, SOTA IC/ICIR
+- **Agentic Factor Investing** (arXiv:2603.14288): 自主信号闭环, 美股 Sharpe 3.11
+
+核心流程: LLM (DeepSeek/Qwen) 生成因子假设 → 转为可执行 Python 代码 → 在本地沙箱回测 → IC/ICIR 门控 → 进化 (保留优秀轨迹, 变异/交叉) → 入库
+
+**与现有设计的关系:** 扩展 P2-18 (RD-Agent) 的因子挖掘能力, 增加进化搜索层。
+
+**落地方案:**
+
+```python
+class EvolutionaryFactorMiner:
+    """QuantaAlpha 风格进化式因子挖掘"""
+
+    def mine(self, n_generations=10, population_size=20):
+        population = self._init_population(population_size)
+
+        for gen in range(n_generations):
+            # 1. LLM 生成因子代码
+            for individual in population:
+                individual.code = self.llm.generate_factor_code(
+                    hypothesis=individual.hypothesis,
+                    parent_code=individual.parent_code,
+                )
+            # 2. 沙箱回测
+            for individual in population:
+                individual.metrics = self.sandbox.evaluate(individual.code)
+
+            # 3. IC 门控
+            population = [i for i in population if i.metrics["ic"] > 0.03]
+
+            # 4. 选择 + 变异 + 交叉
+            parents = self._select_top(population, k=population_size // 2)
+            offspring = self._crossover_mutate(parents)
+            population = parents + offspring
+
+        return self._select_top(population, k=5)  # 最终因子
+```
+
+**参考文档:**
+- **QuantaAlpha**: [arXiv:2602.07085](https://arxiv.org/abs/2602.07085)
+- **FactorEngine**: [arXiv:2603.16365](https://arxiv.org/abs/2603.16365)
+- **Agentic Factor Investing**: [arXiv:2603.14288](https://arxiv.org/abs/2603.14288)
+- **AlphaForgeBench**: [arXiv:2602.18481](https://arxiv.org/abs/2602.18481) — LLM 交易智能体行为不稳定, 应产出可执行 alpha 再回测
+
+---
+
+### P2-24: 因子 Embedding 去重与经验记忆
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | 新增 `src/factor/factor_memory.py` |
+| **工作量** | 2 天 |
+| **优先级** | **中 — 与 P2-23 协同** |
+
+**为什么要做:**
+
+FactorMiner (arXiv:2602.14670) 发现: LLM 因子挖掘的核心瓶颈不是"找不到好因子", 而是"反复挖掘同类因子"。当因子库规模扩大时, 新因子与已有因子的重叠率急剧上升。
+
+解决方案: 维护一个"因子经验记忆库" (已拒绝/已上线因子的 embedding), LLM 生成新因子前先检索去重。
+
+**落地方案:**
+
+```python
+class FactorMemory:
+    """因子经验记忆: embedding 检索去重"""
+
+    def __init__(self, embedding_model="text-embedding-3-small"):
+        self.embeddings = []  # (factor_name, embedding, status, metrics)
+
+    def is_duplicate(self, new_factor_description: str, threshold=0.85) -> bool:
+        new_emb = self._embed(new_factor_description)
+        for _, emb, _, _ in self.embeddings:
+            if cosine_similarity(new_emb, emb) > threshold:
+                return True
+        return False
+
+    def record(self, factor_name, description, status, metrics):
+        emb = self._embed(description)
+        self.embeddings.append((factor_name, emb, status, metrics))
+```
+
+**参考文档:**
+- **FactorMiner**: [arXiv:2602.14670](https://arxiv.org/abs/2602.14670)
+
+---
+
+### P2-25: RAG 投研知识库
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | research |
+| **文件** | 新增 `src/research/rag_engine.py`, `src/research/knowledge_base.py` |
+| **工作量** | 4 天 |
+| **优先级** | **中 — 研究驱动, 增强投研能力** |
+
+**为什么要做:**
+
+2026 年 RAG (检索增强生成) 在金融分析领域取得突破:
+- **CARAG** (EACL 2026): 因果-时序知识图谱从财报中抽取证据, 预测财报后价格冲击
+- **LLM-RAG 金融分析** (arXiv:2504.06279): 向量检索 + RAG 查询模块
+
+现有 `dataclean` 模块已将公告/研报清洗为结构化 JSON。下一步: 将清洗后文档存入 embedding 索引, 支持 RAG 查询, 用于盘前投研而非直接信号。
+
+**落地方案:**
+
+```python
+class ResearchRAG:
+    """RAG 投研知识库: 清洗后文档 → embedding → 检索 → LLM 生成"""
+
+    def query(self, question: str, top_k=5) -> str:
+        # 1. 检索相关文档块
+        chunks = self.vector_store.search(question, top_k=top_k)
+        # 2. 构造 RAG prompt
+        context = "\n\n".join([c.text for c in chunks])
+        # 3. LLM 生成回答
+        return self.llm.generate(
+            f"基于以下研报/公告内容回答问题:\n{context}\n\n问题: {question}"
+        )
+```
+
+**参考文档:**
+- **CARAG**: EACL 2026 (2026.eacl-long.141)
+- **LLM-RAG 金融分析**: [arXiv:2504.06279](https://arxiv.org/abs/2504.06279)
+- **FinSrag**: [arXiv:2502.05878](https://arxiv.org/abs/2502.05878)
+
+---
+
+### P2-26: FinBERT2 + Qwen 双塔检索/生成
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | research / dataclean |
+| **文件** | 新增 `src/research/dual_tower.py` |
+| **工作量** | 3 天 |
+| **优先级** | **中 — 增强 P2-25 RAG 和因子去重** |
+
+**为什么要做:**
+
+FinBERT2 (arXiv:2506.06335) 是 2025 年最强的中文金融 Encoder 模型, 适合做 embedding/检索/分类。与 Qwen/DeepSeek 组成**双塔架构**: FinBERT2 负责检索, Qwen 负责生成。
+
+**参考文档:**
+- **FinBERT2**: [arXiv:2506.06335](https://arxiv.org/abs/2506.06335) — 中文金融语料 BERT 预训练
+- **Fin-R1**: SUFE-AIFLM-Lab, Qwen2.5-7B + RL 金融推理
+
+---
+
+### P2-27: 多智能体投研架构 (TradingAgents 参考)
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | research |
+| **文件** | 新增 `src/research/agents/` |
+| **工作量** | 5 天 |
+| **优先级** | **低 — 远期, 研究驱动** |
+
+**为什么要做:**
+
+TradingAgents (49,628 stars, Tauric Research) 提出多角色 LLM 智能体协作投研:
+- **基本面分析师**: 解读财报, 计算估值
+- **情绪分析师**: 解读新闻/社交媒体
+- **技术分析师**: 解读图表/指标
+- **多空辩论**: 买方 vs 卖方论证
+- **风控官**: 检查仓位/风险限制
+- **组合管理**: 综合决策
+
+核心原则: **LLM 输出信号, 不直接下单** (AlphaForgeBench 结论)。信号通过 JSON schema 对接现有 SignalArbiter。
+
+**参考文档:**
+- **TradingAgents**: [github.com/TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)
+- **ATLAS**: [arXiv:2510.15949](https://arxiv.org/abs/2510.15949) — Adaptive-OPRO 动态优化 prompt
+- **QuantAgent**: [arXiv:2509.09995](https://arxiv.org/abs/2509.09995) — 四智能体 HFT 架构
+- **FinAgent**: [arXiv:2402.18485](https://arxiv.org/abs/2402.18485) — 多模态金融交易智能体
+
+---
+
+### P2-28: PPO 自适应 Alpha 动态加权
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | ml / strategy |
+| **文件** | 新增 `src/ml/alpha_weighter.py` |
+| **工作量** | 3 天 |
+| **优先级** | **低 — 远期, 在 P1-35 Regime 门控之后考虑** |
+
+**为什么要做:**
+
+PPO Adaptive Alpha Weighting (arXiv:2509.01393, Chen & Kawashima 2026) 使用 PPO 强化学习动态调整多路 alpha 信号的权重, 比固定权重或简单等权在更高 Sharpe/更低回撤上表现更好。
+
+建议路径: 先实现 P1-35 Regime 门控 (规则方法) → 验证 A 股效果 → 若有余力再引入 PPO 加权。
+
+**参考文档:**
+- **PPO Adaptive Alpha**: [arXiv:2509.01393](https://arxiv.org/abs/2509.01393)
+- **FinRL-DeepSeek**: [arXiv:2502.07393](https://arxiv.org/abs/2502.07393) — 风险敏感 RL + LLM
+- **Alpha-R1**: [arXiv:2512.23515](https://arxiv.org/abs/2512.23515) — RL + 推理模型做情境化因子筛选
 
 ---
