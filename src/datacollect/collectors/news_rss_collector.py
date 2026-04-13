@@ -44,7 +44,12 @@ class NewsRssCollector(BaseCollector):
         feeds: list[dict[str, str]] | None = None,
     ):
         if limiter is None:
-            limiter = TokenBucketLimiter.for_domain("rss", rate=1.0, burst=5)
+            from src.common.config import settings
+            limiter = TokenBucketLimiter.for_domain(
+                "rss",
+                rate=settings.datacollect.rss_rate,
+                burst=settings.datacollect.rss_burst,
+            )
         super().__init__(limiter)
         self._feeds = feeds if feeds is not None else DEFAULT_FEEDS
 

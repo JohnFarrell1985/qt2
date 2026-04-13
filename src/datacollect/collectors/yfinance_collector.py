@@ -53,7 +53,12 @@ class YfinanceCollector(BaseCollector):
 
     def __init__(self, limiter: TokenBucketLimiter | None = None):
         if limiter is None:
-            limiter = TokenBucketLimiter.for_domain("yfinance", rate=0.5, burst=10)
+            from src.common.config import settings
+            limiter = TokenBucketLimiter.for_domain(
+                "yfinance",
+                rate=settings.datacollect.yfinance_rate,
+                burst=settings.datacollect.yfinance_burst,
+            )
         super().__init__(limiter)
 
     def _download(self, tickers: dict[str, str], period: str = "5d") -> list[dict]:

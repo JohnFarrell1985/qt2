@@ -106,6 +106,7 @@ def _em_fetch_kline(secid: str, start_date: str, end_date: str) -> list[list[str
 _QQ_KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
 _qq_session = None
+_qq_limiter = None
 
 
 def _get_qq_session():
@@ -122,6 +123,17 @@ def _get_qq_session():
     return _qq_session
 
 
+def _get_qq_limiter(rate: float = 10.0, burst: int = 15):
+    """腾讯财经限流: 默认 10 req/s, burst=15 (宽松但有保护)."""
+    global _qq_limiter
+    if _qq_limiter is None:
+        from src.datacollect.rate_limiter import TokenBucketLimiter
+        _qq_limiter = TokenBucketLimiter.for_domain(
+            "tencent_finance", rate=rate, burst=burst,
+        )
+    return _qq_limiter
+
+
 def _qq_symbol(code: str, asset_type: str = "stock") -> str:
     """Convert code to Tencent symbol format (sh/sz prefix)."""
     pure = code.split(".")[0]
@@ -134,6 +146,7 @@ def _qq_symbol(code: str, asset_type: str = "stock") -> str:
 
 def _qq_fetch_kline(symbol: str, start_date: str, end_date: str) -> list[list[str]]:
     """腾讯财经 K线 API, 返回 [date, open, close, high, low, volume]."""
+    _get_qq_limiter().acquire()
     s_fmt = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
     e_fmt = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
     session = _get_qq_session()

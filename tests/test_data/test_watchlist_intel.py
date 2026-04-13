@@ -10,6 +10,19 @@ from src.datacollect.watchlist_intel import WatchlistIntelCollector, WatchlistSy
 from src.datacollect.base import CollectTask
 
 
+@pytest.fixture(autouse=True)
+def _mock_for_domain():
+    """Prevent real TokenBucketLimiter creation in WatchlistIntelCollector defaults."""
+    limiter = MagicMock()
+    limiter.acquire.return_value = True
+    with patch(
+        "src.datacollect.watchlist_intel.TokenBucketLimiter.for_domain",
+        return_value=limiter,
+    ) as mock_fd:
+        mock_fd._limiter = limiter
+        yield mock_fd
+
+
 # ====================================================================
 # Helpers: mock DB session context manager
 # ====================================================================
@@ -407,3 +420,19 @@ class TestParseDatetime:
 
     def test_invalid_string(self):
         assert WatchlistIntelCollector._parse_datetime("not-a-date") is None
+
+
+class TestDefaultLimiter:
+    """Verify WatchlistIntelCollector creates a default limiter when none is passed."""
+
+    def test_default_limiter_is_not_none(self, _mock_for_domain):
+        collector = WatchlistIntelCollector()
+        assert collector._limiter is not None
+
+    def test_default_limiter_uses_akshare_domain(self, _mock_for_domain):
+        WatchlistIntelCollector()
+        _mock_for_domain.assert_called_once_with(
+            "akshare",
+            rate=_mock_for_domain.call_args[1].get("rate"),
+            burst=_mock_for_domain.call_args[1].get("burst"),
+        )

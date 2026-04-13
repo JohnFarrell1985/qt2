@@ -1,15 +1,17 @@
-"""智能 HTTP 客户端 — curl_cffi + UA 轮换 + tenacity 重试
+"""智能 HTTP 客户端 — curl_cffi + UA 轮换 + tenacity 重试 + 反爬哨兵
 
 封装 curl_cffi.requests.Session, 提供:
 - 浏览器指纹模拟 (impersonate)
 - User-Agent 自动轮换
-- 指数退避 + 随机抖动重试
+- 指数退避 + 随机抖动重试 (含 HTTP 429/503)
+- AntiCrawlSentinel 实时反爬检测
 - 代理支持
 - 线程安全的会话管理
 """
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from src.common.config import settings
@@ -20,8 +22,16 @@ logger = get_logger(__name__)
 _CFG = settings.datacollect
 
 
+class _RetryableHTTPError(Exception):
+    """可重试的 HTTP 错误 (429 Too Many Requests, 503 Service Unavailable 等)。"""
+
+    def __init__(self, status_code: int, url: str = ""):
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code} from {url}")
+
+
 def _make_retry_decorator():
-    """延迟构建 tenacity 重试装饰器。"""
+    """延迟构建 tenacity 重试装饰器, 覆盖网络异常 + 限流 HTTP 状态码。"""
     from tenacity import (
         retry,
         stop_after_attempt,
@@ -37,16 +47,36 @@ def _make_retry_decorator():
             exp_base=_CFG.retry_backoff_base,
             jitter=2,
         ),
-        retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+        retry=retry_if_exception_type(
+            (ConnectionError, TimeoutError, OSError, _RetryableHTTPError),
+        ),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
+
+
+_RETRYABLE_STATUS_CODES = frozenset({429, 503, 502, 520, 521, 522, 524})
+
+_sentinel_instance = None
+_sentinel_lock = threading.Lock()
+
+
+def _get_sentinel():
+    """全局共享 AntiCrawlSentinel 单例。"""
+    global _sentinel_instance
+    if _sentinel_instance is None:
+        with _sentinel_lock:
+            if _sentinel_instance is None:
+                from src.datacollect.sentinel import AntiCrawlSentinel
+                _sentinel_instance = AntiCrawlSentinel()
+    return _sentinel_instance
 
 
 class SmartHttpClient:
     """线程安全的 HTTP 客户端, 基于 curl_cffi 和浏览器指纹模拟。
 
     每个线程维护独立的 Session 实例以避免竞态条件。
+    集成 AntiCrawlSentinel 检测反爬信号。
     """
 
     def __init__(
@@ -91,17 +121,42 @@ class SmartHttpClient:
             headers["User-Agent"] = ua.random
         return headers
 
+    @staticmethod
+    def _check_sentinel(url: str, status_code: int, latency: float, body_len: int, body_text: str = ""):
+        """将响应信息送入 AntiCrawlSentinel 检测。"""
+        try:
+            from urllib.parse import urlparse
+            from src.datacollect.sentinel import ResponseCheck
+            domain = urlparse(url).netloc
+            sentinel = _get_sentinel()
+            sentinel.check_response(
+                domain,
+                ResponseCheck(
+                    status_code=status_code,
+                    latency=latency,
+                    body_length=body_len,
+                    body_text=body_text[:200],
+                ),
+            )
+        except Exception:
+            pass
+
     def get(
         self, url: str, *, headers: dict[str, str] | None = None,
         params: dict[str, Any] | None = None, **kwargs,
     ) -> Any:
-        """发送 GET 请求, 带重试和 UA 轮换。"""
+        """发送 GET 请求, 带重试、UA 轮换和反爬检测。"""
         headers = self._rotate_ua(headers)
 
         @self._retry
         def _do():
             session = self._get_session()
+            t0 = time.monotonic()
             resp = session.get(url, headers=headers, params=params, **kwargs)
+            latency = time.monotonic() - t0
+            self._check_sentinel(url, resp.status_code, latency, len(resp.content))
+            if resp.status_code in _RETRYABLE_STATUS_CODES:
+                raise _RetryableHTTPError(resp.status_code, url)
             resp.raise_for_status()
             return resp
 
@@ -111,13 +166,18 @@ class SmartHttpClient:
         self, url: str, *, headers: dict[str, str] | None = None,
         data: Any = None, json: Any = None, **kwargs,
     ) -> Any:
-        """发送 POST 请求, 带重试和 UA 轮换。"""
+        """发送 POST 请求, 带重试、UA 轮换和反爬检测。"""
         headers = self._rotate_ua(headers)
 
         @self._retry
         def _do():
             session = self._get_session()
+            t0 = time.monotonic()
             resp = session.post(url, headers=headers, data=data, json=json, **kwargs)
+            latency = time.monotonic() - t0
+            self._check_sentinel(url, resp.status_code, latency, len(resp.content))
+            if resp.status_code in _RETRYABLE_STATUS_CODES:
+                raise _RetryableHTTPError(resp.status_code, url)
             resp.raise_for_status()
             return resp
 

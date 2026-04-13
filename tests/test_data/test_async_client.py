@@ -33,10 +33,21 @@ def mock_async_session():
     resp.raise_for_status = MagicMock()
     resp.json.return_value = {"ok": True}
     resp.text = "ok"
+    resp.content = b"ok"
+    resp.status_code = 200
     session.get = AsyncMock(return_value=resp)
     session.post = AsyncMock(return_value=resp)
     session.close = AsyncMock()
     return session, resp
+
+
+@pytest.fixture(autouse=True)
+def _no_sentinel():
+    """Prevent real AntiCrawlSentinel instantiation in async client."""
+    with patch.object(
+        AsyncSmartHttpClient, "_check_sentinel", return_value=None,
+    ):
+        yield
 
 
 # ====================================================================

@@ -74,7 +74,7 @@ class AkshareDataSync:
         from src.datacollect.rate_limiter import TokenBucketLimiter
 
         self.limiter = TokenBucketLimiter.for_domain(
-            "eastmoney",
+            "akshare",
             rate=settings.datacollect.akshare_rate,
             burst=settings.datacollect.akshare_burst,
         )

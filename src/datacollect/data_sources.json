@@ -36,7 +36,7 @@
       "collector_class": "src.datacollect.collectors.akshare_collector.AkshareCollector",
       "package": "akshare",
       "needs_token": false,
-      "rate_domain": "eastmoney",
+      "rate_domain": "akshare",
       "rate": 0.15,
       "burst": 3,
       "max_concurrent": 2,

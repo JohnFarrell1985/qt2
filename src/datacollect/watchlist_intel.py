@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.common.config import settings
 from src.common.db import get_session
 from src.common.logger import get_logger
 from src.datacollect.base import BaseCollector, CollectResult, CollectTask
@@ -189,6 +190,12 @@ class WatchlistIntelCollector(BaseCollector):
     INTEL_TYPES = ("news", "announcement", "capital_flow")
 
     def __init__(self, limiter: TokenBucketLimiter | None = None):
+        if limiter is None:
+            limiter = TokenBucketLimiter.for_domain(
+                "akshare",
+                rate=settings.datacollect.akshare_rate,
+                burst=settings.datacollect.akshare_burst,
+            )
         super().__init__(limiter=limiter)
 
     def collect(self, task: CollectTask) -> CollectResult:

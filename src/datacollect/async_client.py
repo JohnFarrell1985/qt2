@@ -3,13 +3,14 @@
 封装 curl_cffi.requests.AsyncSession, 提供:
 - 浏览器指纹模拟 (impersonate)
 - User-Agent 自动轮换
-- 指数退避 + 随机抖动异步重试
+- 指数退避 + 随机抖动异步重试 (含 HTTP 429/503)
 - 代理池集成 (ProxyPoolManager)
 - 双重检查锁的会话初始化
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 from src.common.config import settings
@@ -17,6 +18,14 @@ from src.common.logger import get_logger
 
 logger = get_logger(__name__)
 _CFG = settings.datacollect
+
+_RETRYABLE_STATUS_CODES = frozenset({429, 503, 502, 520, 521, 522, 524})
+
+
+class _RetryableHTTPError(Exception):
+    def __init__(self, status_code: int, url: str = ""):
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code} from {url}")
 
 
 class AsyncSmartHttpClient:
@@ -71,7 +80,7 @@ class AsyncSmartHttpClient:
                 exp_base=_CFG.retry_backoff_base, jitter=2,
             ),
             retry=retry_if_exception_type(
-                (ConnectionError, TimeoutError, OSError),
+                (ConnectionError, TimeoutError, OSError, _RetryableHTTPError),
             ),
             reraise=True,
         )
@@ -92,9 +101,14 @@ class AsyncSmartHttpClient:
 
         async for attempt in self._make_async_retry():
             with attempt:
+                t0 = time.monotonic()
                 resp = await session.get(
                     url, headers=headers, params=params, proxy=proxy, **kwargs,
                 )
+                latency = time.monotonic() - t0
+                self._check_sentinel(url, resp.status_code, latency, len(resp.content))
+                if resp.status_code in _RETRYABLE_STATUS_CODES:
+                    raise _RetryableHTTPError(resp.status_code, url)
                 resp.raise_for_status()
                 return resp
 
@@ -115,14 +129,14 @@ class AsyncSmartHttpClient:
 
         async for attempt in self._make_async_retry():
             with attempt:
+                t0 = time.monotonic()
                 resp = await session.post(
-                    url,
-                    headers=headers,
-                    data=data,
-                    json=json,
-                    proxy=proxy,
-                    **kwargs,
+                    url, headers=headers, data=data, json=json, proxy=proxy, **kwargs,
                 )
+                latency = time.monotonic() - t0
+                self._check_sentinel(url, resp.status_code, latency, len(resp.content))
+                if resp.status_code in _RETRYABLE_STATUS_CODES:
+                    raise _RetryableHTTPError(resp.status_code, url)
                 resp.raise_for_status()
                 return resp
 
@@ -146,6 +160,21 @@ class AsyncSmartHttpClient:
             ua = UserAgent()
             headers["User-Agent"] = ua.random
         return headers
+
+    @staticmethod
+    def _check_sentinel(url: str, status_code: int, latency: float, body_len: int):
+        """送入 AntiCrawlSentinel 检测 (复用同步客户端的全局单例)。"""
+        try:
+            from urllib.parse import urlparse
+            from src.datacollect.sentinel import ResponseCheck
+            from src.datacollect.client import _get_sentinel
+            domain = urlparse(url).netloc
+            _get_sentinel().check_response(
+                domain,
+                ResponseCheck(status_code=status_code, latency=latency, body_length=body_len),
+            )
+        except Exception:
+            pass
 
     async def close(self) -> None:
         """关闭底层 AsyncSession。"""
