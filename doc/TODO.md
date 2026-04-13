@@ -19,10 +19,10 @@
 | **P1.1** | [TODO-P11.md](TODO-P11.md) | 11 项 | ~22 天 | **系统风险 (最优先)** — 交易规则/标签泄露/过拟合/因子失效/容错降级 |
 | **P1.2** | [TODO-P12.md](TODO-P12.md) | 14 项 | ~41 天 | **赚钱效应 ROI (次优先)** — ETF 轮动/多源因子/组合优化/情绪引擎/择时信号 |
 | **P1.3** | [TODO-P13.md](TODO-P13.md) | 11 项 | ~9 天 | **工程化 (再次之)** — 模块完善/事件总线/自动注册/版本管理 |
-| **P2** | [TODO-P2.md](TODO-P2.md) | 28 项 | ~55 天 | 高级功能 + 扩展引擎 + RD-Agent + 知识蒸馏 + TOML 配置 + **研究驱动前沿 (LLM因子挖掘/RAG投研/多智能体/PPO加权)** |
+| **P2** | [TODO-P2.md](TODO-P2.md) | 31 项 | ~64 天 | 高级功能 + 扩展引擎 + RD-Agent(⭐提升) + 知识蒸馏 + TOML 配置 + **AI Agent 前沿 (LLM因子挖掘/RAG投研/多智能体/AI新闻情报/论文→策略进化/LLM择时/PPO加权)** |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
 | **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
-| **合计** | — | **80 项** (剩余) | **~153 天** | P0 + P0.1 已完成, 其余待实施 |
+| **合计** | — | **83 项** (剩余) | **~162 天** | P0 + P0.1 已完成, 其余待实施 |
 
 ---
 
@@ -60,6 +60,9 @@
 | **知识蒸馏** | `src/distill/` | [TODO-P2.md P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型) |
 | **LLM 因子挖掘** | `src/factor/llm_mining/` (新增) | [TODO-P2.md P2-23](TODO-P2.md#p2-23-llm-进化式因子挖掘-quantaalpha-风格) |
 | **RAG 投研知识库** | `src/research/` (新增) | [TODO-P2.md P2-25~P2-27](TODO-P2.md#p2-25-rag-投研知识库) |
+| **AI 新闻情报** | `src/sentiment/news_intelligence.py` (新增) | [TODO-P2.md P2-29](TODO-P2.md) |
+| **论文→策略进化** | `src/research/paper_reader.py` (新增) | [TODO-P2.md P2-30](TODO-P2.md) |
+| **LLM 择时** | `src/strategy/llm_param_tuner.py` (新增) | [TODO-P2.md P2-31](TODO-P2.md) |
 
 ---
 
@@ -149,17 +152,20 @@
 | P2-15 | 个股雷达引擎 | stockradar | 3 天 |
 | P2-16 | 资金流向引擎 | fundflow | 3 天 |
 | P2-17 | 风险预警引擎 | riskmonitor | 2 天 |
-| P2-18 | LLM 驱动因子-模型联合迭代 (RD-Agent) | ml | 5 天 |
+| **P2-18** | **⭐ LLM 驱动因子-模型联合迭代 (RD-Agent, 建议提升至 P1.2)** | **ml** | **5 天** |
 | P2-19 | 多教师共识标注管线 (知识蒸馏) | distill | 2.5 天 |
 | P2-20 | 学生模型分层训练 (SetFit+LoRA+DPO) | distill | 3 天 |
 | P2-21 | 数据飞轮 + 生产部署 (ONNX) | distill | 2.5 天 |
 | **P2-22** | **配置管理迁移 (.env → TOML 分层)** | **common** | **2 天** |
-| **P2-23** | **LLM 进化式因子挖掘 (QuantaAlpha 风格)** | **factor** | **5 天** |
+| **P2-23** | **⭐ LLM 进化式因子挖掘 (QuantaAlpha+FactorMiner, 建议与P2-18同批)** | **factor** | **5 天** |
 | **P2-24** | **因子 Embedding 去重与经验记忆** | **factor** | **2 天** |
 | **P2-25** | **RAG 投研知识库** | **research** | **4 天** |
 | **P2-26** | **FinBERT2 + Qwen 双塔检索/生成** | **research** | **3 天** |
-| **P2-27** | **多智能体投研架构 (TradingAgents 参考)** | **research** | **5 天** |
+| **P2-27** | **多智能体投研架构 (TradingAgents+OpenClaw+Hermes)** | **research** | **5 天** |
 | **P2-28** | **PPO 自适应 Alpha 动态加权** | **ml** | **3 天** |
+| **P2-29** | **AI 新闻情报深度解读 Agent** | **sentiment** | **3 天** |
+| **P2-30** | **论文阅读 → 策略/因子进化 Agent** | **research/factor** | **5 天** |
+| **P2-31** | **LLM 择时参数自适应 (TiMi 范式)** | **strategy** | **3 天** |
 
 ### P3: 长期 → [详见 TODO-P3.md](TODO-P3.md)
 
@@ -289,6 +295,9 @@
 | **Alpha-R1 (2026)** | - | RL + 推理模型做情境化因子筛选 | [arXiv:2512.23515](https://arxiv.org/abs/2512.23515) |
 | **Fin-R1** | - | Qwen2.5-7B + RL 中文金融推理 (SUFE Lab) | GitHub: SUFE-AIFLM-Lab/Fin-R1 |
 | **FinGPT** | 14k+ | 开源金融 LLM 生态 (LoRA 适配) | [github.com/AI4Finance-Foundation/FinGPT](https://github.com/AI4Finance-Foundation/FinGPT) |
+| **Hermes Agent** | - | 持久记忆 + 自动技能沉淀 + 越用越强 (Nous Research) | [hermes-agent.nousresearch.com](https://hermes-agent.nousresearch.com/) |
+| **OpenClaw** | - | 多智能体编排 + Plugin SDK + 向量记忆 | [github.com/OpenClaw](https://github.com/openclaw) |
+| **TiMi** | - | 数学反思 + LLM 策略参数调优 (微软 2026) | [Microsoft Research](https://www.microsoft.com/en-us/research/publication/trade-in-minutes/) |
 
 ---
 
@@ -331,18 +340,25 @@ Phase 1c — P1.3 工程化 (第 11-12 周, 与 1b 可并行):
   P1-29     策略自动发现与注册 (OCP, 0.5天)
   P1-31     FactorPool 版本追溯 (0.5天)
 
-Phase 2 (第 12-16 周):
+Phase 2a — AI Agent 核心 (第 12-14 周, 最高 ROI):
+  ★ P2-18   RD-Agent 联合迭代 (Bandit+Trace, 建议提升至 P1.2 同期, 5天, 年化2x验证)
+  ★ P2-23   LLM 进化式因子挖掘 (QuantaAlpha+FactorMiner, 5天, 与P2-18协同)
+  P2-24     因子 Embedding 去重 (与 P2-23 协同)
+  P2-29     AI 新闻情报深度解读 Agent (3天, 情绪引擎LLM增强)
+
+Phase 2b — 量化增强 (第 14-16 周):
   P2-01~03  量化增强 (滑点/XGB/绩效)
   P2-05~06  交易成本归因 + 多周期标签
   P2-07~14  采集+清洗+情绪高级功能
   P2-15~17  扩展引擎 (个股雷达/资金/风险)
-  P2-18     RD-Agent 式自动因子-模型联合迭代 (Bandit+Trace+IC去重)
   P2-19~21  知识蒸馏 (多教师共识标注/LoRA分层训练/数据飞轮部署)
   P2-22     配置管理迁移 (.env → TOML 分层)
-  ★ P2-23   LLM 进化式因子挖掘 (QuantaAlpha 风格, 5天, 最高 ROI)
-  P2-24     因子 Embedding 去重 (与 P2-23 协同)
+
+Phase 2c — AI Agent 进阶 (第 16-18 周):
   P2-25~26  RAG 投研知识库 + FinBERT2 双塔
-  P2-27     多智能体投研架构 (TradingAgents 参考, 远期)
+  P2-30     论文阅读 → 策略/因子进化 Agent (5天, 依赖P2-25)
+  P2-27     多智能体投研架构 (TradingAgents+OpenClaw+Hermes, 5天)
+  P2-31     LLM 择时参数自适应 (TiMi 范式, 3天, 在P1-35之后)
   P2-28     PPO 自适应 Alpha 加权 (在 P1-35 之后考虑, 远期)
 
 Phase 3 (第 17 周+):
