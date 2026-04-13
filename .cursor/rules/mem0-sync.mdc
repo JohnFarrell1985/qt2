@@ -1,0 +1,39 @@
+---
+description: 自动同步项目记忆到 mem0 云端，确保跨对话上下文连续
+alwaysApply: true
+---
+
+# mem0 记忆同步
+
+## 对话开始：检索记忆
+
+每次对话开始处理用户请求前，先用 `project-3-qt-mem0` 的 `search_memories` 检索相关上下文：
+- query 使用用户请求的关键词
+- filters: `{"AND": [{"user_id": "dongg"}]}`
+- 将检索结果作为背景知识辅助当前任务
+
+## 何时上传记忆
+
+用 `add_memory` 上传，必须带 `user_id: "dongg"`, `agent_id: "qt-quant-agent"`, `metadata.project: "qt-quant"`。
+
+**触发条件（满足任一即上传）：**
+1. 完成了代码修改（新增/修改模块、修复 bug、架构调整）
+2. TODO 状态变更（完成/新增/优先级调整）
+3. 做出了技术决策（选型、设计方案、放弃方案及原因）
+4. 用户明确结束话题或切换到新话题时，总结前一话题
+
+**不需要上传：**
+- 仅回答问题、未产生代码或决策变更
+- 简单文件阅读/搜索操作
+- 重复已有记忆中的内容
+
+## metadata.category 分类
+
+| category | 用途 |
+|----------|------|
+| `session_summary` | 对话摘要：做了什么 + 改了哪些文件 + TODO 变更 |
+| `completed_work` | 里程碑/阶段完成 |
+| `module_*` | 模块变更（datacollect/data/ml_factor/strategy/sentiment/llm） |
+| `todo_update` | TODO 优先级/任务增删 |
+| `technical_decision` | 技术选型/架构决策 |
+| `user_preferences` | 用户偏好/工作环境 |
