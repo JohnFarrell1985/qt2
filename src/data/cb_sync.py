@@ -263,8 +263,21 @@ def _to_int(v) -> int | None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="可转债数据采集 (akshare)")
+    parser.add_argument(
+        "action",
+        choices=["all", "list", "daily"],
+        help="all=列表+日线, list=仅列表, daily=仅日线",
+    )
+    args = parser.parse_args()
+
     sync = CBDataSync()
-    n1 = sync.sync_cb_list()
-    print(f"可转债列表: {n1} 只")  # noqa: T201
-    n2 = sync.sync_cb_daily()
-    print(f"可转债日线: {n2} 条")  # noqa: T201
+
+    if args.action in ("list", "all"):
+        n1 = sync.sync_cb_list()
+        print(f"可转债列表: {n1} 只")  # noqa: T201
+    if args.action in ("daily", "all"):
+        n2 = sync.sync_cb_daily()
+        print(f"可转债日线: {n2} 条")  # noqa: T201

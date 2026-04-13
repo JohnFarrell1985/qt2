@@ -214,6 +214,31 @@ def _safe_str(row, col: str) -> str | None:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="板块行情数据采集 (akshare)")
+    parser.add_argument(
+        "action",
+        choices=["all", "hist", "fund_flow"],
+        help="all=历史K+资金流, hist=仅历史日K, fund_flow=仅当日资金流向",
+    )
+    parser.add_argument("--start-date", default="20250401", help="历史数据起始日期 (默认 20250401)")
+    args = parser.parse_args()
+
     sync = SectorMarketSync()
-    n = sync.sync_sector_data()
-    print(f"同步完成: {n} 条")  # noqa: T201
+
+    if args.action == "fund_flow":
+        import akshare as ak
+
+        limiter = _get_limiter()
+        n = sync._sync_sector_fund_flow(ak, limiter)
+        print(f"板块资金流向同步完成: {n} 条")  # noqa: T201
+    elif args.action == "hist":
+        import akshare as ak
+
+        limiter = _get_limiter()
+        n = sync._sync_sector_hist(ak, limiter, args.start_date, datetime.now().strftime("%Y%m%d"))
+        print(f"板块历史K线同步完成: {n} 条")  # noqa: T201
+    else:
+        n = sync.sync_sector_data(start_date=args.start_date)
+        print(f"板块行情全量同步完成: {n} 条")  # noqa: T201

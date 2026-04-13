@@ -326,6 +326,7 @@ class StockFinancialReport(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
+        UniqueConstraint("code", "report_type", "report_period", name="uq_fin_code_type_period"),
         Index("idx_fin_code_date", "code", "report_date"),
         Index("idx_financial_type_period", "report_type", "report_period"),
     )

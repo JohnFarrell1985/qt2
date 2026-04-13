@@ -417,6 +417,223 @@ class AkshareFinancialSync:
             records.append(rec)
         return records
 
+    # ==================================================================
+    # 批量接口 (按报告期, 一次拉全市场, 比逐股快 ~100x)
+    # ==================================================================
+
+    def sync_financial_report_batch(self, periods: list[str] | None = None) -> int:
+        """通过东方财富批量接口采集全市场财务报表 (利润表+资产负债表+现金流量表)。
+
+        一次调用返回全部 ~5000+ 股票的某一报告期数据, 比逐股快约 100 倍。
+
+        Args:
+            periods: 报告期列表, 如 ["20240331","20240630","20240930","20241231"]。
+                     为 None 时默认取最近 4 个季度。
+        """
+        import akshare as ak
+
+        if periods is None:
+            from datetime import date
+            y = date.today().year
+            periods = [f"{y-1}0331", f"{y-1}0630", f"{y-1}0930", f"{y-1}1231"]
+
+        total = 0
+        for period in periods:
+            period_date = _safe_date(period)
+            if period_date is None:
+                logger.warning("无效报告期: %s", period)
+                continue
+
+            report_parts: dict[str, dict[str, str]] = {
+                "income": {
+                    "func": "stock_lrb_em",
+                    "map": {
+                        "净利润": "net_profit",
+                        "营业总收入": "total_revenue",
+                        "营业利润": "operating_profit",
+                        "营业总支出-营业支出": "operating_cost",
+                        "营业总支出-销售费用": "selling_expenses",
+                        "营业总支出-管理费用": "admin_expenses",
+                        "营业总支出-财务费用": "financial_expenses",
+                    },
+                },
+                "balance": {
+                    "func": "stock_zcfz_em",
+                    "map": {
+                        "资产-货币资金": "cash_and_equivalents",
+                        "资产-应收账款": "accounts_receivable",
+                        "资产-存货": "inventory",
+                        "资产-总资产": "total_assets",
+                        "负债-总负债": "total_liabilities",
+                    },
+                },
+                "cashflow": {
+                    "func": "stock_xjll_em",
+                    "map": {
+                        "经营现金流-经营现金流量净额": "operating_cash_flow",
+                        "投资现金流-投资现金流量净额": "investing_cash_flow",
+                        "融资现金流-融资现金流量净额": "financing_cash_flow",
+                        "现金净增加额-现金净增加额": "net_cash_flow",
+                    },
+                },
+            }
+
+            merged: dict[str, dict[str, Any]] = {}  # keyed by stock code
+
+            for part_name, part_cfg in report_parts.items():
+                func_name = part_cfg["func"]
+                col_map = part_cfg["map"]
+                try:
+                    self._limiter.acquire()
+                    fn = getattr(ak, func_name)
+                    df = fn(date=period)
+                except Exception as e:
+                    logger.warning("%s(%s) 获取失败: %s", func_name, period, e)
+                    continue
+
+                if df is None or df.empty:
+                    logger.warning("%s(%s) 返回空数据", func_name, period)
+                    continue
+
+                logger.info("%s(%s): %d rows", func_name, period, len(df))
+
+                for _, row in df.iterrows():
+                    code = str(row.get("股票代码", "")).strip()
+                    if not code or len(code) != 6:
+                        continue
+                    if code not in merged:
+                        announce = _safe_date(row.get("公告日期"))
+                        merged[code] = {
+                            "code": code,
+                            "report_type": "combined",
+                            "report_period": period,
+                            "report_date": announce or period_date,
+                            "updated_at": datetime.now(),
+                        }
+                    rec = merged[code]
+                    for cn_col, db_col in col_map.items():
+                        if cn_col in df.columns:
+                            rec[db_col] = _safe_float(row.get(cn_col))
+
+            if not merged:
+                logger.warning("报告期 %s 无数据", period)
+                continue
+
+            records = list(merged.values())
+            self._batch_upsert_reports(records)
+            total += len(records)
+            logger.info("报告期 %s 入库 %d 条 (合并三表)", period, len(records))
+
+        logger.info("批量财务报表同步完成, 共 %d 条", total)
+        return total
+
+    def sync_financial_indicator_batch(self, periods: list[str] | None = None) -> int:
+        """通过东方财富 stock_yjbb_em 批量采集全市场业绩指标。
+
+        Args:
+            periods: 报告期列表。为 None 时默认取最近 4 个季度。
+        """
+        import akshare as ak
+
+        if periods is None:
+            from datetime import date
+            y = date.today().year
+            periods = [f"{y-1}0331", f"{y-1}0630", f"{y-1}0930", f"{y-1}1231"]
+
+        col_map = {
+            "每股收益": "eps_basic",
+            "每股净资产": "bps",
+            "净资产收益率": "roe_weighted",
+            "每股经营现金流量净额": "cfps",
+            "销售毛利率": "gross_profit_margin",
+            "营业收入-同比增长": "revenue_growth",
+            "净利润-同比增长": "profit_growth",
+        }
+
+        total = 0
+        for period in periods:
+            period_date = _safe_date(period)
+            if period_date is None:
+                continue
+            try:
+                self._limiter.acquire()
+                df = ak.stock_yjbb_em(date=period)
+            except Exception as e:
+                logger.warning("stock_yjbb_em(%s) 获取失败: %s", period, e)
+                continue
+
+            if df is None or df.empty:
+                logger.warning("stock_yjbb_em(%s) 返回空数据", period)
+                continue
+
+            logger.info("stock_yjbb_em(%s): %d rows", period, len(df))
+
+            records: list[dict] = []
+            for _, row in df.iterrows():
+                code = str(row.get("股票代码", "")).strip()
+                if not code or len(code) != 6:
+                    continue
+                announce = _safe_date(row.get("最新公告日期"))
+                rec: dict[str, Any] = {
+                    "code": code,
+                    "report_date": announce or period_date,
+                    "updated_at": datetime.now(),
+                }
+                for cn_col, db_col in col_map.items():
+                    if cn_col in df.columns:
+                        rec[db_col] = _safe_float(row.get(cn_col))
+                records.append(rec)
+
+            if records:
+                self._batch_upsert_indicators(records)
+                total += len(records)
+                logger.info("报告期 %s 指标入库 %d 条", period, len(records))
+
+        logger.info("批量财务指标同步完成, 共 %d 条", total)
+        return total
+
+    @staticmethod
+    def _batch_upsert_reports(records: list[dict], batch_size: int = 1000) -> None:
+        all_keys: set[str] = set()
+        for rec in records:
+            all_keys.update(rec.keys())
+        all_keys.discard("id")
+        for rec in records:
+            for k in all_keys:
+                rec.setdefault(k, None)
+
+        update_keys = [k for k in all_keys if k not in ("code", "report_type", "report_period", "id")]
+        with get_session() as session:
+            for i in range(0, len(records), batch_size):
+                batch = records[i: i + batch_size]
+                stmt = insert(StockFinancialReport).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["code", "report_type", "report_period"],
+                    set_={k: stmt.excluded[k] for k in update_keys},
+                )
+                session.execute(stmt)
+
+    @staticmethod
+    def _batch_upsert_indicators(records: list[dict], batch_size: int = 1000) -> None:
+        all_keys: set[str] = set()
+        for rec in records:
+            all_keys.update(rec.keys())
+        all_keys.discard("id")
+        for rec in records:
+            for k in all_keys:
+                rec.setdefault(k, None)
+
+        update_keys = [k for k in all_keys if k not in ("code", "report_date", "id")]
+        with get_session() as session:
+            for i in range(0, len(records), batch_size):
+                batch = records[i: i + batch_size]
+                stmt = insert(StockFinancialIndicator).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["code", "report_date"],
+                    set_={k: stmt.excluded[k] for k in update_keys},
+                )
+                session.execute(stmt)
+
     # ------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------
@@ -437,23 +654,36 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="akshare 财务/ETF 数据采集")
     parser.add_argument(
         "action",
-        choices=["etf_list", "etf_daily", "report", "indicator", "all"],
-        help="采集动作",
+        choices=[
+            "etf_list", "etf_daily",
+            "report", "indicator",
+            "report_batch", "indicator_batch",
+            "all", "all_batch",
+        ],
+        help="采集动作 (带 _batch 后缀使用全市场批量接口, 快约100倍)",
     )
     parser.add_argument("--start-date", default="20230101", help="ETF 日线起始日期")
     parser.add_argument("--start-year", default="2023", help="财务指标起始年份")
     parser.add_argument("--codes", nargs="*", help="股票代码列表 (仅 report/indicator)")
+    parser.add_argument(
+        "--periods", nargs="*",
+        help="报告期列表 (仅 batch, 如 20240331 20240630 20240930 20241231)",
+    )
     args = parser.parse_args()
 
     syncer = AkshareFinancialSync()
 
-    if args.action in ("etf_list", "all"):
+    if args.action in ("etf_list", "all", "all_batch"):
         syncer.sync_etf_list()
-    if args.action in ("etf_daily", "all"):
+    if args.action in ("etf_daily", "all", "all_batch"):
         syncer.sync_etf_daily(start_date=args.start_date)
-    if args.action in ("report", "all"):
+    if args.action == "report":
         syncer.sync_financial_report(stock_codes=args.codes)
-    if args.action in ("indicator", "all"):
+    if args.action == "indicator":
         syncer.sync_financial_indicator(
             stock_codes=args.codes, start_year=args.start_year,
         )
+    if args.action in ("report_batch", "all_batch"):
+        syncer.sync_financial_report_batch(periods=args.periods)
+    if args.action in ("indicator_batch", "all_batch"):
+        syncer.sync_financial_indicator_batch(periods=args.periods)

@@ -102,11 +102,25 @@ class AkshareDataSync:
         import akshare as ak
 
         logger.info("开始同步 A 股股票列表 (akshare)...")
-        self.limiter.acquire()
-        df = ak.stock_info_a_code_name()
+
+        df = None
+        try:
+            self.limiter.acquire()
+            df = ak.stock_info_a_code_name()
+        except Exception as e:
+            logger.warning("stock_info_a_code_name 失败 (%s), 尝试 stock_zh_a_spot_em 备用源...", e)
 
         if df is None or df.empty:
-            logger.warning("akshare stock_info_a_code_name 返回空数据")
+            try:
+                df = ak.stock_zh_a_spot_em()
+                if df is not None and not df.empty:
+                    df = df.rename(columns={"代码": "code", "名称": "name"})
+            except Exception as e2:
+                logger.error("备用源 stock_zh_a_spot_em 也失败: %s", e2)
+                return 0
+
+        if df is None or df.empty:
+            logger.warning("akshare 所有股票列表源均返回空数据")
             return 0
 
         records: list[dict] = []
