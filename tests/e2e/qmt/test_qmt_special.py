@@ -1,25 +1,24 @@
 """QMT E2E-X: 特色数据测试 (可转债 / ETF / IPO)
 
 验证 xtdata 特色数据只读接口。
-download_* 类接口在当前环境下可能长时间阻塞, 已标记 skip。
+download 超时或券商不支持时自动 skip。
 
-运行: pytest tests/e2e/test_qmt_special.py -m qmt -v
+运行: pytest tests/e2e/qmt/test_qmt_special.py -m qmt -v
 """
 import pytest
 
+from tests.e2e.qmt.conftest import download_or_skip, skip_if_broker_error
+
 pytestmark = pytest.mark.qmt
 
-SKIP_DOWNLOAD = pytest.mark.skip(reason="download_* 调用可能长时间阻塞, 暂时跳过")
 
-
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(180)
 class TestConvertibleBond:
     """TC-X-01 ~ TC-X-03: 可转债数据"""
 
-    @SKIP_DOWNLOAD
     def test_download_cb_data(self, qmt_client, require_full_data_service):
-        """TC-X-01: 下载可转债基础信息不抛异常"""
-        qmt_client.download_cb_data()
+        """TC-X-01: 下载可转债基础信息"""
+        download_or_skip(qmt_client.download_cb_data, "download_cb_data")
 
     def test_cb_sector_list(self, qmt_client):
         """TC-X-02: 沪深转债板块 >= 100 只"""
@@ -45,24 +44,21 @@ class TestConvertibleBond:
             )
 
 
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(180)
 class TestETFData:
     """TC-X-04 ~ TC-X-06: ETF"""
 
-    @SKIP_DOWNLOAD
-    def test_download_etf_info(self, qmt_client, require_broker_extended_api):
-        """TC-X-04: 下载 ETF 申赎清单不抛异常"""
-        qmt_client.download_etf_info()
+    def test_download_etf_info(self, qmt_client, require_full_data_service):
+        """TC-X-04: 下载 ETF 申赎清单"""
+        download_or_skip(qmt_client.download_etf_info, "download_etf_info")
 
-    def test_get_etf_info(self, qmt_client, require_broker_extended_api):
-        """TC-X-05: 获取 ETF 申赎清单返回 dict"""
-        try:
-            info = qmt_client.get_etf_info()
-            assert isinstance(info, dict)
-        except RuntimeError as e:
-            if "300000" in str(e) or "not realize" in str(e):
-                pytest.skip(f"券商限制: {e}")
-            raise
+    def test_get_etf_info(self, qmt_client, require_full_data_service):
+        """TC-X-05: 获取 ETF 申赎清单"""
+        info = skip_if_broker_error(
+            lambda: qmt_client.get_etf_info(),
+            action_name="get_etf_info",
+        )
+        assert isinstance(info, dict)
 
     def test_etf_sector_not_empty(self, qmt_client):
         """TC-X-06: ETF 板块列表有数据"""
@@ -73,16 +69,14 @@ class TestETFData:
         assert len(codes) > 50, f"ETF 仅 {len(codes)} 只"
 
 
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(30)
 class TestIPOData:
-    """TC-X-07: 新股申购信息 (券商限制 API, 华泰不可用)"""
+    """TC-X-07: 新股申购信息"""
 
-    def test_get_ipo_info(self, qmt_client, require_broker_extended_api):
-        """TC-X-07: get_ipo_info 返回 list (可能为空)"""
-        try:
-            info = qmt_client.get_ipo_info()
-            assert isinstance(info, list)
-        except RuntimeError as e:
-            if "200005" in str(e) or "300000" in str(e) or "not realize" in str(e):
-                pytest.skip(f"券商限制: {e}")
-            raise
+    def test_get_ipo_info(self, qmt_client, require_full_data_service):
+        """TC-X-07: get_ipo_info 返回 list"""
+        info = skip_if_broker_error(
+            lambda: qmt_client.get_ipo_info(),
+            action_name="get_ipo_info",
+        )
+        assert isinstance(info, list)

@@ -447,6 +447,78 @@ class SentimentConfig(BaseSettings):
     w_sector: float = Field(default=0.10, alias="SENTIMENT_W_SECTOR")
     w_news: float = Field(default=0.15, alias="SENTIMENT_W_NEWS")
     w_global: float = Field(default=0.10, alias="SENTIMENT_W_GLOBAL")
+    w_northbound: float = Field(default=0.0, alias="SENTIMENT_W_NORTHBOUND")
+
+
+# ================================================================
+# ETF 轮动策略 (P1-20)
+# ================================================================
+
+class EtfRotationConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    enabled: bool = Field(default=True, alias="ETF_ROTATION_ENABLED")
+    momentum_method: str = Field(default="13612w", alias="ETF_ROTATION_MOMENTUM_METHOD")
+    lookback_days: int = Field(default=25, alias="ETF_ROTATION_LOOKBACK_DAYS")
+    top_k: int = Field(default=2, alias="ETF_ROTATION_TOP_K")
+    rebalance_interval: int = Field(default=20, alias="ETF_ROTATION_REBALANCE_INTERVAL")
+    min_hold_days: int = Field(default=9, alias="ETF_ROTATION_MIN_HOLD_DAYS")
+    rank_threshold: float = Field(default=0.10, alias="ETF_ROTATION_RANK_THRESHOLD")
+    score_min: float = Field(default=0.0, alias="ETF_ROTATION_SCORE_MIN")
+    score_max: float = Field(default=5.0, alias="ETF_ROTATION_SCORE_MAX")
+    stop_loss_daily: float = Field(default=0.05, alias="ETF_ROTATION_STOP_LOSS_DAILY")
+    stop_loss_3d: float = Field(default=0.08, alias="ETF_ROTATION_STOP_LOSS_3D")
+    use_caa_weights: bool = Field(default=False, alias="ETF_ROTATION_USE_CAA_WEIGHTS")
+    caa_target_vol: float = Field(default=0.10, alias="ETF_ROTATION_CAA_TARGET_VOL")
+    volatility_gate: bool = Field(default=True, alias="ETF_ROTATION_VOLATILITY_GATE")
+    risk_pool: str = Field(
+        default='["510300.SH","159915.SZ","510500.SH","510880.SH","513180.SH","513100.SH","513500.SH","513880.SH","513030.SH","518880.SH","159985.SZ"]',
+        alias="ETF_ROTATION_RISK_POOL",
+    )
+    defensive_pool: str = Field(
+        default='["511260.SH","511010.SH"]',
+        alias="ETF_ROTATION_DEFENSIVE_POOL",
+    )
+    canary_pool: str = Field(
+        default='["513100.SH","511260.SH"]',
+        alias="ETF_ROTATION_CANARY_POOL",
+    )
+
+
+# ================================================================
+# 多源因子管线 (P1-21)
+# ================================================================
+
+class FactorPipelineConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    alpha158_enabled: bool = Field(default=True, alias="FACTOR_ALPHA158_ENABLED")
+    alpha158_windows: str = Field(default="5,10,20,30,60", alias="FACTOR_ALPHA158_WINDOWS")
+    xt_enabled: bool = Field(default=False, alias="FACTOR_XT_ENABLED")
+    xt_categories: str = Field(
+        default="factor_growth,factor_base_derivative,factor_metrics,factor_quality,factor_momentum,factor_risk",
+        alias="FACTOR_XT_CATEGORIES",
+    )
+    screen_ic_threshold: float = Field(default=0.03, alias="FACTOR_SCREEN_IC_THRESHOLD")
+    screen_icir_threshold: float = Field(default=0.3, alias="FACTOR_SCREEN_ICIR_THRESHOLD")
+    screen_ic_positive_ratio: float = Field(default=0.55, alias="FACTOR_SCREEN_IC_POSITIVE_RATIO")
+    screen_corr_threshold: float = Field(default=0.7, alias="FACTOR_SCREEN_CORR_THRESHOLD")
+    screen_decay_halflife_min: int = Field(default=20, alias="FACTOR_SCREEN_DECAY_HALFLIFE_MIN")
+
+
+# ================================================================
+# 组合优化 (P1-05)
+# ================================================================
+
+class PortfolioConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    optimizer_method: str = Field(default="caa", alias="PORTFOLIO_OPTIMIZER_METHOD")
+    caa_target_vol: float = Field(default=0.10, alias="PORTFOLIO_CAA_TARGET_VOL")
+    caa_cap: float = Field(default=0.25, alias="PORTFOLIO_CAA_CAP")
+    caa_cash_assets: str = Field(
+        default='["511010.SH","511260.SH"]',
+        alias="PORTFOLIO_CAA_CASH_ASSETS",
+    )
+    max_industry_pct: float = Field(default=0.15, alias="PORTFOLIO_MAX_INDUSTRY_PCT")
+    max_single_pct: float = Field(default=0.05, alias="PORTFOLIO_MAX_SINGLE_PCT")
 
 
 # ================================================================
@@ -545,6 +617,10 @@ class Settings(BaseSettings):
     model_monitor: ModelMonitorConfig = ModelMonitorConfig()
     strat_scoring: ScoringStratConfig = ScoringStratConfig()
     strat_ml: MLStratConfig = MLStratConfig()
+
+    etf_rotation: EtfRotationConfig = EtfRotationConfig()
+    factor_pipeline: FactorPipelineConfig = FactorPipelineConfig()
+    portfolio: PortfolioConfig = PortfolioConfig()
 
 
 settings = Settings()
