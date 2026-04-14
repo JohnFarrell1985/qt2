@@ -1,12 +1,203 @@
 # P1.3: 工程化 (再次之 — 架构与可维护性)
 
-> 最后更新: 2026-04-12
+> 最后更新: 2026-04-14
 >
-> 11 项 | 预估工作量 ~9 天
+> 11 + 17 项 (含代码审查发现) | 预估工作量 ~9 + ~8 天
 >
 > 优先级说明: 模块完善/事件总线/自动注册/版本管理 — 提升代码质量和可维护性, 为后续扩展打基础
 >
 > 返回总览: [TODO.md](TODO.md) | 同级: ~~P1.1 系统风险~~ (✅ 已完成) | ~~P1.2 赚钱效应~~ (✅ 已完成)
+
+---
+
+## 代码审查发现 (2026-04-14)
+
+> 三视角审查 (高级系统架构师 / 高级量化交易员 / 高级软件工程师) 发现以下问题。
+> 按严重程度排序, CRITICAL 必须在实盘前修复。
+
+### CRITICAL: 回测手续费计算参数错位
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/backtest/orchestrator_backtester.py` L192, L249, L257 |
+| **工作量** | 0.5 天 |
+
+`calc_sell_fees` / `calc_buy_fees` 的调用参数与 `fees.py` 函数签名不匹配。`fees.py` 签名为 `(price, quantity, code, config)`, 但回测器传入 `(amount, config)`, 导致费用计算错误, **回测盈亏不可信**。需对齐为 `calc_sell_fees(sell_price, qty, code, self.fee_config)`, 与 `strategy_runner.py` / `engine.py` 的调用方式一致。
+
+---
+
+### CRITICAL: API 无认证/鉴权中间件
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/api/main.py`, `src/api/deps.py` |
+| **工作量** | 1 天 |
+
+交易下单、策略执行、数据同步等敏感接口**无认证保护** (无 API Key / JWT / OAuth)。若 API 暴露至公网, 任何人可触发交易操作。建议至少实现 API Key 认证中间件。
+
+---
+
+### CRITICAL: 因子中性化使用当前行业/市值 (look-ahead bias)
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/ml/dataset.py` L58-67, L169-186 |
+| **工作量** | 1 天 |
+
+`_load_industry_data` 从 `Stock` 表取**当前时点**行业归属和市值, 而非历史 Point-in-Time 数据。多年回测/训练中用了未来信息做中性化, 构成前视偏差。需改为按 `trade_date` 取历史行业/市值快照。
+
+---
+
+### HIGH: CORS 配置过于宽松
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/api/main.py` L71-76 |
+| **工作量** | 0.5 天 |
+
+`allow_origins=["*"]` 且 `allow_credentials=True` 同时启用。生产环境应收紧为具体域名。
+
+---
+
+### HIGH: 迭代任务全局状态并发安全
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/api/routers/iterate_router.py` L17-80 |
+| **工作量** | 0.5 天 |
+
+`_running_engine`, `_last_error`, `_is_running` 等全局可变状态在并发请求时存在竞态条件。虽有 `_running_lock` 但异常路径的读写未必全在锁内。
+
+---
+
+### HIGH: CI/CD 工作流缺失
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `.github/` (缺失) |
+| **工作量** | 1 天 |
+
+仓库内无 `.github/workflows` 目录, 但 `README.md` 声称有 CI/CD。需补齐 GitHub Actions (pytest + ruff + coverage)。
+
+---
+
+### HIGH: 无依赖锁文件
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `pyproject.toml` L12-60 |
+| **工作量** | 0.5 天 |
+
+生产依赖全部 `>=` 浮动版本, 无 `uv.lock`。构建不可复现, 存在供应链风险。需生成并提交锁文件。
+
+---
+
+### MEDIUM: data→strategy 分层违反
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/data/universe_provider.py` L13-91 |
+| **工作量** | 0.5 天 |
+
+`universe_provider.py` 依赖 `strategy.trading_rules`, 违反分层 (data 不应依赖 strategy)。应将交易规则接口抽象到 common 层或通过依赖注入解耦。
+
+---
+
+### MEDIUM: get_session 只读路径无条件 commit
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/common/db.py` L57-87 |
+| **工作量** | 0.5 天 |
+
+`get_session()` 在成功路径一律 `commit()`, 只读 API 也会触发无意义提交。建议区分读写 session, 或在只读路径使用 `flush` 而非 `commit`。
+
+---
+
+### MEDIUM: JSON 字符串配置类型安全弱
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/common/config.py` L471-521 |
+| **工作量** | 0.5 天 |
+
+`EtfRotationConfig.risk_pool` 等为 JSON 字符串默认值, 运行时解析可能失败。`FactorPipelineConfig.xt_categories` 为逗号分隔字符串, 类型安全弱于 `list[str]` 字段。建议使用 Pydantic `validator` 或直接声明为 `list` 类型。
+
+---
+
+### MEDIUM: 密钥字段无启动时校验
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/common/config.py` L339, L418-427 |
+| **工作量** | 0.5 天 |
+
+`TUSHARE_TOKEN`、`DEEPSEEK_API_KEY` 等默认为空字符串, 无启动时校验。失败延迟到首次 API 调用。建议在需要时提前 fail-fast。
+
+---
+
+### MEDIUM: TradeOrder 缺少复合索引
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/data/models.py` L420-437 |
+| **工作量** | 0.5 天 (Alembic 迁移) |
+
+高频按 `(code, status, created_at)` 查询, 缺少复合索引可能导致全表扫描。
+
+---
+
+### MEDIUM: asyncio.get_event_loop() 弃用 API
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/data/kline_bulk_sync.py` L474 |
+| **工作量** | 0.5 天 |
+
+Python 3.10+ 中 `asyncio.get_event_loop()` 已弃用, 应改用 `asyncio.get_running_loop()` 或 `asyncio.run()`。
+
+---
+
+### MEDIUM: bulk_writer 动态表名 SQL 拼接
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/data/bulk_writer.py` L87-92 |
+| **工作量** | 0.5 天 |
+
+`table_name` 用于 `text(f"...{table_name}...")`, 虽当前来自 `model.__tablename__` 可控, 但缺乏显式校验。建议添加白名单或 `sql.identifier` 引用。
+
+---
+
+### MEDIUM: sentiment_bridge 跨模块边界
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `src/datacollect/sentiment_bridge.py` L17-19 |
+| **工作量** | 0.5 天 |
+
+同时依赖 `data.models` 和 `sentiment.models`, 是跨 data + sentiment 的粘合层。严格分层应移至 `sentiment` 包或独立 `integration` 包。
+
+---
+
+### MEDIUM: Coverage fail_under = 99 门槛极高
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `pyproject.toml` L99-101 |
+| **工作量** | 0.5 天 |
+
+99% 覆盖率要求极严, 易导致 CI 频繁失败。建议降至 85-90% 或按模块设定差异化目标。
+
+---
+
+### LOW: pyproject.toml dev 依赖重复声明
+
+| 属性 | 内容 |
+|------|------|
+| **文件** | `pyproject.toml` L62-71 vs L103-107 |
+
+`[project.optional-dependencies] dev` 与 `[dependency-groups] dev` 都声明了 pytest/ruff, 版本区间不一致 (pytest `>=8` vs `>=9`), 可能导致工具解析混淆。保留其一即可。
 
 ---
 
