@@ -1,7 +1,10 @@
 """绩效统计模块
 
-夏普比率、Calmar比率、最大回撤、Sortino比率、年化收益、月度收益表。
+夏普比率、Calmar比率、最大回撤、Sortino比率、年化收益、月度收益表、
+Deflated Sharpe Ratio (多重检验修正)。
 """
+import math
+
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List
@@ -135,7 +138,61 @@ def _safe_float(v: float) -> float:
     return v
 
 
-def full_performance_report(equity_curve: List[Dict], trades: List[Dict] = None) -> Dict[str, Any]:
+def expected_max_sharpe(num_trials: int, var_sharpe: float) -> float:
+    """Expected maximum Sharpe ratio under null hypothesis (all trials random).
+
+    E[max(SR)] ≈ sqrt(2·ln(N))·σ_SR − (γ·σ_SR) / sqrt(2·ln(N))
+    where σ_SR = sqrt(var_sharpe), N = num_trials, γ = Euler-Mascheroni.
+
+    Reference: Bailey & López de Prado (2014)
+    """
+    if num_trials <= 1 or var_sharpe <= 0:
+        return 0.0
+    sigma_sr = math.sqrt(var_sharpe)
+    z = math.sqrt(2.0 * math.log(num_trials))
+    euler_gamma = 0.5772156649015329
+    return z * sigma_sr - (euler_gamma * sigma_sr) / z
+
+
+def deflated_sharpe_ratio(
+    observed_sharpe: float,
+    num_trials: int,
+    var_sharpe: float,
+    skewness: float = 0.0,
+    kurtosis: float = 3.0,
+    T: int = 252,
+) -> float:
+    """Deflated Sharpe Ratio — p-value adjusted for multiple testing.
+
+    Returns p-value: probability that observed Sharpe is due to luck.
+    p < 0.05 → strategy likely has real alpha.
+
+    Reference: Bailey & López de Prado (2014), Journal of Portfolio Management
+    """
+    from scipy.stats import norm
+
+    if num_trials <= 0 or T <= 1 or var_sharpe <= 0:
+        return 1.0
+
+    e_max_sr = expected_max_sharpe(num_trials, var_sharpe)
+
+    sr_std = math.sqrt(
+        (1.0 - skewness * observed_sharpe + (kurtosis - 1.0) / 4.0 * observed_sharpe ** 2)
+        / (T - 1.0)
+    )
+
+    if sr_std <= 0:
+        return 1.0
+
+    test_stat = (observed_sharpe - e_max_sr) / sr_std
+    return float(norm.cdf(test_stat))
+
+
+def full_performance_report(
+    equity_curve: List[Dict],
+    trades: List[Dict] = None,
+    num_trials: int = None,
+) -> Dict[str, Any]:
     """完整绩效报告"""
     report = {
         "annualized_return_pct": _safe_float(round(annualized_return(equity_curve), 2)),
@@ -148,5 +205,17 @@ def full_performance_report(equity_curve: List[Dict], trades: List[Dict] = None)
         report["win_rate"] = _safe_float(win_rate(trades))
         report["profit_loss_ratio"] = _safe_float(profit_loss_ratio(trades))
         report["total_trades"] = len(trades)
+
+    if num_trials and num_trials > 1:
+        sr = report["sharpe_ratio"]
+        returns = calc_returns(equity_curve)
+        if len(returns) > 5 and sr != 0:
+            report["deflated_sharpe_pvalue"] = _safe_float(
+                deflated_sharpe_ratio(
+                    sr, num_trials, returns.std() ** 2,
+                    returns.skew(), returns.kurtosis() + 3,
+                    len(returns),
+                )
+            )
 
     return report

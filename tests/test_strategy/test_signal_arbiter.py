@@ -112,3 +112,70 @@ class TestSellPriority:
         actions = arbiter.arbitrate(date(2025, 6, 1), signals, holdings)
         assert actions[0].direction == "sell"
         assert actions[0].priority < actions[-1].priority
+
+
+class TestTurnoverConstraint:
+    def test_buy_truncated_when_exceeding_turnover(self):
+        """买入总额超过换手率预算时, 应截断多余的买入"""
+        arbiter = SignalArbiter({
+            "max_holdings": 10,
+            "max_buy_per_day": 10,
+            "max_daily_turnover_pct": 0.10,
+        })
+        signals = [
+            _sig("000004.SZ", "buy", 5.0, "momentum"),
+            _sig("000005.SZ", "buy", 4.0, "momentum"),
+            _sig("000006.SZ", "buy", 3.0, "momentum"),
+        ]
+        for s in signals:
+            s.target_weight_pct = 10.0
+
+        actions = arbiter.arbitrate(
+            date(2025, 6, 1), signals, [],
+            total_capital=100_000,
+        )
+        buy_actions = [a for a in actions if a.direction == "buy"]
+        total_buy_amount = sum(a.target_amount for a in buy_actions)
+        assert total_buy_amount <= 100_000 * 0.10
+
+    def test_sell_not_truncated(self):
+        """卖出操作不受换手率约束影响"""
+        arbiter = SignalArbiter({
+            "max_holdings": 10,
+            "max_buy_per_day": 5,
+            "max_daily_turnover_pct": 0.10,
+        })
+        holdings = [
+            _pos("000001.SZ"),
+            _pos("000002.SZ"),
+            _pos("000003.SZ"),
+        ]
+        signals = [
+            _sig("000001.SZ", "sell", 90, "monitor"),
+            _sig("000002.SZ", "sell", 80, "monitor"),
+            _sig("000003.SZ", "sell", 70, "monitor"),
+        ]
+        actions = arbiter.arbitrate(
+            date(2025, 6, 1), signals, holdings,
+            total_capital=100_000,
+        )
+        sell_actions = [a for a in actions if a.direction == "sell"]
+        assert len(sell_actions) == 3
+
+    def test_no_constraint_when_within_budget(self):
+        """换手率预算充足时, 不截断买入"""
+        arbiter = SignalArbiter({
+            "max_holdings": 10,
+            "max_buy_per_day": 10,
+            "max_daily_turnover_pct": 0.50,
+        })
+        signals = [
+            _sig("000004.SZ", "buy", 5.0, "momentum"),
+            _sig("000005.SZ", "buy", 4.0, "momentum"),
+        ]
+        actions = arbiter.arbitrate(
+            date(2025, 6, 1), signals, [],
+            total_capital=1_000_000,
+        )
+        buy_actions = [a for a in actions if a.direction == "buy"]
+        assert len(buy_actions) == 2

@@ -20,6 +20,7 @@ from collections import defaultdict
 from src.common.config import settings
 from src.common.logger import get_logger
 from src.strategy.base import Signal, HoldingPosition, ActionItem
+from src.strategy.trading_rules import TRADING_RULES, infer_asset_type
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,7 @@ def _default_arbiter_config() -> dict:
         "strategy_weights": {},
         "sell_priority_over_buy": True,
         "multi_strategy_bonus": s.multi_strategy_bonus,
+        "max_daily_turnover_pct": s.max_daily_turnover_pct,
     }
 
 
@@ -71,7 +73,7 @@ class SignalArbiter:
 
         signals = self._apply_strategy_weights(signals)
         signals = self._filter_liquidity(signals)
-        signals = self._filter_t1(signals, today_bought)
+        signals = self._filter_t_plus_n(signals, today_bought)
 
         sell_signals = [s for s in signals if s.direction == "sell"]
         buy_signals = [s for s in signals if s.direction == "buy"]
@@ -94,6 +96,10 @@ class SignalArbiter:
             max(0, available_slots),
         )
         buy_actions = buy_actions[:max_buy]
+
+        buy_actions = self._apply_turnover_constraint(
+            sell_actions, buy_actions, total_capital,
+        )
 
         for i, a in enumerate(sell_actions):
             a.priority = i + 1
@@ -129,15 +135,17 @@ class SignalArbiter:
         """
         return signals
 
-    def _filter_t1(
+    def _filter_t_plus_n(
         self, signals: List[Signal], today_bought: Set[str]
     ) -> List[Signal]:
-        """T+1: 今天买入的不能卖出"""
+        """T+N 校验：根据资产类型判断当日买入能否卖出"""
         result = []
         for s in signals:
             if s.direction == "sell" and s.code in today_bought:
-                logger.debug(f"[仲裁] T+1 过滤卖出: {s.code} (今日买入)")
-                continue
+                rule = TRADING_RULES[infer_asset_type(s.code)]
+                if rule.t_plus_n > 0:
+                    logger.debug(f"[仲裁] T+{rule.t_plus_n} 过滤卖出: {s.code}")
+                    continue
             result.append(s)
         return result
 
@@ -202,3 +210,47 @@ class SignalArbiter:
 
         scored_actions.sort(key=lambda x: x[0], reverse=True)
         return [a for _, a in scored_actions]
+
+    def _apply_turnover_constraint(
+        self,
+        sell_actions: List[ActionItem],
+        buy_actions: List[ActionItem],
+        total_capital: float,
+    ) -> List[ActionItem]:
+        """换手率约束: 当日买卖总额不超过 max_daily_turnover_pct × 总资产
+
+        卖出不截断 (止损优先), 仅截断买入。
+        """
+        max_turnover_pct = self.cfg.get("max_daily_turnover_pct", 0.20)
+        turnover_budget = total_capital * max_turnover_pct
+
+        sell_amount = sum(a.target_amount for a in sell_actions)
+        remaining_budget = turnover_budget - sell_amount
+
+        if remaining_budget <= 0:
+            if buy_actions:
+                logger.info(
+                    f"[仲裁] 换手率约束: 卖出金额 {sell_amount:.0f} "
+                    f"已达上限 {turnover_budget:.0f}, 截断全部买入"
+                )
+            return []
+
+        constrained = []
+        used = 0.0
+        for action in buy_actions:
+            amt = action.target_amount
+            if used + amt > remaining_budget:
+                logger.debug(
+                    f"[仲裁] 换手率约束: 截断买入 {action.code}, "
+                    f"累计 {used + amt:.0f} > 预算 {remaining_budget:.0f}"
+                )
+                break
+            constrained.append(action)
+            used += amt
+
+        if len(constrained) < len(buy_actions):
+            logger.info(
+                f"[仲裁] 换手率约束: 买入 {len(buy_actions)} → {len(constrained)}, "
+                f"预算 {remaining_budget:.0f}"
+            )
+        return constrained

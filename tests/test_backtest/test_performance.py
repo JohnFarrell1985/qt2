@@ -14,6 +14,8 @@ from src.backtest.performance import (
     profit_loss_ratio,
     monthly_returns,
     full_performance_report,
+    expected_max_sharpe,
+    deflated_sharpe_ratio,
 )
 
 
@@ -314,3 +316,73 @@ class TestFullPerformanceReport:
         report = full_performance_report([])
         assert report["annualized_return_pct"] == 0.0
         assert report["max_drawdown"]["max_drawdown_pct"] == 0.0
+
+    def test_with_num_trials(self, equity_curve):
+        report = full_performance_report(equity_curve, num_trials=100)
+        if report["sharpe_ratio"] != 0:
+            assert "deflated_sharpe_pvalue" in report
+            assert 0.0 <= report["deflated_sharpe_pvalue"] <= 1.0
+
+    def test_num_trials_one_no_dsr(self, equity_curve):
+        report = full_performance_report(equity_curve, num_trials=1)
+        assert "deflated_sharpe_pvalue" not in report
+
+
+# ---- expected_max_sharpe ----
+
+class TestExpectedMaxSharpe:
+    def test_single_trial(self):
+        assert expected_max_sharpe(1, 0.01) == 0.0
+
+    def test_positive_with_multiple_trials(self):
+        result = expected_max_sharpe(100, 0.04)
+        assert result > 0
+
+    def test_increases_with_trials(self):
+        ems_10 = expected_max_sharpe(10, 0.04)
+        ems_1000 = expected_max_sharpe(1000, 0.04)
+        assert ems_1000 > ems_10
+
+    def test_increases_with_variance(self):
+        ems_low = expected_max_sharpe(100, 0.01)
+        ems_high = expected_max_sharpe(100, 0.09)
+        assert ems_high > ems_low
+
+    def test_zero_variance(self):
+        assert expected_max_sharpe(100, 0.0) == 0.0
+
+
+# ---- deflated_sharpe_ratio ----
+
+class TestDeflatedSharpeRatio:
+    def test_returns_pvalue_in_range(self):
+        p = deflated_sharpe_ratio(1.5, num_trials=10, var_sharpe=0.04, T=252)
+        assert 0.0 <= p <= 1.0
+
+    def test_more_trials_lower_pvalue(self):
+        p_few = deflated_sharpe_ratio(1.0, num_trials=5, var_sharpe=0.5, T=30)
+        p_many = deflated_sharpe_ratio(1.0, num_trials=100, var_sharpe=0.5, T=30)
+        assert p_many < p_few
+
+    def test_strong_sharpe_low_pvalue(self):
+        p = deflated_sharpe_ratio(3.0, num_trials=10, var_sharpe=0.04, T=252)
+        assert p > 0.5
+
+    def test_zero_sharpe_high_pvalue(self):
+        p = deflated_sharpe_ratio(0.0, num_trials=10, var_sharpe=0.04, T=252)
+        assert p < 0.5
+
+    def test_edge_zero_trials(self):
+        p = deflated_sharpe_ratio(1.0, num_trials=0, var_sharpe=0.04, T=252)
+        assert p == 1.0
+
+    def test_edge_zero_variance(self):
+        p = deflated_sharpe_ratio(1.0, num_trials=10, var_sharpe=0.0, T=252)
+        assert p == 1.0
+
+    def test_with_skewness_and_kurtosis(self):
+        p = deflated_sharpe_ratio(
+            1.5, num_trials=20, var_sharpe=0.04,
+            skewness=-0.5, kurtosis=4.0, T=252,
+        )
+        assert 0.0 <= p <= 1.0

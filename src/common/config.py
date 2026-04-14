@@ -81,6 +81,28 @@ class WebhookConfig(BaseSettings):
 
 
 # ================================================================
+# 数据质量
+# ================================================================
+
+class DataQualityConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    enabled: bool = Field(default=True, alias="DATA_QUALITY_ENABLED")
+    z_threshold: float = Field(default=10.0, alias="DATA_QUALITY_Z_THRESHOLD")
+    max_pct_change: float = Field(default=22.0, alias="DATA_QUALITY_MAX_PCT_CHANGE")
+
+
+# ================================================================
+# 系统容错
+# ================================================================
+
+class ResilienceConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    circuit_breaker_threshold: int = Field(default=5, alias="RESILIENCE_CB_THRESHOLD")
+    recovery_timeout_sec: float = Field(default=60.0, alias="RESILIENCE_RECOVERY_TIMEOUT")
+    degradation_enabled: bool = Field(default=True, alias="RESILIENCE_DEGRADATION_ENABLED")
+
+
+# ================================================================
 # 机器学习
 # ================================================================
 
@@ -100,6 +122,9 @@ class MLConfig(BaseSettings):
     train_window: int = Field(default=252, alias="ML_TRAIN_WINDOW")
     retrain_step: int = Field(default=21, alias="ML_RETRAIN_STEP")
     iterate: MLIterateConfig = MLIterateConfig()
+    cv_n_splits: int = Field(default=5, alias="ML_CV_N_SPLITS")
+    cv_purge_days: int = Field(default=3, alias="ML_CV_PURGE_DAYS")
+    cv_embargo_pct: float = Field(default=0.05, alias="ML_CV_EMBARGO_PCT")
 
 
 # ================================================================
@@ -169,6 +194,7 @@ class ArbiterConfig(BaseSettings):
     max_sell_per_day: int = Field(default=5, alias="ARB_MAX_SELL_PER_DAY")
     min_amount_wan: float = Field(default=5000.0, alias="ARB_MIN_AMOUNT_WAN")
     multi_strategy_bonus: float = Field(default=0.2, alias="ARB_MULTI_BONUS")
+    max_daily_turnover_pct: float = Field(default=0.20, alias="ARB_MAX_DAILY_TURNOVER_PCT")
 
 
 class SizerConfig(BaseSettings):
@@ -179,11 +205,30 @@ class SizerConfig(BaseSettings):
     min_trade_amount: float = Field(default=5000.0, alias="SIZER_MIN_TRADE_AMOUNT")
     lot_size: int = Field(default=100, alias="SIZER_LOT_SIZE")
     atr_lookback: int = Field(default=14, alias="SIZER_ATR_LOOKBACK")
+    kelly_fraction: float = Field(default=0.25, alias="SIZER_KELLY_FRACTION")
+    drawdown_guard_enabled: bool = Field(default=True, alias="SIZER_DRAWDOWN_GUARD_ENABLED")
+
+
+class RegimeGateConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    enabled: bool = Field(default=False, alias="REGIME_GATE_ENABLED")
+    drift_window: int = Field(default=63, alias="REGIME_GATE_DRIFT_WINDOW")
+    drift_threshold: float = Field(default=0.60, alias="REGIME_GATE_DRIFT_THRESHOLD")
+    vol_percentile_window: int = Field(default=252, alias="REGIME_GATE_VOL_WINDOW")
+    vol_high_pct: float = Field(default=0.80, alias="REGIME_GATE_VOL_HIGH_PCT")
 
 
 # ================================================================
 # Signal 默认值
 # ================================================================
+
+class TradingRulesConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    cross_border_etf_prefixes: list[str] = Field(
+        default_factory=list,
+        alias="TRADING_RULES_CROSS_BORDER_ETF_PREFIXES",
+    )
+
 
 class SignalDefaultsConfig(BaseSettings):
     model_config = _SHARED_CFG
@@ -405,6 +450,26 @@ class SentimentConfig(BaseSettings):
 
 
 # ================================================================
+# 监控 (monitoring)
+# ================================================================
+
+class FactorMonitorConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    ic_warning_threshold: float = Field(default=0.02, alias="FACTOR_MON_IC_WARNING")
+    icir_threshold: float = Field(default=0.5, alias="FACTOR_MON_ICIR_WARNING")
+    psi_warning: float = Field(default=0.2, alias="FACTOR_MON_PSI_WARNING")
+    psi_critical: float = Field(default=0.4, alias="FACTOR_MON_PSI_CRITICAL")
+    ic_window: int = Field(default=20, alias="FACTOR_MON_IC_WINDOW")
+
+
+class ModelMonitorConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    corr_warning: float = Field(default=0.1, alias="MODEL_MON_CORR_WARNING")
+    psi_feature_warning: float = Field(default=0.2, alias="MODEL_MON_PSI_WARNING")
+    check_window: int = Field(default=20, alias="MODEL_MON_CHECK_WINDOW")
+
+
+# ================================================================
 # Tier 2 打分策略参数
 # ================================================================
 
@@ -454,6 +519,9 @@ class Settings(BaseSettings):
     api: APIConfig = APIConfig()
     webhook: WebhookConfig = WebhookConfig()
 
+    data_quality: DataQualityConfig = DataQualityConfig()
+    resilience: ResilienceConfig = ResilienceConfig()
+
     ml: MLConfig = MLConfig()
     backtest: BacktestConfig = BacktestConfig()
     trading: TradingConfig = TradingConfig()
@@ -461,7 +529,9 @@ class Settings(BaseSettings):
     position_monitor: PositionMonitorConfig = PositionMonitorConfig()
     arbiter: ArbiterConfig = ArbiterConfig()
     sizer: SizerConfig = SizerConfig()
+    trading_rules: TradingRulesConfig = TradingRulesConfig()
     signal_defaults: SignalDefaultsConfig = SignalDefaultsConfig()
+    regime_gate: RegimeGateConfig = RegimeGateConfig()
 
     strat_momentum: MomentumStratConfig = MomentumStratConfig()
     strat_reversal: ReversalStratConfig = ReversalStratConfig()
@@ -471,6 +541,8 @@ class Settings(BaseSettings):
     strat_cb_dual_low: CBDualLowStratConfig = CBDualLowStratConfig()
     strat_low_vol_dividend: LowVolDividendStratConfig = LowVolDividendStratConfig()
     sentiment: SentimentConfig = SentimentConfig()
+    factor_monitor: FactorMonitorConfig = FactorMonitorConfig()
+    model_monitor: ModelMonitorConfig = ModelMonitorConfig()
     strat_scoring: ScoringStratConfig = ScoringStratConfig()
     strat_ml: MLStratConfig = MLStratConfig()
 

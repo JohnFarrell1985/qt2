@@ -18,6 +18,7 @@ from typing import List, Dict, Any, Optional
 from src.common.config import settings
 from src.common.logger import get_logger
 from src.strategy.base import Signal, HoldingPosition
+from src.strategy.trading_rules import TRADING_RULES, infer_asset_type
 
 logger = get_logger(__name__)
 
@@ -70,7 +71,8 @@ class PositionMonitor:
         for pos in holdings:
             if not pos.can_sell:
                 continue
-            if pos.buy_date == trade_date:
+            rule = TRADING_RULES[infer_asset_type(pos.code)]
+            if rule.t_plus_n > 0 and pos.buy_date == trade_date:
                 continue
 
             params = self._get_params(pos.code, signal_params)
