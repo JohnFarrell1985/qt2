@@ -180,7 +180,7 @@ def infer_asset_type(code: str) -> AssetType:
     if bare.startswith(("8", "4")) and len(bare) == 6:
         return AssetType.A_STOCK_BSE
 
-    if bare.startswith(("51", "159", "588")):
+    if bare.startswith(("51", "159", "52", "56", "58")):
         return _classify_etf(code)
 
     if bare.startswith(("11", "12")) and len(bare) == 6:

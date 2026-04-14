@@ -16,7 +16,7 @@
 |--------|------|--------|-----------|---------|
 | ~~**P0**~~ | ✅ 已完成 | ~~12 项~~ | ~~16.5 天~~ | Bug 修复 + 核心量化 + 基础设施 — **全部完成** |
 | ~~**P0.1**~~ | ✅ 已完成 → [12-数据采集模块](12-数据采集模块.md) + [13-数据清洗与LLM](13-数据清洗与LLM.md) | ~~57 项~~ | ~~~24 天~~ | 数据采集 (A01-A48) + 数据清洗 (P0-12~20) — **全部完成** |
-| **P1.1** | [TODO-P11.md](TODO-P11.md) | 11 项 | ~22 天 | **系统风险 (最优先)** — 交易规则/标签泄露/过拟合/因子失效/容错降级 |
+| ~~**P1.1**~~ | ✅ 已完成 | ~~11 项~~ | ~~22 天~~ | 系统风险 — 交易规则/标签泄露/过拟合/因子失效/容错降级 — **全部完成** |
 | **P1.2** | [TODO-P12.md](TODO-P12.md) | 14 项 | ~41 天 | **赚钱效应 ROI (次优先)** — ETF 轮动/多源因子/组合优化/情绪引擎/择时信号 |
 | **P1.3** | [TODO-P13.md](TODO-P13.md) | 11 项 | ~9 天 | **工程化 (再次之)** — 模块完善/事件总线/自动注册/版本管理 |
 | **P2** | [TODO-P2.md](TODO-P2.md) | 31 项 | ~64 天 | 高级功能 + 扩展引擎 + RD-Agent(⭐提升) + 知识蒸馏 + TOML 配置 + **AI Agent 前沿 (LLM因子挖掘/RAG投研/多智能体/AI新闻情报/论文→策略进化/LLM择时/PPO加权)** |
@@ -55,8 +55,8 @@
 | 行业轮动 | `src/sectorwatch/` | doc/13 引擎扩展章节 |
 | 宏观经济 | `src/macrotrack/` | doc/13 引擎扩展章节 |
 | **ETF 轮动** | `src/strategy/etf_rotation/` | [TODO-P12.md P1-20](TODO-P12.md) |
-| **标的池分类/交易规则** | `src/strategy/trading_rules.py` (新增) | [TODO-P11.md P1-27](TODO-P11.md) |
-| **UniverseProvider** | `src/data/universe_provider.py` (新增) | [TODO-P11.md P1-28](TODO-P11.md) |
+| **标的池分类/交易规则** | `src/strategy/trading_rules.py` | ✅ P1-27 已完成 |
+| **UniverseProvider** | `src/data/universe_provider.py` | ✅ P1-28 已完成 |
 | **知识蒸馏** | `src/distill/` | [TODO-P2.md P2-19~P2-21](TODO-P2.md#p2-19--p2-21-知识蒸馏模块-llm-教师--轻量学生模型) |
 | **LLM 因子挖掘** | `src/factor/llm_mining/` (新增) | [TODO-P2.md P2-23](TODO-P2.md#p2-23-llm-进化式因子挖掘-quantaalpha-风格) |
 | **RAG 投研知识库** | `src/research/` (新增) | [TODO-P2.md P2-25~P2-27](TODO-P2.md#p2-25-rag-投研知识库) |
@@ -79,21 +79,11 @@
 > - **数据采集** (A01-A48, 48 项): 全部完成 → [12-数据采集模块.md](12-数据采集模块.md#实现完成总览-48-项-全部-)
 > - **数据清洗** (P0-12~P0-20, 9 项): 全部完成 → [13-数据清洗与LLM.md](13-数据清洗与LLM.md#实现完成总览-p0-12--p0-20-全部-)
 
-### P1.1: 系统风险 (最优先) → [详见 TODO-P11.md](TODO-P11.md)
+### ~~P1.1: 系统风险~~ ✅ 全部完成
 
-| # | 任务 | 模块 | 工作量 |
-|---|------|------|--------|
-| **P1-27** | **标的池分类与交易规则引擎 (A股/港股/ETF/两融)** | **strategy/data** | **3 天** |
-| **P1-28** | **UniverseProvider 统一抽象接口** | **data/strategy** | **1 天** |
-| P1-01 | Purged Walk-Forward CV | ml | 2-3 天 |
-| **P1-32** | **分数 Kelly + 回撤自适应仓位缩减** | **strategy** | **1.5 天** |
-| **P1-35** | **Regime 门控信号过滤 (Drift Filter)** | **strategy** | **2 天** |
-| P1-03 | 因子衰减监控 | monitoring | 2 天 |
-| P1-04 | 模型漂移检测 | monitoring | 2 天 |
-| P1-07 | 换手率约束 | strategy | 1 天 |
-| **P1-22** | **Deflated Sharpe Ratio / 多重检验修正** | **backtest** | **1.5 天** |
-| **P1-24** | **数据质量监控 + Schema 校验 (Pandera)** | **data** | **2 天** |
-| **P1-25** | **系统级容错 & 降级 (Tenacity/熔断)** | **common** | **2 天** |
+> 11 项全部实施完毕, 含 E2E 测试 (`tests/e2e/system_risk/`, 82 tests)。
+>
+> 涵盖: 交易规则引擎 (P1-27) | UniverseProvider (P1-28) | Purged CV (P1-01) | 分数 Kelly + DrawdownGuard (P1-32) | Regime 门控 (P1-35) | 换手率约束 (P1-07) | 因子衰减监控 (P1-03) | 模型漂移检测 (P1-04) | Deflated Sharpe Ratio (P1-22) | 数据质量 + Pandera (P1-24) | 系统容错 & 降级 (P1-25)
 
 ### P1.2: 赚钱效应 ROI (次优先) → [详见 TODO-P12.md](TODO-P12.md)
 
