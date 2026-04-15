@@ -16,7 +16,7 @@ import os
 from abc import ABC, abstractmethod
 from datetime import date
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 

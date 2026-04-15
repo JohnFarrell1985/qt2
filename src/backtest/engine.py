@@ -5,15 +5,15 @@
 方法二: 区间统计 - 多笔交易汇总统计
 """
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from typing import List, Optional, Dict, Any
 
 from .fees import (
     FeeConfig, TradeFees, calc_buy_fees, calc_sell_fees,
-    HKFeeConfig, HKTradeFees, calc_hk_buy_fees, calc_hk_sell_fees,
+    HKFeeConfig, calc_hk_buy_fees, calc_hk_sell_fees,
     detect_market,
 )
-from .data_loader import get_close_price, get_daily_data, get_stock_name, get_data_range
+from .data_loader import get_close_price, get_daily_data, get_stock_name
 
 
 @dataclass

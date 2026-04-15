@@ -6,7 +6,6 @@
 5 个测试用例: 模型训练、模型预测、训练→预测链、空数据集、模型路径不存在
 """
 import os
-import shutil
 
 import pytest
 

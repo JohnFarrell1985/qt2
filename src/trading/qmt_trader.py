@@ -9,7 +9,7 @@ API 参考: https://dict.thinktrader.net/nativeApi/xttrader.html
 模拟盘和实盘使用相同API，仅账户类型不同。
 """
 import time
-from typing import Optional, List, Dict, Any, Callable
+from typing import Optional, List, Dict, Any
 
 from src.common.logger import get_logger
 from src.common.config import settings

@@ -1,7 +1,7 @@
 """因子分析API"""
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 
 from src.factor.factor_pool import FactorPool
 

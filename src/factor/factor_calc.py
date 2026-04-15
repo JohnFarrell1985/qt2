@@ -4,7 +4,6 @@
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, List
 
 from src.common.logger import get_logger
 

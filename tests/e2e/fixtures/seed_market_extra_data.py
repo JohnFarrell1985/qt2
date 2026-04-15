@@ -5,7 +5,6 @@ Tables: market_index, sector_stock, index_weight
 - 10 个行业板块, 每板块 5 只成分股
 - 沪深300 成分权重
 """
-from datetime import date
 from typing import List
 
 import numpy as np

@@ -46,7 +46,7 @@ from src.datacollect.proxy_pool import ProxyConfig, ProxyPoolManager
 from src.datacollect.rate_limiter import TokenBucketLimiter
 from src.datacollect.registry import DataSourceDef, DataSourceRegistry
 from src.datacollect.sentinel import AntiCrawlSentinel, ResponseCheck, SentinelVerdict
-from src.datacollect.sentiment_bridge import SentimentBridge
+from src.sentiment.sentiment_bridge import SentimentBridge
 from src.datacollect.validator import DataValidator, ValidationResult
 from src.datacollect.watchlist_intel import WatchlistIntelCollector, WatchlistSync
 

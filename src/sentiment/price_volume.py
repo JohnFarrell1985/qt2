@@ -13,9 +13,7 @@
 - 板块集中度
 """
 from datetime import date, timedelta
-from typing import Optional
 
-import numpy as np
 import pandas as pd
 from sqlalchemy import text
 

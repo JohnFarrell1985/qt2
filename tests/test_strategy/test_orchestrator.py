@@ -1,7 +1,6 @@
 """Tests for src/strategy/orchestrator.py"""
 import json
 import pytest
-from datetime import datetime
 from unittest.mock import patch, MagicMock
 
 

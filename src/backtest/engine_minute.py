@@ -4,7 +4,7 @@
 """
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import List, Dict, Any, Optional, Callable
 
 from .data_loader import get_minute_data, get_trading_dates

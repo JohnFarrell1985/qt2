@@ -1,5 +1,4 @@
 """测试 PositionMonitor"""
-import pytest
 from datetime import date
 
 from src.strategy.base import HoldingPosition

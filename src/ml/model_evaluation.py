@@ -2,7 +2,6 @@
 
 IC/ICIR评估、分组收益测试。
 """
-import numpy as np
 import pandas as pd
 from typing import Dict, Any
 

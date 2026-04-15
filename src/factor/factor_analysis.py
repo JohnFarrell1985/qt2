@@ -4,7 +4,7 @@ IC/IR分析、分层回测，评估因子有效性。
 """
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from src.common.logger import get_logger
 

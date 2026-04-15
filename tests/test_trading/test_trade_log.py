@@ -1,7 +1,7 @@
 """Tests for src/trading/trade_log.py - TradeLogger"""
 import pytest
 from datetime import date
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 
 from src.trading.trade_log import TradeLogger
 

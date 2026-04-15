@@ -21,10 +21,19 @@ router = APIRouter(prefix="/webhook", tags=["Webhook推送"])
 
 OPENCLAW_WEBHOOK_URL = settings.webhook.openclaw_url
 
-_TIMEOUT = httpx.Timeout(connect=5, read=10, write=5, pool=5)
-_LIMITS = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+_wh = settings.webhook
+_TIMEOUT = httpx.Timeout(
+    connect=_wh.http_connect_timeout,
+    read=_wh.http_read_timeout,
+    write=_wh.http_connect_timeout,
+    pool=_wh.http_connect_timeout,
+)
+_LIMITS = httpx.Limits(
+    max_connections=_wh.max_connections,
+    max_keepalive_connections=max(1, _wh.max_connections // 2),
+)
 _sync_client: httpx.Client = None
-_MAX_RETRIES = 2
+_MAX_RETRIES = _wh.max_retries
 
 
 def _get_sync_client() -> httpx.Client:

@@ -2,11 +2,9 @@
 
 连接QMT模拟盘账户，根据ML策略自动执行交易。
 """
-from datetime import date, datetime
 from typing import List, Dict, Optional
 
 from src.common.logger import get_logger
-from src.common.config import settings
 from src.trading.qmt_trader import QMTTrader
 from src.trading.order_manager import OrderManager
 from src.trading.position_manager import PositionManager

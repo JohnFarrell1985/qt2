@@ -436,6 +436,10 @@ class TradeOrder(Base):
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    __table_args__ = (
+        Index("idx_trade_order_code_status_created", "code", "status", "created_at"),
+    )
+
 
 class TradePosition(Base):
     """持仓快照"""

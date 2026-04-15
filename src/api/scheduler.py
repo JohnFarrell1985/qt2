@@ -8,6 +8,7 @@ import time
 import threading
 import traceback
 
+from src.common.config import settings
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,7 +35,7 @@ def job_daily_sync():
     """每日数据同步"""
     from src.data.sync import DataSyncManager
     mgr = DataSyncManager()
-    mgr.incremental_sync(days_back=5)
+    mgr.incremental_sync(days_back=settings.scheduler.sync_days_back)
 
 
 def job_model_retrain():
@@ -49,9 +50,10 @@ def job_position_snapshot():
 
 def setup_schedule():
     """配置定时任务"""
-    schedule.every().day.at("17:00").do(_safe_run, job_daily_sync, "daily_sync")
-    schedule.every().day.at("15:30").do(_safe_run, job_position_snapshot, "position_snapshot")
-    schedule.every(4).weeks.do(_safe_run, job_model_retrain, "model_retrain")
+    cfg = settings.scheduler
+    schedule.every().day.at(cfg.daily_sync_time).do(_safe_run, job_daily_sync, "daily_sync")
+    schedule.every().day.at(cfg.snapshot_time).do(_safe_run, job_position_snapshot, "position_snapshot")
+    schedule.every(cfg.retrain_weeks).weeks.do(_safe_run, job_model_retrain, "model_retrain")
     logger.info("定时任务已配置")
 
 
@@ -62,7 +64,7 @@ def _run_scheduler():
             schedule.run_pending()
         except Exception as e:
             logger.error(f"调度循环异常: {e}")
-        time.sleep(30)
+        time.sleep(settings.scheduler.poll_interval_sec)
 
 
 def start_scheduler():

@@ -1,6 +1,7 @@
 """Tests for src/data/bulk_writer.py"""
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 from src.data.bulk_writer import BulkWriter
@@ -47,7 +48,7 @@ class TestIsTableEmpty:
         mock_get_session.return_value.__exit__ = MagicMock(return_value=False)
 
         writer = BulkWriter()
-        assert writer._is_table_empty("fake_table") is True
+        assert writer._is_table_empty("stocks") is True
 
     @patch("src.data.bulk_writer.get_session")
     def test_nonempty_table_returns_false(self, mock_get_session):
@@ -57,14 +58,19 @@ class TestIsTableEmpty:
         mock_get_session.return_value.__exit__ = MagicMock(return_value=False)
 
         writer = BulkWriter()
-        assert writer._is_table_empty("fake_table") is False
+        assert writer._is_table_empty("stocks") is False
 
     @patch("src.data.bulk_writer.get_session")
     def test_exception_returns_false(self, mock_get_session):
         mock_get_session.return_value.__enter__ = MagicMock(side_effect=RuntimeError("DB error"))
 
         writer = BulkWriter()
-        assert writer._is_table_empty("fake_table") is False
+        assert writer._is_table_empty("stocks") is False
+
+    def test_rejected_table_raises(self):
+        writer = BulkWriter()
+        with pytest.raises(ValueError, match="not in whitelist"):
+            writer._is_table_empty("evil_table")
 
 
 # ====================================================================

@@ -4,7 +4,6 @@
 
 4 个测试用例: 股票列表、日线行情、因子列表、数据一致性
 """
-import pytest
 
 
 class TestDataQuery:

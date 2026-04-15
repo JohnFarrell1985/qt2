@@ -3,7 +3,6 @@
 Tables: convertible_bond, cb_daily
 5 只可转债 × 60 交易日行情
 """
-from datetime import date
 from typing import List
 
 import numpy as np

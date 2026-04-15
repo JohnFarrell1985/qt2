@@ -9,7 +9,6 @@
   POST/GET/DELETE /strategy/allocations
   GET /strategy/plan
 """
-import pytest
 
 
 class TestStrategyListFilter:

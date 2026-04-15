@@ -4,7 +4,7 @@ Uses FastAPI TestClient for synchronous endpoint testing.
 Patches lifespan dependencies (DB init, scheduler) to avoid side effects.
 """
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 @pytest.fixture(autouse=True)

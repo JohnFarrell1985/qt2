@@ -9,7 +9,6 @@ P1-05: Classical Asset Allocation (Keller, Butler & Kipnis 2015)
 """
 from __future__ import annotations
 
-import json
 
 import numpy as np
 import pandas as pd
@@ -49,7 +48,7 @@ class CAAOptimizer:
         if cash_assets is not None:
             self.cash_assets = set(cash_assets)
         else:
-            self.cash_assets = set(json.loads(cfg.caa_cash_assets))
+            self.cash_assets = set(cfg.caa_cash_assets)
 
     def optimize(self, prices: pd.DataFrame) -> dict[str, float]:
         """根据历史价格序列计算最优权重.

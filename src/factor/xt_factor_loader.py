@@ -32,8 +32,7 @@ class XtFactorLoader:
 
     def __init__(self, categories: list[str] | None = None):
         if categories is None:
-            raw = settings.factor_pipeline.xt_categories
-            self.categories = [c.strip() for c in raw.split(",") if c.strip()]
+            self.categories = list(settings.factor_pipeline.xt_categories)
         else:
             self.categories = categories
 

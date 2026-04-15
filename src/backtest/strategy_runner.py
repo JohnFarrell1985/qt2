@@ -16,10 +16,10 @@
 """
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import List, Optional, Dict, Any
 
-from .stock_picker import StockPicker, PickResult
+from .stock_picker import StockPicker
 from .data_loader import (
     get_open_price_exact, get_trading_dates, get_next_trading_date,
 )

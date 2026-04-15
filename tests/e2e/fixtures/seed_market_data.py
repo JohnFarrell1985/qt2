@@ -8,7 +8,7 @@
 - 000041~000050: 低波稳定 (+0.05%/日)  → 红利策略目标
 """
 from datetime import date, timedelta
-from typing import List, Dict, Any
+from typing import List
 
 import numpy as np
 

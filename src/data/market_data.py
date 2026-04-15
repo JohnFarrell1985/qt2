@@ -11,7 +11,7 @@
 """
 import pandas as pd
 from datetime import datetime
-from typing import List, Optional, Callable
+from typing import List, Optional
 
 from sqlalchemy.dialects.postgresql import insert
 

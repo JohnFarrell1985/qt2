@@ -1,5 +1,4 @@
 """ETF 标的池管理 — 解析配置、加载历史价格"""
-import json
 from datetime import date
 
 import pandas as pd
@@ -13,28 +12,14 @@ from src.data.models import ETFDaily
 logger = get_logger(__name__)
 
 
-def _parse_pool(json_str: str) -> list[str]:
-    """将 JSON 字符串数组解析为 Python list, 容错处理空/异常值"""
-    if not json_str or not json_str.strip():
-        return []
-    try:
-        pool = json.loads(json_str)
-        if isinstance(pool, list):
-            return [str(c).strip() for c in pool if c]
-        return []
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("ETF pool 配置解析失败: %s", json_str[:80])
-        return []
-
-
 class ETFUniverse:
     """ETF 标的池 — 从 settings.etf_rotation 解析风险/防御/金丝雀池"""
 
     def __init__(self):
         cfg = settings.etf_rotation
-        self._risk_pool = _parse_pool(cfg.risk_pool)
-        self._defensive_pool = _parse_pool(cfg.defensive_pool)
-        self._canary_pool = _parse_pool(cfg.canary_pool)
+        self._risk_pool = list(cfg.risk_pool)
+        self._defensive_pool = list(cfg.defensive_pool)
+        self._canary_pool = list(cfg.canary_pool)
 
     @property
     def risk_pool(self) -> list[str]:

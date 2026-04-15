@@ -7,8 +7,8 @@
 - 财务因子: 通过 get_financial_data 从 Pershareindex / Balance / Income / CashFlow / Capital 获取
 - 技术/动量/情绪因子: 通过 K 线数据自行计算 (后续扩展)
 """
-from datetime import date, datetime
-from typing import List, Dict, Any, Optional
+from datetime import date
+from typing import List, Dict, Optional
 
 import pandas as pd
 from sqlalchemy import text

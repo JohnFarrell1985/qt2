@@ -1,6 +1,6 @@
 # qt-quant 综合待办清单 (索引)
 
-> 最后更新: 2026-04-14
+> 最后更新: 2026-04-15
 >
 > 本清单合并了两部分内容:
 > 1. **量化体系优化** — 以专业量化研究视角审查现有代码后发现的缺陷和改进点
@@ -18,11 +18,11 @@
 | ~~**P0.1**~~ | ✅ 已完成 → [12-数据采集模块](12-数据采集模块.md) + [13-数据清洗与LLM](13-数据清洗与LLM.md) | ~~57 项~~ | ~~~24 天~~ | 数据采集 (A01-A48) + 数据清洗 (P0-12~20) — **全部完成** |
 | ~~**P1.1**~~ | ✅ 已完成 | ~~11 项~~ | ~~22 天~~ | 系统风险 — 交易规则/标签泄露/过拟合/因子失效/容错降级 — **全部完成** |
 | ~~**P1.2**~~ | ✅ 已完成 | ~~14 项~~ | ~~41 天~~ | 赚钱效应 ROI — ETF 轮动/多源因子/组合优化/情绪引擎/择时信号 — **全部完成** |
-| **P1.3** | [TODO-P13.md](TODO-P13.md) | 11 项 | ~9 天 | **工程化 (再次之)** — 模块完善/事件总线/自动注册/版本管理 |
-| **P2** | [TODO-P2.md](TODO-P2.md) | 31 项 | ~64 天 | 高级功能 + 扩展引擎 + RD-Agent(⭐提升) + 知识蒸馏 + TOML 配置 + **AI Agent 前沿 (LLM因子挖掘/RAG投研/多智能体/AI新闻情报/论文→策略进化/LLM择时/PPO加权)** |
+| ~~**P1.3**~~ | ✅ 代码审查 17 项已完成; 5 项特性迁入 P2 (P2-32~36) | ~~17+5 项~~ | ~~9 天~~ | 工程化 — 手续费/认证/前视偏差/CORS/并发/CI-CD/锁文件/分层/readonly/类型安全/索引/asyncio/SQL安全/模块边界/覆盖率/依赖去重 — **全部完成** |
+| **P2** | [TODO-P2.md](TODO-P2.md) | 36 项 | ~81 天 | 高级功能 + 扩展引擎 + RD-Agent(⭐提升) + 知识蒸馏 + TOML 配置 + **AI Agent 前沿** + P1.3 迁入 (事件总线/自动注册/版本追溯/datacollect+dataclean 完善) |
 | **P3** | [TODO-P3.md](TODO-P3.md) | 9 项 | ~14 天 | 长期可选 (SHAP/行业轮动/宏观经济) |
 | **P4** | [TODO-P4.md](TODO-P4.md) | 7 项 | ~12 天 | **全栈可观测性** (Jaeger/Loki/Prometheus/Grafana/Alert, 参考 fliac ops03) |
-| **合计** | — | **69 项** (剩余) | **~121 天** | P0 + P0.1 + P1.1 + P1.2 已完成, 其余待实施 |
+| **合计** | — | **52 项** (剩余) | **~107 天** | P0 + P0.1 + P1.1 + P1.2 + P1.3 代码审查已完成, 其余待实施 |
 
 ---
 
@@ -91,22 +91,20 @@
 >
 > 涵盖: ETF 全球资产轮动 (P1-20) | 多源因子管线 Alpha158+自动筛选 (P1-21) | 组合优化器 CAA+RiskParity (P1-05) | 风险归因 Barra 简化 (P1-06) | Rolling Walk-Forward+Bandit (P1-02) | BaseFactor+FactorRegistry (P1-30) | 6 维情绪合成指数 (P1-16) | 宏观状态分类器 (P1-17) | Orchestrator 集成 Profile (P1-18) | 情绪 API 完整化 (P1-19) | 北向资金流 Regime 信号 (P1-33) | alphalens 因子质量门控 (P1-34) | 风险平价优化 (P1-36) | 跨资产 Regime 上下文 (P1-37)
 
-### P1.3: 工程化 (再次之) → [详见 TODO-P13.md](TODO-P13.md)
+### ~~P1.3: 工程化 (再次之)~~ ✅ 代码审查全部完成
 
-| # | 任务 | 模块 | 工作量 |
-|---|------|------|--------|
-| P1-08 | CollectRouter 自适应路由 | datacollect | 1.5 天 |
-| P1-09 | OpenClawReceiver | datacollect | 1 天 |
-| P1-10 | XtdataCollector | datacollect | 1 天 |
-| P1-11 | APScheduler 定时调度 | datacollect | 1.5 天 |
-| P1-12 | StockEvent Schema + Cleaner | dataclean | 1 天 |
-| P1-13 | RiskAlert Schema | dataclean | 0.5 天 |
-| P1-14 | Schema + Prompt 注册表 | dataclean | 1 天 |
-| P1-15 | 清洗日志 ORM | dataclean | 0.5 天 |
-| **P1-23** | **轻量级事件总线 (从 P3-03 提升)** | **common** | **3 天** |
-| **P1-29** | **策略自动发现与注册** | **strategy** | **0.5 天** |
-| **P1-31** | **FactorPool 版本追溯** | **factor** | **0.5 天** |
-| ~~**P1-26**~~ | ~~可观测性 (structlog + 飞书机器人告警)~~ → **已合并至 P4** | — | — |
+> **代码审查发现 17 项** (3 CRITICAL + 4 HIGH + 8 MEDIUM + 2 LOW) 已全部实现并通过 E2E 测试:
+>
+> ✅ 回测手续费参数错位 | ✅ API Key 认证中间件 | ✅ 因子中性化前视偏差 |
+> ✅ CORS 收紧 | ✅ 并发安全 | ✅ CI/CD GitHub Actions | ✅ uv.lock 锁文件 |
+> ✅ data→strategy 分层违反 | ✅ get_session readonly | ✅ JSON→list 类型安全 |
+> ✅ 密钥启动校验 | ✅ TradeOrder 复合索引 | ✅ asyncio 弃用 API |
+> ✅ bulk_writer 表名白名单 | ✅ sentiment_bridge 模块边界 | ✅ fail_under=85 |
+> ✅ dev 依赖去重
+>
+> **5 项未实现特性已迁入 P2**: P2-32 (datacollect 完善) | P2-33 (dataclean 完善) | P2-34 (事件总线) | P2-35 (策略自动注册) | P2-36 (FactorPool 版本追溯)
+>
+> ~~P1-26 可观测性~~ → 已合并至 P4
 
 ### P2: 增强 → [详见 TODO-P2.md](TODO-P2.md)
 
@@ -314,12 +312,9 @@ Phase 1b — ✅ P1.2 赚钱效应 ROI — 已完成:
   ✅ P1-21  多源因子管线 (Alpha158+自动筛选)
   ✅ P1-36  风险平价优化
 
-Phase 1c — P1.3 工程化 (第 11-12 周, 与 1b 可并行):
-  P1-08~11  datacollect 完善 (路由/OpenClaw/调度)
-  P1-12~15  dataclean 完善 (扩展Schema/注册表)
-  P1-23     轻量级事件总线 (blinker, 模块解耦)
-  P1-29     策略自动发现与注册 (OCP, 0.5天)
-  P1-31     FactorPool 版本追溯 (0.5天)
+Phase 1c — ✅ P1.3 工程化 — 代码审查 17 项已完成:
+  ✅ 代码审查发现全部修复 (手续费/认证/前视偏差/CORS/并发/CI-CD 等 17 项)
+  → 特性任务迁入 P2: P2-32 (datacollect) | P2-33 (dataclean) | P2-34 (事件总线) | P2-35 (策略注册) | P2-36 (版本追溯)
 
 Phase 2a — AI Agent 核心 (第 12-14 周, 最高 ROI):
   ★ P2-18   RD-Agent 联合迭代 (Bandit+Trace, 建议提升至 P1.2 同期, 5天, 年化2x验证)

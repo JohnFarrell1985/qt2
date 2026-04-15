@@ -1,7 +1,7 @@
 """Tests for src/trading/qmt_trader.py"""
 import sys
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture

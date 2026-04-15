@@ -1,6 +1,5 @@
 """Tests for src/trading/position_manager.py"""
 import pytest
-from datetime import date
 from unittest.mock import patch, MagicMock
 
 

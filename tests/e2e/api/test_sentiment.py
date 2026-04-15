@@ -8,7 +8,6 @@
   GET /api/sentiment/ingest-log
   GET /api/sentiment/profiles*
 """
-import pytest
 
 
 class TestSentimentQuery:

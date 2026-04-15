@@ -11,7 +11,7 @@
 import time
 import threading
 from datetime import datetime
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable
 from dataclasses import dataclass, field
 
 from src.common.logger import get_logger

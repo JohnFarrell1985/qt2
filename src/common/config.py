@@ -5,9 +5,10 @@
   env/.env.db, env/.env.qmt, env/.env.datacollect, env/.env.api,
   env/.env.ml, env/.env.trading, env/.env.strategy, env/.env.webhook
 """
+import json
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -40,6 +41,8 @@ class DatabaseConfig(BaseSettings):
     max_overflow: int = Field(default=10, alias="DB_MAX_OVERFLOW")
     pool_timeout: int = Field(default=30, alias="DB_POOL_TIMEOUT")
     pool_recycle: int = Field(default=1800, alias="DB_POOL_RECYCLE")
+    init_max_retries: int = Field(default=5, alias="DB_INIT_MAX_RETRIES")
+    init_backoff_base: int = Field(default=2, alias="DB_INIT_BACKOFF_BASE_SEC")
 
 
 class QMTConfig(BaseSettings):
@@ -70,6 +73,18 @@ class APIConfig(BaseSettings):
     model_config = _SHARED_CFG
     host: str = Field(default="0.0.0.0", alias="API_HOST")
     port: int = Field(default=8012, alias="API_PORT")
+    api_key_enabled: bool = Field(default=False, alias="API_KEY_ENABLED")
+    api_key: str = Field(default="", alias="API_KEY")
+    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+
+
+class SchedulerConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    daily_sync_time: str = Field(default="17:00", alias="SCHEDULER_DAILY_SYNC_TIME")
+    snapshot_time: str = Field(default="15:30", alias="SCHEDULER_SNAPSHOT_TIME")
+    retrain_weeks: int = Field(default=4, alias="SCHEDULER_RETRAIN_WEEKS")
+    sync_days_back: int = Field(default=5, alias="SCHEDULER_DAILY_SYNC_DAYS_BACK")
+    poll_interval_sec: int = Field(default=30, alias="SCHEDULER_POLL_INTERVAL_SEC")
 
 
 class WebhookConfig(BaseSettings):
@@ -78,6 +93,10 @@ class WebhookConfig(BaseSettings):
     feishu_url: str = Field(default="", alias="FEISHU_WEBHOOK_URL")
     feishu_app_id: str = Field(default="", alias="FEISHU_APP_ID")
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
+    http_connect_timeout: float = Field(default=5.0, alias="WEBHOOK_HTTP_CONNECT_TIMEOUT")
+    http_read_timeout: float = Field(default=10.0, alias="WEBHOOK_HTTP_READ_TIMEOUT")
+    max_connections: int = Field(default=10, alias="WEBHOOK_HTTP_MAX_CONNECTIONS")
+    max_retries: int = Field(default=2, alias="WEBHOOK_PUSH_MAX_RETRIES")
 
 
 # ================================================================
@@ -470,18 +489,26 @@ class EtfRotationConfig(BaseSettings):
     use_caa_weights: bool = Field(default=False, alias="ETF_ROTATION_USE_CAA_WEIGHTS")
     caa_target_vol: float = Field(default=0.10, alias="ETF_ROTATION_CAA_TARGET_VOL")
     volatility_gate: bool = Field(default=True, alias="ETF_ROTATION_VOLATILITY_GATE")
-    risk_pool: str = Field(
-        default='["510300.SH","159915.SZ","510500.SH","510880.SH","513180.SH","513100.SH","513500.SH","513880.SH","513030.SH","518880.SH","159985.SZ"]',
+    risk_pool: list[str] = Field(
+        default=["510300.SH", "159915.SZ", "510500.SH", "510880.SH", "513180.SH",
+                 "513100.SH", "513500.SH", "513880.SH", "513030.SH", "518880.SH", "159985.SZ"],
         alias="ETF_ROTATION_RISK_POOL",
     )
-    defensive_pool: str = Field(
-        default='["511260.SH","511010.SH"]',
+    defensive_pool: list[str] = Field(
+        default=["511260.SH", "511010.SH"],
         alias="ETF_ROTATION_DEFENSIVE_POOL",
     )
-    canary_pool: str = Field(
-        default='["513100.SH","511260.SH"]',
+    canary_pool: list[str] = Field(
+        default=["513100.SH", "511260.SH"],
         alias="ETF_ROTATION_CANARY_POOL",
     )
+
+    @field_validator("risk_pool", "defensive_pool", "canary_pool", mode="before")
+    @classmethod
+    def _parse_json_list(cls, v):
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
 
 
 # ================================================================
@@ -491,10 +518,11 @@ class EtfRotationConfig(BaseSettings):
 class FactorPipelineConfig(BaseSettings):
     model_config = _SHARED_CFG
     alpha158_enabled: bool = Field(default=True, alias="FACTOR_ALPHA158_ENABLED")
-    alpha158_windows: str = Field(default="5,10,20,30,60", alias="FACTOR_ALPHA158_WINDOWS")
+    alpha158_windows: list[int] = Field(default=[5, 10, 20, 30, 60], alias="FACTOR_ALPHA158_WINDOWS")
     xt_enabled: bool = Field(default=False, alias="FACTOR_XT_ENABLED")
-    xt_categories: str = Field(
-        default="factor_growth,factor_base_derivative,factor_metrics,factor_quality,factor_momentum,factor_risk",
+    xt_categories: list[str] = Field(
+        default=["factor_growth", "factor_base_derivative", "factor_metrics",
+                 "factor_quality", "factor_momentum", "factor_risk"],
         alias="FACTOR_XT_CATEGORIES",
     )
     screen_ic_threshold: float = Field(default=0.03, alias="FACTOR_SCREEN_IC_THRESHOLD")
@@ -502,6 +530,20 @@ class FactorPipelineConfig(BaseSettings):
     screen_ic_positive_ratio: float = Field(default=0.55, alias="FACTOR_SCREEN_IC_POSITIVE_RATIO")
     screen_corr_threshold: float = Field(default=0.7, alias="FACTOR_SCREEN_CORR_THRESHOLD")
     screen_decay_halflife_min: int = Field(default=20, alias="FACTOR_SCREEN_DECAY_HALFLIFE_MIN")
+
+    @field_validator("alpha158_windows", mode="before")
+    @classmethod
+    def _parse_windows(cls, v):
+        if isinstance(v, str):
+            return [int(x.strip()) for x in v.split(",")]
+        return v
+
+    @field_validator("xt_categories", mode="before")
+    @classmethod
+    def _parse_categories(cls, v):
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",")]
+        return v
 
 
 # ================================================================
@@ -513,12 +555,19 @@ class PortfolioConfig(BaseSettings):
     optimizer_method: str = Field(default="caa", alias="PORTFOLIO_OPTIMIZER_METHOD")
     caa_target_vol: float = Field(default=0.10, alias="PORTFOLIO_CAA_TARGET_VOL")
     caa_cap: float = Field(default=0.25, alias="PORTFOLIO_CAA_CAP")
-    caa_cash_assets: str = Field(
-        default='["511010.SH","511260.SH"]',
+    caa_cash_assets: list[str] = Field(
+        default=["511010.SH", "511260.SH"],
         alias="PORTFOLIO_CAA_CASH_ASSETS",
     )
     max_industry_pct: float = Field(default=0.15, alias="PORTFOLIO_MAX_INDUSTRY_PCT")
     max_single_pct: float = Field(default=0.05, alias="PORTFOLIO_MAX_SINGLE_PCT")
+
+    @field_validator("caa_cash_assets", mode="before")
+    @classmethod
+    def _parse_cash_assets(cls, v):
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
 
 
 # ================================================================
@@ -589,6 +638,7 @@ class Settings(BaseSettings):
     datacollect: DatacollectConfig = DatacollectConfig()
     dataclean: DatacleanConfig = DatacleanConfig()
     api: APIConfig = APIConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
     webhook: WebhookConfig = WebhookConfig()
 
     data_quality: DataQualityConfig = DataQualityConfig()
@@ -624,3 +674,27 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_required_keys(*required_configs: tuple[str, str]) -> list[str]:
+    """Validate that required API keys / tokens are set.
+
+    Parameters
+    ----------
+    required_configs : tuple[str, str]
+        Each tuple is (dotted_attr_path, human_label), e.g.
+        ("datacollect.tushare_token", "TUSHARE_TOKEN")
+
+    Returns
+    -------
+    list[str]
+        List of missing keys (empty if all present).
+    """
+    missing: list[str] = []
+    for attr_path, label in required_configs:
+        obj = settings
+        for part in attr_path.split("."):
+            obj = getattr(obj, part, "")
+        if not obj:
+            missing.append(label)
+    return missing

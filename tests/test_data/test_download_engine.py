@@ -1,8 +1,6 @@
 """Tests for src/data/download_engine.py"""
-import threading
-import time
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture

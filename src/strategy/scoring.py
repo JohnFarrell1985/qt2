@@ -245,7 +245,6 @@ def _load_ic_weights(
     """
     from src.common.db import get_session
     from src.data.models import FactorValue, FactorMeta, StockDaily
-    from sqlalchemy import func
 
     with get_session() as session:
         recent_dates = (

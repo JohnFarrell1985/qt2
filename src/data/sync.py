@@ -10,7 +10,7 @@
 - tick:        DL_START_TICK (默认最近1个月)
 """
 from datetime import datetime, timedelta
-from typing import List, Optional, Callable
+from typing import List, Optional
 
 from src.common.logger import get_logger
 from src.data.qmt_client import QMTClient

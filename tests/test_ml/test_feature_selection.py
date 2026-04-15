@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 
 def _build_multiindex_data(n_dates=10, n_stocks=30, n_factors=4, seed=42):

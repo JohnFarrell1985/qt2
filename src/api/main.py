@@ -5,9 +5,9 @@
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
+from fastapi.responses import JSONResponse
 from src.common.config import settings
 from src.common.db import init_database, check_db_connection
 from src.common.logger import get_logger
@@ -68,13 +68,28 @@ app = FastAPI(
     license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
 )
 
+_cors_origins = [o.strip() for o in settings.api.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=True if _cors_origins != ["*"] else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """API Key 认证中间件 (通过 API_KEY_ENABLED 控制开关)"""
+    if not settings.api.api_key_enabled:
+        return await call_next(request)
+    skip_paths = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+    if request.url.path in skip_paths:
+        return await call_next(request)
+    api_key = request.headers.get("X-API-Key", "")
+    if not api_key or api_key != settings.api.api_key:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API Key"})
+    return await call_next(request)
 
 app.include_router(data_router.router)
 app.include_router(factor_router.router)

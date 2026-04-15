@@ -4,7 +4,7 @@ Uses real PostgreSQL with an isolated schema (ut_db_test) to match production.
 """
 import pytest
 from unittest.mock import patch
-from sqlalchemy import Column, Integer, String, text, create_engine, inspect
+from sqlalchemy import Column, Integer, String, text, create_engine
 from sqlalchemy.orm import Session
 
 from src.common.config import settings
@@ -57,6 +57,8 @@ class TestDatabase:
             mock_settings.database.max_overflow = 3
             mock_settings.database.pool_timeout = 10
             mock_settings.database.pool_recycle = 1800
+            mock_settings.database.init_max_retries = 5
+            mock_settings.database.init_backoff_base = 2
             yield mock_settings
 
     def test_get_engine_creates_engine(self, patched_settings):

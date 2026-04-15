@@ -7,9 +7,8 @@
 """
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import datetime
 
 from sqlalchemy import text
 

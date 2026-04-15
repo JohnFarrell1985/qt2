@@ -1,5 +1,5 @@
 """ML训练/预测API"""
-from datetime import date, datetime
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException

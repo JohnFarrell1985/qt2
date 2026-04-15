@@ -2,7 +2,6 @@
 
 全部通过 mock QMTClient 来隔离 xtquant 依赖。
 """
-import pytest
 from datetime import date
 from unittest.mock import patch, MagicMock
 import pandas as pd

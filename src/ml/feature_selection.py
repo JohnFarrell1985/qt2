@@ -2,9 +2,8 @@
 
 通过IC/IR分析、相关性过滤选出有效因子子集。
 """
-import numpy as np
 import pandas as pd
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 from src.common.logger import get_logger
 from src.factor.factor_analysis import calc_ic_series, calc_icir, group_return_test

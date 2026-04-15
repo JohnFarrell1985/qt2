@@ -4,7 +4,7 @@
 """
 import pandas as pd
 from datetime import date
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 from src.common.db import get_session
 from src.common.logger import get_logger

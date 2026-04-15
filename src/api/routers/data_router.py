@@ -3,8 +3,7 @@
 提供股票、行情、指数、财务、板块、日历等数据的查询接口,
 以及手动触发数据同步的操作接口。
 """
-from datetime import date
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 
@@ -13,7 +12,7 @@ from src.common.logger import get_logger
 from src.data.models import (
     Stock, StockDaily, StockMinute, MarketIndex,
     StockFinancialReport, StockFinancialIndicator,
-    IndexWeight, SectorStock,
+    IndexWeight,
 )
 
 logger = get_logger(__name__)

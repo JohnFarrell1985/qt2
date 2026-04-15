@@ -2,7 +2,6 @@
 
 仓位限制、止损止盈、日内亏损限额。
 """
-from typing import Dict, List, Optional
 
 from src.common.logger import get_logger
 from src.common.config import settings

@@ -1,7 +1,6 @@
 """交易管理API"""
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from src.common.logger import get_logger

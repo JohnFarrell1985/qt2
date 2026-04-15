@@ -471,7 +471,7 @@ async def _async_download(
     flush_every: int = 200,
 ):
     sem = asyncio.Semaphore(concurrency)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     total_records = 0
     total_done = 0

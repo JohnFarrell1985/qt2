@@ -25,8 +25,12 @@ class Base(DeclarativeBase):
 _engine = None
 _SessionLocal = None
 
-_MAX_STARTUP_RETRIES = 5
-_STARTUP_BACKOFF_BASE = 2  # seconds
+def _max_startup_retries() -> int:
+    return settings.database.init_max_retries
+
+
+def _startup_backoff_base() -> int:
+    return settings.database.init_backoff_base
 
 
 def get_engine():
@@ -55,12 +59,15 @@ def get_session_factory():
 
 
 @contextmanager
-def get_session() -> Generator[Session, None, None]:
+def get_session(readonly: bool = False) -> Generator[Session, None, None]:
     factory = get_session_factory()
     session = factory()
     try:
         yield session
-        session.commit()
+        if readonly or not session.dirty and not session.new and not session.deleted:
+            session.rollback()
+        else:
+            session.commit()
     except Exception:
         session.rollback()
         raise
@@ -93,7 +100,9 @@ def init_database():
     import src.datacollect.models  # noqa: F401
     import src.sentiment.models  # noqa: F401
 
-    for attempt in range(1, _MAX_STARTUP_RETRIES + 1):
+    max_retries = _max_startup_retries()
+    backoff_base = _startup_backoff_base()
+    for attempt in range(1, max_retries + 1):
         try:
             engine = get_engine()
             with engine.connect() as conn:
@@ -102,11 +111,11 @@ def init_database():
             logger.info("数据库初始化完成")
             return
         except Exception as e:
-            wait = _STARTUP_BACKOFF_BASE ** attempt
+            wait = backoff_base ** attempt
             logger.warning(
                 f"数据库连接失败 (第{attempt}次): {e} — {wait}s 后重试"
             )
-            if attempt == _MAX_STARTUP_RETRIES:
+            if attempt == max_retries:
                 logger.error("数据库连接重试耗尽, 启动失败")
                 raise
             time.sleep(wait)

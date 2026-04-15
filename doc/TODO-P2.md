@@ -1,8 +1,8 @@
 # P2: 增强 (高级功能 + 扩展引擎 + 研究驱动前沿)
 
-> 最后更新: 2026-04-14
+> 最后更新: 2026-04-15
 >
-> 31 + 10 项 (含代码审查发现) | 预估工作量 ~64 + ~5 天 (P2-04 已完成, P2-22~P2-28 研究驱动前沿, **新增 P2-29~P2-31 AI Agent 应用**)
+> 31 + 10 + 5 项 (含代码审查发现 + P1.3 迁入未实现特性) | 预估工作量 ~64 + ~5 + ~12 天 (P2-04 已完成, P2-22~P2-28 研究驱动前沿, **新增 P2-29~P2-31 AI Agent 应用**, **P2-32~P2-36 由 P1.3 迁入**)
 >
 > 返回总览: [TODO.md](TODO.md)
 
@@ -1447,5 +1447,85 @@ class LLMParamTuner:
 - **TiMi**: [Microsoft Research](https://www.microsoft.com/en-us/research/publication/trade-in-minutes-rationality-driven-agentic-system-for-quantitative-financial-trading/)
 - **TradingAgents**: [github.com/TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)
 - **ATLAS**: [arXiv:2510.15949](https://arxiv.org/abs/2510.15949)
+
+---
+
+## 由 P1.3 迁入的未实现特性 (2026-04-15)
+
+> P1.3 的代码审查发现 (17 项) 已全部实现并通过 E2E 测试验证。
+> 以下为 P1.3 中的新功能设计, 尚未实现, 迁入 P2 继续跟踪。
+
+### P2-32 (原 P1-08 ~ P1-11): datacollect 完善
+
+| # | 描述 | 文件 | 工作量 |
+|---|------|------|--------|
+| P2-32a | `CollectRouter` 自适应路由 | `src/datacollect/router.py` | 1.5 天 |
+| P2-32b | `OpenClawReceiver` POST 推送 | `src/datacollect/collectors/openclaw_receiver.py` | 1 天 |
+| P2-32c | `XtdataCollector` QMT 本地缓存 | `src/datacollect/collectors/xtdata_collector.py` | 1 天 |
+| P2-32d | APScheduler 定时调度 | `src/datacollect/scheduler.py` | 1.5 天 |
+
+**P2-32a**: 自适应降级链: akshare (免费优先) → HTTP 爬虫 → Playwright 浏览器 → Tavily API (付费兜底)。
+
+**P2-32d 技术选型**: APScheduler >=3.11 (stable), 轻量级进程内调度, 支持 cron/interval/date 三种触发器。
+
+---
+
+### P2-33 (原 P1-12 ~ P1-15): dataclean 完善
+
+| # | 描述 | 文件 | 工作量 |
+|---|------|------|--------|
+| P2-33a | `StockEventExtraction` Schema + Cleaner | `src/dataclean/schemas/` + `cleaners/` | 1 天 |
+| P2-33b | `RiskAlertExtraction` Schema | `src/dataclean/schemas/risk_alert.py` | 0.5 天 |
+| P2-33c | Schema + Prompt 注册表 | `src/dataclean/registry.py` | 1 天 |
+| P2-33d | 清洗日志 ORM (LLM token 追踪) | `src/dataclean/models.py` | 0.5 天 |
+
+---
+
+### P2-34 (原 P1-23): 轻量级事件总线
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | common |
+| **文件** | 新增 `src/common/event_bus.py` |
+| **工作量** | 3 天 |
+| **原优先级** | P1-23 (从 P3-03 提升), 现迁入 P2 |
+
+**技术选型**: blinker >=1.9 (轻量信号库), 或 asyncio 自研。
+
+**落地方案**:
+```python
+from blinker import Namespace
+
+events = Namespace()
+data_collected = events.signal("data_collected")
+data_cleaned = events.signal("data_cleaned")
+factor_computed = events.signal("factor_computed")
+model_predicted = events.signal("model_predicted")
+signal_generated = events.signal("signal_generated")
+```
+
+---
+
+### P2-35 (原 P1-29): 策略自动发现与注册
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | strategy |
+| **文件** | `src/strategy/__init__.py`, `src/strategy/orchestrator.py` |
+| **工作量** | 0.5 天 |
+
+使用 `pkgutil.walk_packages` 自动扫描 `src/strategy/rules/` 下所有 `BaseStrategy` 子类, 替代硬编码 import。
+
+---
+
+### P2-36 (原 P1-31): FactorPool 版本追溯
+
+| 属性 | 内容 |
+|------|------|
+| **模块** | factor |
+| **文件** | `src/factor/factor_pool.py`, Alembic 迁移 |
+| **工作量** | 0.5 天 |
+
+`FactorMeta` 表增加 `version` 字段 + `UniqueConstraint("factor_name", "version")`, 支持因子版本对比与 IC/ICIR 衰减追踪。
 
 ---

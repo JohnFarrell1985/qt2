@@ -2,7 +2,7 @@
 
 查询持仓、记录每日快照。
 """
-from datetime import date, datetime
+from datetime import date
 from typing import List, Dict
 
 from src.common.db import get_session

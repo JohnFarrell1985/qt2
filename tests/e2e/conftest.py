@@ -13,8 +13,8 @@ import pytest
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text, event
-from sqlalchemy.orm import Session, sessionmaker
-from unittest.mock import patch, MagicMock
+from sqlalchemy.orm import sessionmaker
+from unittest.mock import patch
 
 from src.common.config import settings
 from src.common.db import Base

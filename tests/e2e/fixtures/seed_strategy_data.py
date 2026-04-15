@@ -3,7 +3,7 @@
 Tables: strategy, instrument_pool, strategy_allocation, macro_state_log
 """
 import json
-from datetime import date, datetime
+from datetime import date
 
 from src.data.models import (
     Strategy, InstrumentPool, StrategyAllocation, MacroStateLog,

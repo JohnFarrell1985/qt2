@@ -21,11 +21,11 @@
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from typing import List
 
 from .engine import calc_single_trade, calc_portfolio, TradeResult
-from .fees import FeeConfig, HKFeeConfig, detect_market
+from .fees import FeeConfig, detect_market
 from .data_loader import get_stock_name, get_data_range
 
 
@@ -50,7 +50,7 @@ def print_trade_result(r: TradeResult):
     print(f"  {'卖出':>8}  {r.sell_date}  价格: {r.sell_price:.2f}  数量: {r.sell_quantity}股")
     print(f"  {'持仓':>8}  {r.holding_days} 天")
 
-    print(f"\n  --- 费用明细 ---")
+    print("\n  --- 费用明细 ---")
     if market == "HK":
         # 港股通: 买卖双方均收全部费用
         print(f"  {'买入佣金':>10}  {r.buy_fees.commission:>10.2f} {currency}")
@@ -72,7 +72,7 @@ def print_trade_result(r: TradeResult):
             print(f"  {'卖出过户费':>10}  {r.sell_fees.transfer_fee:>10.2f} {currency}")
     print(f"  {'费用合计':>10}  {r.total_fees:>10.2f} {currency}")
 
-    print(f"\n  --- 盈亏 ---")
+    print("\n  --- 盈亏 ---")
     print(f"  {'买入总额':>10}  {r.buy_amount:>12.2f} {currency}")
     print(f"  {'卖出净额':>10}  {r.sell_amount:>12.2f} {currency}")
     profit_sign = "+" if r.net_profit >= 0 else ""
@@ -81,7 +81,7 @@ def print_trade_result(r: TradeResult):
     print(f"  {'净盈亏':>10}  {color_start}{profit_sign}{r.net_profit:>12.2f} {currency}  ({profit_sign}{r.profit_pct:.2f}%){color_end}")
 
     if r.period_high or r.period_low:
-        print(f"\n  --- 持仓期间行情 ---")
+        print("\n  --- 持仓期间行情 ---")
         if r.period_high:
             print(f"  {'区间最高':>10}  {r.period_high:.2f}")
         if r.period_low:
@@ -105,7 +105,7 @@ def print_portfolio_summary(s):
     print(f"  {'亏损笔数':>12}  {s.lose_trades}")
     print(f"  {'胜率':>12}  {s.win_rate:.1f}%")
 
-    print(f"\n  --- 资金 ---")
+    print("\n  --- 资金 ---")
     print(f"  {'总投入':>12}  {s.total_invested:>14.2f} 元")
     print(f"  {'总收回':>12}  {s.total_returned:>14.2f} 元")
     print(f"  {'总手续费':>12}  {s.total_fees:>14.2f} 元")
@@ -115,7 +115,7 @@ def print_portfolio_summary(s):
     color_end = "\033[0m"
     print(f"  {'净盈亏':>12}  {color_start}{profit_sign}{s.net_profit:>14.2f} 元  ({profit_sign}{s.profit_pct:.2f}%){color_end}")
 
-    print(f"\n  --- 统计 ---")
+    print("\n  --- 统计 ---")
     print(f"  {'单笔最大盈利':>12}  {s.max_single_profit:>14.2f} 元")
     print(f"  {'单笔最大亏损':>12}  {s.max_single_loss:>14.2f} 元")
     print(f"  {'平均每笔盈亏':>12}  {s.avg_profit_per_trade:>14.2f} 元")
@@ -263,7 +263,7 @@ def cmd_info(args):
         print(f"  数据范围: {data_range['min_date']} ~ {data_range['max_date']}")
         print(f"  交易天数: {data_range['total_days']} 天")
     else:
-        print(f"  数据: 无记录")
+        print("  数据: 无记录")
     print_divider()
 
 

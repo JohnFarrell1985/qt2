@@ -84,9 +84,27 @@ class BulkWriter:
                     len(all_records),
                 )
 
+    _ALLOWED_TABLES: frozenset[str] = frozenset({
+        "stocks", "stock_daily", "stock_minute", "market_index",
+        "trading_date", "sector_stock", "index_weight",
+        "convertible_bond", "cb_daily", "etf_info", "etf_daily",
+        "factor_meta", "factor_values",
+        "stock_financial_report", "stock_financial_indicator",
+        "ml_model_log", "ml_prediction",
+        "trade_order", "trade_position", "trade_daily_report",
+        "data_sync_log", "strategy", "instrument_pool",
+        "strategy_allocation", "macro_state_log", "sector_data",
+        "stock_download_progress", "stock_realtime",
+        "watchlist_stock", "watchlist_intel", "global_market_snapshot",
+        "sentiment_daily", "sentiment_ingest_log",
+        "collect_log", "collect_dead_letter",
+    })
+
     def _is_table_empty(self, table_name: str) -> bool:
+        if table_name not in self._ALLOWED_TABLES:
+            raise ValueError(f"Table name not in whitelist: {table_name}")
         try:
-            with get_session() as session:
+            with get_session(readonly=True) as session:
                 result = session.execute(
                     text(f"SELECT EXISTS (SELECT 1 FROM {table_name} LIMIT 1)")  # noqa: S608
                 ).scalar()

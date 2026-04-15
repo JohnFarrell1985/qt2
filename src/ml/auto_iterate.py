@@ -13,7 +13,6 @@
 每轮记录: 因子组合、参数、IC/ICIR、回测收益/夏普/回撤 → 选出帕累托最优解。
 """
 import json
-import time
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
@@ -29,7 +28,6 @@ from src.ml.dataset import FactorDataset
 from src.ml.lgb_model import LGBFactorModel
 from src.ml.feature_selection import FactorSelector
 from src.ml.model_evaluation import evaluate_predictions
-from src.factor.factor_analysis import calc_ic_series, calc_icir
 
 logger = get_logger(__name__)
 

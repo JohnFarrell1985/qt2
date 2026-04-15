@@ -11,10 +11,9 @@ A 股特有约束:
 - 停牌: volume==0 的股票不可交易, 市值按停牌前收盘价冻结
 - 整手: 买入/卖出均为 100 股的整数倍
 """
-from datetime import date, timedelta
+from datetime import date
 from typing import Optional
 
-import pandas as pd
 from sqlalchemy import text
 
 from src.common.config import settings
@@ -189,7 +188,7 @@ class OrchestratorBacktester:
             return
 
         amount = sell_price * qty
-        fees = calc_sell_fees(amount, self.fee_config)
+        fees = calc_sell_fees(sell_price, qty, code, self.fee_config)
         net = amount - fees.total
 
         self.cash += net
@@ -246,7 +245,7 @@ class OrchestratorBacktester:
             return
 
         amount = buy_price * qty
-        fees = calc_buy_fees(amount, self.fee_config)
+        fees = calc_buy_fees(buy_price, qty, code, self.fee_config)
         total_cost = amount + fees.total
 
         if total_cost > self.cash:
@@ -254,7 +253,7 @@ class OrchestratorBacktester:
             if qty < lot:
                 return
             amount = buy_price * qty
-            fees = calc_buy_fees(amount, self.fee_config)
+            fees = calc_buy_fees(buy_price, qty, code, self.fee_config)
             total_cost = amount + fees.total
 
         self.cash -= total_cost

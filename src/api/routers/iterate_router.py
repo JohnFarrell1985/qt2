@@ -42,7 +42,8 @@ def _parse_date(s: str) -> date:
 
 def _run_iterate(req: IterateRequest):
     global _running_engine, _is_running, _last_error
-    _last_error = None
+    with _running_lock:
+        _last_error = None
     try:
         engine = AutoIterateEngine(
             all_factor_names=req.factor_names,
@@ -76,13 +77,16 @@ def _run_iterate(req: IterateRequest):
             pass
 
     except MemoryError:
-        _last_error = "内存不足 (OOM), 请减少 stock_pool 或 factor_names 数量"
+        with _running_lock:
+            _last_error = "内存不足 (OOM), 请减少 stock_pool 或 factor_names 数量"
         logger.error(_last_error)
     except Exception as e:
-        _last_error = f"{type(e).__name__}: {e}"
+        with _running_lock:
+            _last_error = f"{type(e).__name__}: {e}"
         logger.error(f"迭代异常: {_last_error}\n{traceback.format_exc()}")
     finally:
-        _is_running = False
+        with _running_lock:
+            _is_running = False
         gc.collect()
 
 

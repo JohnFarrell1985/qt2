@@ -58,7 +58,7 @@ class FactorDataset:
         for dt, group in factor_df.groupby(level="trade_date"):
             idx = group.index
             codes_in_section = idx.get_level_values("code")
-            industry, mcap = self._load_industry_data(codes_in_section.tolist())
+            industry, mcap = self._load_industry_data(codes_in_section.tolist(), trade_date=dt)
             factor_df.loc[idx] = preprocess_cross_section(
                 group.droplevel("trade_date"),
                 neutralize_industry=True,
@@ -168,21 +168,40 @@ class FactorDataset:
     @staticmethod
     def _load_industry_data(
         codes: List[str],
+        trade_date: Optional[date] = None,
     ) -> tuple:
-        """加载行业分类和市值数据, 用于中性化"""
-        from src.data.models import Stock
+        """加载行业分类和市值数据, 用于中性化 (PIT 安全).
+
+        market_cap: 使用 StockDaily 当日成交额作为市值代理 (PIT 安全),
+                    因为 Stock.market_cap 是静态快照, 用于多年回测会产生前视偏差.
+        industry:   目前仍使用 Stock.industry (行业变更低频, 后续可改为 SCD-2 查询).
+        """
+        from src.data.models import Stock, StockDaily
         with get_session() as session:
-            rows = session.query(
-                Stock.code, Stock.industry, Stock.market_cap,
+            ind_rows = session.query(
+                Stock.code, Stock.industry,
             ).filter(Stock.code.in_(codes)).all()
-        if not rows:
+
+            mcap_dict: dict[str, float] = {}
+            if trade_date is not None:
+                daily_rows = session.query(
+                    StockDaily.code, StockDaily.amount,
+                ).filter(
+                    StockDaily.code.in_(codes),
+                    StockDaily.trade_date == trade_date,
+                ).all()
+                mcap_dict = {r.code: r.amount or 0.0 for r in daily_rows}
+
+        if not ind_rows:
             return pd.Series(dtype=str), pd.Series(dtype=float)
+
         industry = pd.Series(
-            {r.code: r.industry or "未知" for r in rows},
+            {r.code: r.industry or "未知" for r in ind_rows},
         )
-        mcap = pd.Series(
-            {r.code: r.market_cap or 0.0 for r in rows},
-        )
+        if mcap_dict:
+            mcap = pd.Series({c: mcap_dict.get(c, 0.0) for c in codes})
+        else:
+            mcap = pd.Series({r.code: 0.0 for r in ind_rows})
         return industry, mcap
 
     def _calc_forward_returns(

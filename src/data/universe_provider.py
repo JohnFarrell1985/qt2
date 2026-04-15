@@ -11,7 +11,7 @@ from datetime import date
 from typing import Optional
 
 from src.common.logger import get_logger
-from src.strategy.trading_rules import AssetType, infer_asset_type
+from src.common.asset_types import AssetType, infer_asset_type
 
 logger = get_logger(__name__)
 

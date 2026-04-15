@@ -1,5 +1,4 @@
 """测试 SignalArbiter"""
-import pytest
 from datetime import date
 
 from src.strategy.base import Signal, HoldingPosition

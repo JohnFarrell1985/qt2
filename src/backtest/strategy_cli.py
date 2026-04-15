@@ -19,12 +19,11 @@
 import argparse
 import json
 import logging
-import os
 import sys
-from datetime import date, datetime
-from typing import List, Optional
+from datetime import datetime
+from typing import List
 
-from .stock_picker import MockPicker, RandomPicker, DeepSeekPicker, load_prompt
+from .stock_picker import MockPicker, RandomPicker, load_prompt
 from .strategy_runner import run_strategy, run_continuous, StrategyConfig, StrategyResult, DayTrade
 from .data_loader import get_trading_dates
 from .fees import FeeConfig
@@ -58,7 +57,7 @@ def print_strategy_result(result: StrategyResult):
     print(f"  {'收益率':>12}  {color_start}{sign}{result.total_return_pct:.2f}%{color_end}")
     print(f"  {'年化收益率':>12}  {color_start}{sign}{result.annualized_return_pct:.2f}%{color_end}")
 
-    print(f"\n  --- 交易统计 ---")
+    print("\n  --- 交易统计 ---")
     print(f"  {'成交笔数':>12}  {result.total_trades}")
     print(f"  {'盈利笔数':>12}  {result.win_trades}")
     print(f"  {'亏损笔数':>12}  {result.lose_trades}")
@@ -67,7 +66,7 @@ def print_strategy_result(result: StrategyResult):
 
     print(f"  {'平均持仓天数':>12}  {result.avg_holding_days:.1f} 天")
 
-    print(f"\n  --- 盈亏明细 ---")
+    print("\n  --- 盈亏明细 ---")
     print(f"  {'总手续费':>12}  {result.total_fees:>14,.2f} 元")
     print(f"  {'单笔最大盈利':>12}  {result.max_single_profit:>14,.2f} 元")
     print(f"  {'单笔最大亏损':>12}  {result.max_single_loss:>14,.2f} 元")

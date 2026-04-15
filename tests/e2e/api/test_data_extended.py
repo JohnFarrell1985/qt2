@@ -7,7 +7,6 @@
   GET /api/data/stock/{code}/financial/indicator
   GET /api/data/index/{code}/weight
 """
-import pytest
 
 
 class TestIndexData:

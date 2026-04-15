@@ -26,8 +26,7 @@ class Alpha158Calculator:
 
     def __init__(self, windows: list[int] | None = None):
         if windows is None:
-            raw = settings.factor_pipeline.alpha158_windows
-            self.windows: list[int] = [int(w) for w in raw.split(",")]
+            self.windows: list[int] = list(settings.factor_pipeline.alpha158_windows)
         else:
             self.windows = windows
 
