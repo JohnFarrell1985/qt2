@@ -1,5 +1,5 @@
 """
-交易费用计算模块 - A股 & 港股通
+交易费用计算模块 - A股 & 港股通 + 滑点模型
 
 A股费用 (2024年标准, 印花税 2023.08.28 减半):
 - 佣金: 券商协商 (默认万1.15, 双向, 单笔最低5元)
@@ -14,12 +14,17 @@ A股费用 (2024年标准, 印花税 2023.08.28 减半):
 - 会财局征费: 万分之零点零一五 (双向)
 - 股份交收费: 万分之零点四二 (双向, 最低2港元)
 
+滑点模型 (P2-01):
+- 固定滑点 (bps) + 基于成交量的市场冲击
+- 简化 Almgren-Chriss: impact = coeff × (V_order/V_avg) × σ
+- 费率可通过 env/.env.trading 中的 FEE_*/SLIPPAGE_* 环境变量配置
+
 费率可通过 env/.env.trading 中的 FEE_* 环境变量配置,
 也可在代码中直接构造 FeeConfig/HKFeeConfig 覆盖。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import TYPE_CHECKING
 
@@ -211,3 +216,115 @@ def calc_hk_sell_fees(price: float, quantity: int, code: str,
     与买入完全一致 — 港股通所有费用均双向收取
     """
     return calc_hk_buy_fees(price, quantity, code, config)
+
+
+# ======== 滑点模型 (P2-01) ========
+
+@dataclass
+class SlippageConfig:
+    """滑点模型参数
+
+    简化 Almgren-Chriss 市场冲击模型:
+    slippage = fixed_bps + impact_coeff × (order_value / daily_volume) × volatility
+    """
+    enabled: bool = False
+    fixed_bps: float = 5.0
+    impact_coeff: float = 0.1
+    vol_lookback_days: int = 20
+    asymmetric: bool = True
+
+    @classmethod
+    def from_settings(cls, cfg: BacktestConfig) -> SlippageConfig:
+        return cls(
+            enabled=cfg.slippage_enabled,
+            fixed_bps=cfg.slippage_fixed_bps,
+            impact_coeff=cfg.slippage_impact_coeff,
+            vol_lookback_days=cfg.slippage_vol_lookback,
+            asymmetric=cfg.slippage_asymmetric,
+        )
+
+
+@dataclass
+class SlippageResult:
+    """单笔交易滑点明细"""
+    fixed_cost: float = 0.0
+    impact_cost: float = 0.0
+
+    @property
+    def total(self) -> float:
+        return self.fixed_cost + self.impact_cost
+
+
+class SlippageModel:
+    """基于成交量的动态滑点模型
+
+    合并了固定买卖价差 (bid-ask spread) 和成交量冲击:
+    - fixed: order_value × fixed_bps / 10000
+    - impact: impact_coeff × (order_value / daily_volume) × volatility × order_value
+
+    对散户而言 impact 部分通常很小 (订单占日成交量比例极低),
+    但对大资金或小盘股交易会产生可观的冲击成本。
+    """
+
+    def __init__(self, config: SlippageConfig | None = None):
+        self.config = config or SlippageConfig()
+
+    def estimate(
+        self,
+        order_value: float,
+        daily_volume: float = 0.0,
+        volatility: float = 0.0,
+        direction: str = "buy",
+    ) -> SlippageResult:
+        """估算单笔交易的滑点成本
+
+        Args:
+            order_value: 订单金额 (元)
+            daily_volume: 当日成交额 (元), 0 则忽略冲击项
+            volatility: 标的近期波动率 (年化标准差, 如 0.30)
+            direction: "buy" 或 "sell"
+
+        Returns:
+            SlippageResult 包含 fixed_cost 和 impact_cost
+        """
+        if not self.config.enabled or order_value <= 0:
+            return SlippageResult()
+
+        bps = self.config.fixed_bps
+        if self.config.asymmetric and direction == "sell":
+            bps *= 1.2
+
+        fixed_cost = order_value * bps / 10_000
+
+        impact_cost = 0.0
+        if daily_volume > 0 and volatility > 0:
+            participation = order_value / daily_volume
+            impact_cost = (
+                self.config.impact_coeff
+                * participation
+                * volatility
+                * order_value
+            )
+
+        return SlippageResult(
+            fixed_cost=round(fixed_cost, 2),
+            impact_cost=round(impact_cost, 2),
+        )
+
+    def adjust_price(
+        self,
+        price: float,
+        order_value: float,
+        daily_volume: float = 0.0,
+        volatility: float = 0.0,
+        direction: str = "buy",
+    ) -> float:
+        """返回考虑滑点后的成交价格
+
+        买入: 价格上调 (付出更多); 卖出: 价格下调 (收到更少)
+        """
+        result = self.estimate(order_value, daily_volume, volatility, direction)
+        slippage_pct = result.total / order_value if order_value > 0 else 0.0
+        if direction == "buy":
+            return round(price * (1 + slippage_pct), 4)
+        return round(price * (1 - slippage_pct), 4)

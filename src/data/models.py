@@ -250,16 +250,21 @@ class ETFDaily(Base):
 # ============ 因子数据 ============
 
 class FactorMeta(Base):
-    """因子元信息表"""
+    """因子元信息表 (P2-36: 支持版本追溯)"""
     __tablename__ = "factor_meta"
 
     factor_id = Column(Integer, primary_key=True, autoincrement=True)
-    factor_name = Column(String(100), nullable=False, unique=True)
+    factor_name = Column(String(100), nullable=False)
+    version = Column(Integer, nullable=False, default=1, comment="因子版本号")
     category = Column(String(50), comment="因子分类")
     description = Column(Text)
     data_source = Column(String(50), comment="qmt/calculated")
     qmt_field = Column(String(200), comment="QMT字段映射")
     created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("factor_name", "version", name="uq_factor_name_version"),
+    )
 
 
 class FactorValue(Base):

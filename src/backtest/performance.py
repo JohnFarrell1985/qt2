@@ -2,6 +2,9 @@
 
 夏普比率、Calmar比率、最大回撤、Sortino比率、年化收益、月度收益表、
 Deflated Sharpe Ratio (多重检验修正)。
+
+P2-03 增强: 滚动 Sharpe、Bootstrap 显著性、信息比率 (IR)、Tracking Error
+P2-05 增强: 年化换手率、交易成本归因、扣费后 Sharpe
 """
 import math
 
@@ -188,12 +191,213 @@ def deflated_sharpe_ratio(
     return float(norm.cdf(test_stat))
 
 
+def rolling_sharpe(
+    equity_curve: List[Dict],
+    window: int = 60,
+    risk_free_rate: float = 0.03,
+) -> pd.Series:
+    """滚动 Sharpe 比率 (P2-03)
+
+    Args:
+        equity_curve: 净值曲线
+        window: 滚动窗口大小 (交易日)
+        risk_free_rate: 年化无风险利率
+
+    Returns:
+        Series — index=date, values=rolling_sharpe
+    """
+    returns = calc_returns(equity_curve)
+    if len(returns) < window:
+        return pd.Series(dtype=float)
+    daily_rf = risk_free_rate / 252
+    excess = returns - daily_rf
+    rolling_mean = excess.rolling(window).mean() * 252
+    rolling_vol = returns.rolling(window).std() * np.sqrt(252)
+    rs = rolling_mean / rolling_vol.replace(0, np.nan)
+    return rs.dropna().round(4)
+
+
+def rolling_alpha(
+    equity_curve: List[Dict],
+    benchmark_curve: List[Dict],
+    window: int = 60,
+) -> pd.Series:
+    """滚动 Alpha (P2-03)
+
+    使用单因子模型: r_strategy - rf = α + β(r_bench - rf) + ε
+    """
+    strat_ret = calc_returns(equity_curve)
+    bench_ret = calc_returns(benchmark_curve)
+    if len(strat_ret) < window or len(bench_ret) < window:
+        return pd.Series(dtype=float)
+
+    aligned = pd.DataFrame({"strat": strat_ret, "bench": bench_ret}).dropna()
+    if len(aligned) < window:
+        return pd.Series(dtype=float)
+
+    alphas = []
+    for i in range(window, len(aligned) + 1):
+        chunk = aligned.iloc[i - window: i]
+        cov = np.cov(chunk["strat"], chunk["bench"])
+        beta = cov[0, 1] / cov[1, 1] if cov[1, 1] > 0 else 0
+        alpha = (chunk["strat"].mean() - beta * chunk["bench"].mean()) * 252
+        alphas.append((aligned.index[i - 1], alpha))
+
+    return pd.Series(
+        dict(alphas), dtype=float,
+    ).round(4)
+
+
+def bootstrap_sharpe_pvalue(
+    equity_curve: List[Dict],
+    n_bootstrap: int = 1000,
+    risk_free_rate: float = 0.03,
+) -> float:
+    """Bootstrap 显著性检验 — Sharpe > 0 的 p-value (P2-03)
+
+    非参数 bootstrap: 重采样日收益率序列, 计算每次的 Sharpe,
+    p-value = 比例 of bootstrap Sharpe <= 0
+    """
+    returns = calc_returns(equity_curve)
+    if len(returns) < 20:
+        return 1.0
+
+    rng = np.random.default_rng(42)
+    n = len(returns)
+    ret_arr = returns.values
+    daily_rf = risk_free_rate / 252
+
+    count_negative = 0
+    for _ in range(n_bootstrap):
+        sample = rng.choice(ret_arr, size=n, replace=True)
+        excess = sample - daily_rf
+        bs_sharpe = excess.mean() / sample.std() * np.sqrt(252) if sample.std() > 0 else 0
+        if bs_sharpe <= 0:
+            count_negative += 1
+
+    return round(count_negative / n_bootstrap, 4)
+
+
+def information_ratio(
+    equity_curve: List[Dict],
+    benchmark_curve: List[Dict],
+) -> Dict[str, float]:
+    """信息比率 IR 与 Tracking Error (P2-03)
+
+    IR = (年化超额收益) / Tracking Error
+    TE = std(日超额收益) × √252
+    """
+    strat_ret = calc_returns(equity_curve)
+    bench_ret = calc_returns(benchmark_curve)
+    aligned = pd.DataFrame({"strat": strat_ret, "bench": bench_ret}).dropna()
+
+    if len(aligned) < 20:
+        return {"ir": 0.0, "tracking_error": 0.0, "annualized_excess_return": 0.0}
+
+    excess = aligned["strat"] - aligned["bench"]
+    ann_excess = excess.mean() * 252
+    te = excess.std() * np.sqrt(252)
+    ir = ann_excess / te if te > 0 else 0.0
+
+    return {
+        "ir": _safe_float(round(ir, 4)),
+        "tracking_error": _safe_float(round(te * 100, 2)),
+        "annualized_excess_return": _safe_float(round(ann_excess * 100, 2)),
+    }
+
+
+def monthly_returns_heatmap(equity_curve: List[Dict]) -> Dict[str, Dict[str, float]]:
+    """月度收益热力图数据 (P2-03)
+
+    Returns:
+        嵌套 dict: {year: {month: return_pct}}
+    """
+    mr = monthly_returns(equity_curve)
+    if mr.empty:
+        return {}
+
+    result: Dict[str, Dict[str, float]] = {}
+    for dt, row in mr.iterrows():
+        year = str(dt.year)
+        month = str(dt.month)
+        if year not in result:
+            result[year] = {}
+        result[year][month] = float(row.iloc[0]) if not np.isnan(row.iloc[0]) else 0.0
+    return result
+
+
+# ======== P2-05: 交易成本归因 ========
+
+def turnover_analysis(
+    trades: List[Dict],
+    equity_curve: List[Dict],
+) -> Dict[str, Any]:
+    """年化换手率、交易成本占比、扣费后 Sharpe (P2-05)
+
+    Args:
+        trades: 交易记录, 每笔含 amount/fees/direction
+        equity_curve: 净值曲线
+
+    Returns:
+        cost_attribution dict
+    """
+    if not trades or len(equity_curve) < 2:
+        return {
+            "annualized_turnover_pct": 0.0,
+            "total_fees": 0.0,
+            "gross_return_pct": 0.0,
+            "fee_to_gross_pct": 0.0,
+            "net_sharpe": 0.0,
+            "per_strategy_turnover": {},
+        }
+
+    start_cap = equity_curve[0]["capital"]
+    days = (pd.Timestamp(equity_curve[-1]["date"]) - pd.Timestamp(equity_curve[0]["date"])).days
+    years = max(days / 365.0, 1.0 / 365)
+
+    total_traded = sum(abs(t.get("amount", 0)) for t in trades)
+    avg_capital = np.mean([p["capital"] for p in equity_curve])
+    ann_turnover = (total_traded / avg_capital / years) if avg_capital > 0 else 0.0
+
+    total_fees = sum(t.get("fees", 0) for t in trades)
+    total_slippage = sum(t.get("slippage", 0) for t in trades)
+    total_cost = total_fees + total_slippage
+
+    gross_pnl = equity_curve[-1]["capital"] - start_cap + total_cost
+    gross_return_pct = gross_pnl / start_cap * 100 if start_cap > 0 else 0.0
+    fee_to_gross = total_cost / gross_pnl * 100 if gross_pnl > 0 else 0.0
+
+    net_sr = sharpe_ratio(equity_curve)
+
+    per_strat: Dict[str, float] = {}
+    for t in trades:
+        s = t.get("strategy_name", "unknown")
+        per_strat[s] = per_strat.get(s, 0) + abs(t.get("amount", 0))
+    for s in per_strat:
+        per_strat[s] = round(per_strat[s] / avg_capital / years * 100, 2) if avg_capital > 0 else 0.0
+
+    return {
+        "annualized_turnover_pct": _safe_float(round(ann_turnover * 100, 2)),
+        "total_fees": _safe_float(round(total_fees, 2)),
+        "total_slippage": _safe_float(round(total_slippage, 2)),
+        "gross_return_pct": _safe_float(round(gross_return_pct, 2)),
+        "fee_to_gross_pct": _safe_float(round(fee_to_gross, 2)),
+        "net_sharpe": _safe_float(net_sr),
+        "per_strategy_turnover": per_strat,
+    }
+
+
 def full_performance_report(
     equity_curve: List[Dict],
     trades: List[Dict] = None,
     num_trials: int = None,
+    benchmark_curve: List[Dict] = None,
 ) -> Dict[str, Any]:
-    """完整绩效报告"""
+    """完整绩效报告
+
+    P2-03 增强: rolling_sharpe, bootstrap_pvalue, monthly_heatmap, IR
+    P2-05 增强: turnover_analysis (交易成本归因)
+    """
     report = {
         "annualized_return_pct": _safe_float(round(annualized_return(equity_curve), 2)),
         "max_drawdown": max_drawdown(equity_curve),
@@ -205,6 +409,7 @@ def full_performance_report(
         report["win_rate"] = _safe_float(win_rate(trades))
         report["profit_loss_ratio"] = _safe_float(profit_loss_ratio(trades))
         report["total_trades"] = len(trades)
+        report["cost_attribution"] = turnover_analysis(trades, equity_curve)
 
     if num_trials and num_trials > 1:
         sr = report["sharpe_ratio"]
@@ -217,5 +422,14 @@ def full_performance_report(
                     len(returns),
                 )
             )
+
+    returns = calc_returns(equity_curve)
+    if len(returns) > 20:
+        report["bootstrap_sharpe_pvalue"] = bootstrap_sharpe_pvalue(equity_curve)
+
+    report["monthly_heatmap"] = monthly_returns_heatmap(equity_curve)
+
+    if benchmark_curve:
+        report["information_ratio"] = information_ratio(equity_curve, benchmark_curve)
 
     return report

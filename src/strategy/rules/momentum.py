@@ -53,6 +53,10 @@ class MomentumStrategy(BaseStrategy):
             if df is None or len(df) < lookback:
                 continue
             recent = df.tail(lookback)
+            if hasattr(recent.index, 'is_monotonic_increasing'):
+                assert recent.index.is_monotonic_increasing, (
+                    f"{code}: 行情数据未按时间升序排列, iloc[0]={recent.index[0]}, iloc[-1]={recent.index[-1]}"
+                )
             if recent.iloc[0]["close"] <= 0:
                 continue
 

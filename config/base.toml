@@ -1,0 +1,95 @@
+# ============================================================
+# P2-22: 分层 TOML 配置 (非敏感参数)
+#
+# 此文件存放所有非敏感参数, 可安全提交到 git。
+# 密钥/密码/Token 仍从 env/.env.* 读取 (不提交)。
+# 加载优先级: TOML 默认值 < .env 文件 < 环境变量
+# ============================================================
+
+[data]
+lookback_years = 5
+akshare_rate = 0.15
+
+[ml]
+label_period = 5
+train_window = 252
+retrain_step = 21
+cv_folds = 5
+max_iterations = 30
+target_sharpe = 1.5
+convergence_patience = 5
+
+[ml.lgb]
+n_estimators = 1000
+learning_rate = 0.05
+num_leaves = 63
+subsample = 0.8
+colsample_bytree = 0.8
+
+[factor]
+alpha158_enabled = true
+alpha158_windows = [5, 10, 20, 30, 60]
+screen_ic_threshold = 0.03
+screen_ir_threshold = 0.3
+
+[etf_rotation]
+rebalance_interval = 20
+top_n = 4
+momentum_method = "13612w"
+stop_loss_daily = 0.05
+stop_loss_3d = 0.08
+
+[portfolio]
+optimizer_method = "caa"
+caa_target_vol = 0.15
+max_industry_pct = 0.30
+max_single_pct = 0.20
+
+[backtest]
+initial_capital = 1_000_000
+max_position_pct = 0.20
+max_total_position_pct = 0.80
+max_holdings = 5
+
+[backtest.slippage]
+enabled = false
+fixed_bps = 5.0
+impact_coeff = 0.1
+vol_lookback = 20
+asymmetric = true
+
+[scheduler]
+daily_sync_time = "16:30"
+snapshot_time = "15:05"
+retrain_weeks = 4
+sync_days_back = 5
+poll_interval_sec = 30
+
+[sentiment]
+enabled = true
+auto_apply = true
+w_earning = 0.20
+w_capital = 0.20
+w_volatility = 0.15
+w_sector = 0.10
+w_news = 0.15
+w_global = 0.10
+w_northbound = 0.10
+
+[risk]
+stop_loss_pct = -8.0
+take_profit_pct = 20.0
+max_single_position_pct = 30.0
+max_total_position_pct = 80.0
+
+[distill]
+teacher_a = "deepseek"
+teacher_b = "qwen"
+judge_model = "deepseek-r1"
+consensus_threshold = 0.7
+student_model = "finbert2-base"
+lora_rank = 16
+use_onnx = true
+flywheel_schedule = "weekly"
+flywheel_low_conf_threshold = 0.7
+model_path = "models/distilled/"

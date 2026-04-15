@@ -102,9 +102,13 @@ class ETFRotator:
     ) -> list[str]:
         """止损检查 — 返回需要卖出的代码列表
 
+        实现的是"绝对止损"而非"回撤止损(trailing stop)":
+        - daily: 当前价 vs 买入价 的总亏损百分比
+        - 3d: 最近 3 个交易日的滑动窗口跌幅
+
         Args:
             holdings: 当前持仓
-            stop_loss_daily: 单日跌幅阈值 (如 0.05 = 5%)
+            stop_loss_daily: 总亏损阈值 (如 0.05 = 从买入价跌 5%)
             stop_loss_3d: 3 日累计跌幅阈值 (如 0.08 = 8%)
             prices: 价格矩阵 (用于 3 日判断, 可选)
 
@@ -142,6 +146,9 @@ class ETFRotator:
     ) -> bool:
         """判断是否为调仓日
 
+        尝试从数据库加载真实交易日历精确计算; 如果无法获取
+        则回退到日历日 × 5/7 的近似方法。
+
         Args:
             last_rebalance_date: 上次调仓日, None 则视为首次
             current_date: 当前日期
@@ -153,6 +160,18 @@ class ETFRotator:
         if last_rebalance_date is None:
             return True
 
-        delta = (current_date - last_rebalance_date).days
-        trading_days_approx = int(delta * 5 / 7)
-        return trading_days_approx >= interval
+        try:
+            from src.common.db import get_session
+            from src.data.models import StockDaily
+            from sqlalchemy import func
+
+            with get_session(readonly=True) as session:
+                count = session.query(func.count(func.distinct(StockDaily.trade_date))).filter(
+                    StockDaily.trade_date > last_rebalance_date,
+                    StockDaily.trade_date <= current_date,
+                ).scalar() or 0
+                return count >= interval
+        except Exception:
+            delta = (current_date - last_rebalance_date).days
+            trading_days_approx = int(delta * 5 / 7)
+            return trading_days_approx >= interval

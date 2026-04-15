@@ -1,18 +1,13 @@
-"""Thompson Sampling Bandit for factor vs model iteration decision.
+"""Thompson Sampling 双臂 Bandit (P2-18)
 
-Two-arm linear contextual bandit:
-  - "factor" arm: factor mining / feature engineering iteration
-  - "model" arm: model hyperparameter tuning iteration
+决定每轮迭代的方向: "factor" (挖掘新因子) vs "model" (优化模型超参)。
+8 维指标向量作为上下文: IC, ICIR, Rank IC, Rank ICIR, 年化收益, IR, 最大回撤, Sharpe。
 
-Uses 8-dimensional quantitative metrics vector as context and a Gaussian
-posterior with linear model for Thompson Sampling.
-
-Reference: RD-Agent(Q) paper (arXiv:2505.15155)
+参考: RD-Agent rdagent/scenarios/qlib/proposal/bandit.py
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -20,198 +15,84 @@ from src.common.logger import get_logger
 
 logger = get_logger(__name__)
 
+ARM_FACTOR = "factor"
+ARM_MODEL = "model"
+ARMS = [ARM_FACTOR, ARM_MODEL]
 
-@dataclass
-class BanditMetrics:
-    """8-dimensional quantitative metrics vector (from RD-Agent paper)."""
-
-    ic: float = 0.0
-    icir: float = 0.0
-    rank_ic: float = 0.0
-    rank_icir: float = 0.0
-    annual_return: float = 0.0
-    information_ratio: float = 0.0
-    max_drawdown: float = 0.0
-    sharpe: float = 0.0
-
-    WEIGHTS: tuple[float, ...] = (0.1, 0.1, 0.05, 0.05, 0.25, 0.15, 0.1, 0.2)
-
-    def to_reward(self) -> float:
-        """Weighted sum -> scalar reward. Note: mdd is negated."""
-        values = [
-            self.ic,
-            self.icir,
-            self.rank_ic,
-            self.rank_icir,
-            self.annual_return,
-            self.information_ratio,
-            -self.max_drawdown,
-            self.sharpe,
-        ]
-        return sum(w * v for w, v in zip(self.WEIGHTS, values))
-
-    def to_vector(self) -> np.ndarray:
-        """Return 8-dim context vector (mdd negated so higher = better)."""
-        return np.array([
-            self.ic,
-            self.icir,
-            self.rank_ic,
-            self.rank_icir,
-            self.annual_return,
-            self.information_ratio,
-            -self.max_drawdown,
-            self.sharpe,
-        ])
+DEFAULT_WEIGHTS = np.array([0.1, 0.1, 0.05, 0.05, 0.25, 0.15, 0.1, 0.2])
 
 
-class LinearThompsonBandit:
-    """Linear Thompson Sampling two-arm bandit.
+class LinearThompsonTwoArm:
+    """Linear Thompson Sampling for 2-arm contextual bandit
 
-    Arms: ``"factor"`` (factor mining) vs ``"model"`` (model tuning).
-    Context: 8-dim metrics vector.
-    Uses Gaussian posterior with linear model.
+    每个 arm 维护一个 Bayesian 线性回归模型:
+    reward ∼ N(θ'x, σ²), θ ∼ N(μ, Σ)
 
-    For each arm *a*, we maintain:
-      - B_a: precision matrix (d x d), initialized to I / prior_variance
-      - f_a: cumulative context*reward vector (d,)
-
-    Posterior mean:  mu_hat = B_inv @ f
-    Posterior cov:   B_inv
-
-    Thompson Sampling: sample theta ~ N(mu_hat, B_inv), pick argmax(context @ theta).
+    Args:
+        n_features: 上下文维度 (默认 8: IC/ICIR/RankIC/RankICIR/AnnRet/IR/MaxDD/Sharpe)
+        lambda_prior: 先验精度 (Ridge 正则化)
     """
 
-    ARM_NAMES = ["factor", "model"]
-
-    def __init__(self, n_features: int = 8, prior_variance: float = 1.0):
-        if n_features <= 0:
-            raise ValueError("n_features must be positive")
-        if prior_variance <= 0:
-            raise ValueError("prior_variance must be positive")
+    def __init__(self, n_features: int = 8, lambda_prior: float = 1.0):
         self.n_features = n_features
-        self.prior_variance = prior_variance
-        self.arms: dict[str, dict] = {}
-        for arm in self.ARM_NAMES:
-            self.arms[arm] = {
-                "B": np.eye(n_features) / prior_variance,
-                "f": np.zeros(n_features),
-                "n_pulls": 0,
-            }
+        self.lambda_prior = lambda_prior
+        self._B = {arm: lambda_prior * np.eye(n_features) for arm in ARMS}
+        self._mu = {arm: np.zeros(n_features) for arm in ARMS}
+        self._f = {arm: np.zeros(n_features) for arm in ARMS}
+        self._rng = np.random.default_rng(42)
+        self._history: List[Tuple[str, float, np.ndarray]] = []
 
-    def select_arm(self, context: np.ndarray) -> str:
-        """Thompson Sampling: sample from posterior, pick arm with higher expected reward."""
-        context = np.asarray(context, dtype=float).ravel()
-        if len(context) != self.n_features:
-            raise ValueError(
-                f"Context dimension {len(context)} != n_features {self.n_features}"
-            )
+    def next_arm(self, context: Optional[np.ndarray] = None) -> str:
+        """选择下一轮动作
 
-        sampled_rewards: dict[str, float] = {}
-        for arm_name, arm_data in self.arms.items():
-            B_inv = np.linalg.inv(arm_data["B"])
-            mu_hat = B_inv @ arm_data["f"]
-            theta_sample = np.random.multivariate_normal(mu_hat, B_inv)
-            sampled_rewards[arm_name] = float(context @ theta_sample)
+        Args:
+            context: 上一轮的 8 维指标向量, None 则随机探索
 
-        chosen = max(sampled_rewards, key=sampled_rewards.get)  # type: ignore[arg-type]
-        logger.debug(
-            f"Bandit select: {sampled_rewards} -> {chosen}"
-        )
+        Returns:
+            "factor" 或 "model"
+        """
+        if context is None:
+            return self._rng.choice(ARMS)
+
+        x = np.asarray(context, dtype=float).flatten()
+        if len(x) != self.n_features:
+            logger.warning("上下文维度不匹配: %d vs %d", len(x), self.n_features)
+            return self._rng.choice(ARMS)
+
+        scores = {}
+        for arm in ARMS:
+            B_inv = np.linalg.inv(self._B[arm])
+            mu = B_inv @ self._f[arm]
+            theta_sample = self._rng.multivariate_normal(mu, B_inv)
+            scores[arm] = float(theta_sample @ x)
+
+        chosen = max(scores, key=scores.get)
+        logger.debug("Bandit 选择: %s (factor=%.4f, model=%.4f)", chosen, scores[ARM_FACTOR], scores[ARM_MODEL])
         return chosen
 
-    def update(self, arm: str, context: np.ndarray, reward: float) -> None:
-        """Update posterior after observing reward."""
-        if arm not in self.arms:
-            raise ValueError(f"Unknown arm: {arm}. Must be one of {self.ARM_NAMES}")
-        context = np.asarray(context, dtype=float).ravel()
-        if len(context) != self.n_features:
-            raise ValueError(
-                f"Context dimension {len(context)} != n_features {self.n_features}"
-            )
+    def update(self, arm: str, reward: float, context: np.ndarray) -> None:
+        """更新 arm 的后验分布
 
-        self.arms[arm]["B"] += np.outer(context, context)
-        self.arms[arm]["f"] += context * reward
-        self.arms[arm]["n_pulls"] += 1
-
-    def get_stats(self) -> dict:
-        """Return arm pull counts and estimated parameters."""
-        stats: dict = {}
-        for arm_name, arm_data in self.arms.items():
-            B_inv = np.linalg.inv(arm_data["B"])
-            mu_hat = B_inv @ arm_data["f"]
-            stats[arm_name] = {
-                "n_pulls": arm_data["n_pulls"],
-                "mu_hat": mu_hat.tolist(),
-                "posterior_trace": float(np.trace(B_inv)),
-            }
-        return stats
-
-
-class IterationController:
-    """Decision controller integrating bandit with the iteration engine.
-
-    Usage::
-
-        controller = IterationController()
-        for iteration in range(max_iter):
-            metrics = run_iteration(...)
-            bandit_metrics = BanditMetrics(ic=..., sharpe=..., ...)
-            next_action = controller.decide(bandit_metrics)
-            # next_action is "factor" or "model"
-    """
-
-    def __init__(self, bandit: LinearThompsonBandit | None = None):
-        self.bandit = bandit or LinearThompsonBandit()
-        self.history: list[dict] = []
-        self._last_action: str | None = None
-        self._last_context: np.ndarray | None = None
-
-    def decide(self, metrics: BanditMetrics) -> str:
-        """Record previous result (if any) and decide next action.
-
-        If this is not the first call, the given *metrics* is treated as the
-        outcome of ``self._last_action`` and used to update the bandit.
+        Args:
+            arm: 执行的动作
+            reward: 标量奖励 (加权指标得分)
+            context: 本轮的 8 维上下文
         """
-        context = metrics.to_vector()
-        reward = metrics.to_reward()
+        x = np.asarray(context, dtype=float).flatten()
+        self._B[arm] += np.outer(x, x)
+        self._f[arm] += reward * x
+        self._history.append((arm, reward, x.copy()))
+        logger.debug("Bandit 更新 arm=%s reward=%.4f", arm, reward)
 
-        if self._last_action is not None and self._last_context is not None:
-            self.bandit.update(self._last_action, self._last_context, reward)
+    def compute_reward(self, metrics: dict, weights: Optional[np.ndarray] = None) -> float:
+        """从指标字典计算标量奖励"""
+        if weights is None:
+            weights = DEFAULT_WEIGHTS
+        keys = ["ic", "icir", "rank_ic", "rank_icir", "ann_return", "ir", "max_drawdown", "sharpe"]
+        vec = np.array([metrics.get(k, 0.0) for k in keys], dtype=float)
+        vec[6] = -abs(vec[6])
+        return float(weights @ vec)
 
-        action = self.bandit.select_arm(context)
-        self._last_action = action
-        self._last_context = context.copy()
-
-        self.history.append({
-            "action": action,
-            "reward": reward,
-            "context": context.tolist(),
-            "timestamp": datetime.now().isoformat(),
-        })
-        logger.info(f"Bandit 决策: {action} (reward={reward:.4f})")
-        return action
-
-    def record(self, action: str, metrics: BanditMetrics) -> None:
-        """Explicitly record action and observed metrics (manual mode)."""
-        context = metrics.to_vector()
-        reward = metrics.to_reward()
-        self.bandit.update(action, context, reward)
-        self.history.append({
-            "action": action,
-            "reward": reward,
-            "context": context.tolist(),
-            "timestamp": datetime.now().isoformat(),
-        })
-
-    def get_summary(self) -> dict:
-        """Return controller history summary."""
-        factor_count = sum(1 for h in self.history if h["action"] == "factor")
-        model_count = sum(1 for h in self.history if h["action"] == "model")
-        rewards = [h["reward"] for h in self.history]
-        return {
-            "total_iterations": len(self.history),
-            "factor_pulls": factor_count,
-            "model_pulls": model_count,
-            "mean_reward": float(np.mean(rewards)) if rewards else 0.0,
-            "bandit_stats": self.bandit.get_stats(),
-        }
+    @property
+    def total_pulls(self) -> dict:
+        return {arm: sum(1 for h in self._history if h[0] == arm) for arm in ARMS}

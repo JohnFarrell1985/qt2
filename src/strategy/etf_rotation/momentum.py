@@ -17,10 +17,14 @@ TRADING_DAYS_PER_YEAR = 252
 
 
 def calc_13612w(prices: pd.DataFrame) -> pd.Series:
-    """Keller 13612W 加权动量
+    """Keller 13612W 加权动量 (SSRN 3002624)
 
     score = (12×r1 + 4×r3 + 2×r6 + 1×r12) / 4
     其中 rt = current_price / price_t_months_ago - 1
+
+    注: 权重 (12,4,2,1) 非简单平均, 刻意偏向短期窗口
+    (Keller 原版设计: 短期动量预测力更强)。除以 4 是对 4 个
+    窗口求均值, 而非对权重和 19 归一化。
     """
     if prices.empty:
         return pd.Series(dtype=float)

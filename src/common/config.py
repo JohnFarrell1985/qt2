@@ -1,9 +1,11 @@
 """配置管理 — 所有参数通过 env/*.env.* 分模块文件 + 环境变量注入
 
-优先级: 系统环境变量 > env/*.env.* > 代码默认值
+优先级: 系统环境变量 > env/*.env.* > config/base.toml > 代码默认值
 文件按模块拆分在 env/ 目录下, 便于维护:
   env/.env.db, env/.env.qmt, env/.env.datacollect, env/.env.api,
   env/.env.ml, env/.env.trading, env/.env.strategy, env/.env.webhook
+
+P2-22: 新增 config/base.toml 分层配置 (非敏感参数)
 """
 import json
 from pathlib import Path
@@ -172,6 +174,13 @@ class BacktestConfig(BaseSettings):
     hk_frc_levy_rate: float = Field(default=0.0000015, alias="FEE_HK_FRC_LEVY_RATE")
     hk_settlement_fee_rate: float = Field(default=0.000042, alias="FEE_HK_SETTLEMENT_FEE_RATE")
     hk_settlement_fee_min: float = Field(default=2.0, alias="FEE_HK_SETTLEMENT_FEE_MIN")
+
+    # 滑点模型 (P2-01)
+    slippage_enabled: bool = Field(default=False, alias="SLIPPAGE_ENABLED")
+    slippage_fixed_bps: float = Field(default=5.0, alias="SLIPPAGE_FIXED_BPS")
+    slippage_impact_coeff: float = Field(default=0.1, alias="SLIPPAGE_IMPACT_COEFF")
+    slippage_vol_lookback: int = Field(default=20, alias="SLIPPAGE_VOL_LOOKBACK")
+    slippage_asymmetric: bool = Field(default=True, alias="SLIPPAGE_ASYMMETRIC")
 
 
 class RiskConfig(BaseSettings):
@@ -620,6 +629,27 @@ class MLStratConfig(BaseSettings):
 
 
 # ================================================================
+# 蒸馏 & 飞轮 (P2-19~21)
+# ================================================================
+
+class DistillConfig(BaseSettings):
+    model_config = _SHARED_CFG
+    teacher_a: str = Field(default="deepseek", alias="DISTILL_TEACHER_A")
+    teacher_b: str = Field(default="qwen", alias="DISTILL_TEACHER_B")
+    judge_model: str = Field(default="deepseek-r1", alias="DISTILL_JUDGE_MODEL")
+    consensus_threshold: float = Field(default=0.7, alias="DISTILL_CONSENSUS_THRESHOLD")
+    student_model: str = Field(default="finbert2-base", alias="DISTILL_STUDENT_MODEL")
+    lora_rank: int = Field(default=16, alias="DISTILL_LORA_RANK")
+    lora_alpha: int = Field(default=32, alias="DISTILL_LORA_ALPHA")
+    use_onnx: bool = Field(default=True, alias="DISTILL_USE_ONNX")
+    int8: bool = Field(default=False, alias="DISTILL_INT8")
+    flywheel_schedule: str = Field(default="weekly", alias="DISTILL_FLYWHEEL_SCHEDULE")
+    flywheel_low_conf_threshold: float = Field(default=0.7, alias="DISTILL_FLYWHEEL_LOW_CONF_THRESHOLD")
+    model_path: str = Field(default="models/distilled/", alias="DISTILL_MODEL_PATH")
+    enabled: bool = Field(default=False, alias="DISTILL_ENABLED")
+
+
+# ================================================================
 # 汇总
 # ================================================================
 
@@ -670,10 +700,37 @@ class Settings(BaseSettings):
 
     etf_rotation: EtfRotationConfig = EtfRotationConfig()
     factor_pipeline: FactorPipelineConfig = FactorPipelineConfig()
+    distill: DistillConfig = DistillConfig()
     portfolio: PortfolioConfig = PortfolioConfig()
 
 
 settings = Settings()
+
+
+def load_toml_config(toml_path: str | Path | None = None) -> dict:
+    """Load layered TOML config (P2-22).
+
+    Returns a flat dict with the TOML contents. If the file is missing
+    or the stdlib ``tomllib`` / backport ``tomli`` are unavailable, returns {}.
+    """
+    if toml_path is None:
+        toml_path = PROJECT_ROOT / "config" / "base.toml"
+    else:
+        toml_path = Path(toml_path)
+
+    if not toml_path.exists():
+        return {}
+
+    try:
+        import tomllib  # Python 3.11+
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ModuleNotFoundError:
+            return {}
+
+    with open(toml_path, "rb") as f:
+        return tomllib.load(f)
 
 
 def validate_required_keys(*required_configs: tuple[str, str]) -> list[str]:

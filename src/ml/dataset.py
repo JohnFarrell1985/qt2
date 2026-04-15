@@ -1,11 +1,13 @@
 """数据集构建
 
 将因子数据和收益率标签组装为ML训练集。
+
+P2-06 增强: 支持多周期标签 (1/3/5/10/20 日前向收益), 多模型并行训练。
 """
 import numpy as np
 import pandas as pd
 from datetime import date, timedelta
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 
 from sqlalchemy import text
 
@@ -242,3 +244,78 @@ class FactorDataset:
 
         mask = stacked.index.get_level_values("trade_date") <= end_date
         return stacked[mask]
+
+    def build_multi_horizon(
+        self,
+        factor_names: List[str],
+        stock_pool: List[str],
+        start_date: date,
+        end_date: date,
+        horizons: List[int] | None = None,
+    ) -> Tuple[pd.DataFrame, Dict[int, pd.Series]]:
+        """构建多周期标签数据集 (P2-06)
+
+        不同持仓周期对应不同 alpha 模式:
+        - 1d: 日内反转
+        - 3-5d: 短期动量
+        - 10-20d: 中期趋势
+
+        Args:
+            factor_names: 因子名列表
+            stock_pool: 股票代码列表
+            start_date: 起始日期
+            end_date: 结束日期
+            horizons: 标签周期列表, 默认 [1, 3, 5, 10, 20]
+
+        Returns:
+            (X, {horizon: y_series}) 因子矩阵和多周期标签字典
+        """
+        if horizons is None:
+            horizons = [1, 3, 5, 10, 20]
+
+        factor_df = self.factor_mgr.get_factor_values(
+            factor_names, stock_pool, start_date, end_date
+        )
+        if factor_df.empty:
+            logger.warning("因子数据为空")
+            return pd.DataFrame(), {}
+
+        labels: Dict[int, pd.Series] = {}
+        for h in horizons:
+            labels[h] = self._calc_forward_returns(stock_pool, start_date, end_date, h)
+
+        for dt, group in factor_df.groupby(level="trade_date"):
+            idx = group.index
+            codes_in_section = idx.get_level_values("code")
+            industry, mcap = self._load_industry_data(codes_in_section.tolist(), trade_date=dt)
+            factor_df.loc[idx] = preprocess_cross_section(
+                group.droplevel("trade_date"),
+                neutralize_industry=True,
+                industry_series=industry,
+                market_cap_series=mcap,
+            ).values
+
+        all_indices = factor_df.index
+        for h in horizons:
+            all_indices = all_indices.intersection(labels[h].index)
+
+        if len(all_indices) == 0:
+            logger.warning("因子与收益率无交集")
+            return pd.DataFrame(), {}
+
+        X = factor_df.loc[all_indices].fillna(0)
+        y_dict = {h: labels[h].loc[all_indices] for h in horizons}
+
+        valid = pd.concat(y_dict.values(), axis=1).notna().all(axis=1)
+        X = X[valid]
+        y_dict = {h: y[valid] for h, y in y_dict.items()}
+
+        self.X = X
+        self.y = y_dict.get(horizons[0])
+        self.dates = X.index.get_level_values("trade_date") if "trade_date" in X.index.names else None
+
+        logger.info(
+            "多周期数据集: %d 样本, %d 因子, 周期=%s",
+            X.shape[0], X.shape[1], horizons,
+        )
+        return X, y_dict
