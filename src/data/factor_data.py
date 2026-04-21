@@ -91,11 +91,14 @@ class FactorDataManager:
                 for f in factors:
                     stmt = insert(FactorMeta).values(
                         factor_name=f["name"],
+                        version=1,
                         category=category,
                         description=f["desc"],
                         data_source="qmt",
                         qmt_field=f.get("qmt_field", ""),
-                    ).on_conflict_do_nothing(index_elements=["factor_name"])
+                    ).on_conflict_do_nothing(
+                        constraint="uq_factor_name_version",
+                    )
                     session.execute(stmt)
                     count += 1
         logger.info(f"已初始化 {count} 个因子元信息")

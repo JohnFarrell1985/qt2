@@ -64,9 +64,10 @@ def get_session(readonly: bool = False) -> Generator[Session, None, None]:
     session = factory()
     try:
         yield session
-        if readonly or not session.dirty and not session.new and not session.deleted:
+        if readonly:
             session.rollback()
         else:
+            # Core-only ``session.execute()`` 不会标记 ``session.dirty``; 仍须 commit。
             session.commit()
     except Exception:
         session.rollback()
