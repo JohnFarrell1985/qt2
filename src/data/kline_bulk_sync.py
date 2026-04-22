@@ -2,7 +2,7 @@
 
 多数据源自动降级:
   1. 东方财富 (curl_cffi + Chrome指纹 + UA轮换 + 令牌桶限流)
-  2. 腾讯财经 (requests 直连, OHLCV)
+  2. 腾讯财经 (requests 直连; 单次约 500 根 K 线, 已内部分页拉满区间)
 
 用法:
     uv run python -m src.data.kline_bulk_sync stock   --days-back 365
@@ -82,8 +82,13 @@ def _em_index_secid(code: str) -> str:
     return f"0.{code}" if code.startswith("399") else f"1.{code}"
 
 
-def _em_fetch_kline(secid: str, start_date: str, end_date: str) -> list[list[str]]:
-    """东方财富 K线 API, 返回原始行 [date, open, close, high, low, vol, amount, amp, pct, chg, turnover]."""
+def _em_fetch_kline(
+    secid: str, start_date: str, end_date: str, *, quick_fail: bool = False,
+) -> list[list[str]]:
+    """东方财富 K线 API, 返回原始行 [date, open, close, high, low, vol, amount, amp, pct, chg, turnover].
+
+    ``quick_fail=True`` 时不在 ``SmartHttpClient`` 上多次重试, 供多源级联尽快换路。
+    """
     limiter = _get_em_limiter()
     limiter.acquire()
     client = _get_em_client()
@@ -92,7 +97,7 @@ def _em_fetch_kline(secid: str, start_date: str, end_date: str) -> list[list[str
         "beg": start_date, "end": end_date,
         "fields1": _EM_FIELDS1, "fields2": _EM_FIELDS2,
     }
-    resp = client.get(_EM_KLINE_URL, params=params)
+    resp = client.get(_EM_KLINE_URL, params=params, skip_retry=quick_fail)
     body: dict = resp.json()
     if body.get("rc") not in (0, None):
         return []
@@ -110,12 +115,26 @@ _qq_limiter = None
 
 
 def _get_qq_session():
-    """requests Session with no proxy."""
+    """腾讯 K 线 requests Session.
+
+    - 若 ``DATACOLLECT_PROXY_URL`` 非空: 只走该 HTTP(S) 代理
+    - 否则 ``trust_env=True`` 以便使用系统/环境变量中的代理 (公司网常见)
+    """
     global _qq_session
     if _qq_session is None:
         import requests
+
+        from src.common.config import settings
+
         _qq_session = requests.Session()
-        _qq_session.trust_env = False
+        proxy = (getattr(settings.datacollect, "proxy_url", None) or "").strip()
+        if proxy:
+            _qq_session.trust_env = False
+            _qq_session.proxies = {"http": proxy, "https": proxy}
+        else:
+            _qq_session.proxies = {}
+            # 与 curl_cffi 手填代理区分: 无显式配置时允许 HTTP(S)_PROXY
+            _qq_session.trust_env = True
         _qq_session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://stockapp.finance.qq.com/",
@@ -144,8 +163,8 @@ def _qq_symbol(code: str, asset_type: str = "stock") -> str:
     return f"sz{pure}"
 
 
-def _qq_fetch_kline(symbol: str, start_date: str, end_date: str) -> list[list[str]]:
-    """腾讯财经 K线 API, 返回 [date, open, close, high, low, volume]."""
+def _qq_fetch_kline_once(symbol: str, start_date: str, end_date: str) -> list[list[str]]:
+    """单请求腾讯 K 线, 单次 **最多约 500 根**, 与参数里 500 一致。"""
     _get_qq_limiter().acquire()
     s_fmt = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
     e_fmt = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
@@ -160,8 +179,34 @@ def _qq_fetch_kline(symbol: str, start_date: str, end_date: str) -> list[list[st
     if not data:
         return []
     sym_data = data.get(symbol, {})
-    rows = sym_data.get("day") or sym_data.get("qfqday") or []
-    return rows
+    return sym_data.get("day") or sym_data.get("qfqday") or []
+
+
+def _qq_fetch_kline(symbol: str, start_date: str, end_date: str) -> list[list[str]]:
+    """腾讯 K 线: **分页拼接** 直到覆盖 [start_date,end_date], 解决单次 500 根截断导致只约 2 年数据."""
+    d_end = datetime.strptime(end_date, "%Y%m%d")
+    all_rows: list[list[str]] = []
+    by_date: dict[str, list[str]] = {}
+    cur_s = start_date
+    for _ in range(200):
+        part = _qq_fetch_kline_once(symbol, cur_s, end_date)
+        if not part:
+            break
+        for row in part:
+            if not row or len(row) < 1:
+                continue
+            by_date[row[0]] = row
+        last_d = _safe_date(part[-1][0])
+        if not last_d:
+            break
+        if last_d >= d_end.date():
+            break
+        if len(part) < 500:
+            break
+        nxt = last_d + timedelta(days=1)
+        cur_s = nxt.strftime("%Y%m%d")
+    all_rows = [by_date[k] for k in sorted(by_date.keys())]
+    return all_rows
 
 
 # ==================================================================
@@ -193,6 +238,25 @@ def _safe_date(v: str) -> date | None:
 # 健康探测: 检测 eastmoney 是否可达
 # ==================================================================
 _em_healthy: bool | None = None
+# 级联里东财曾连接失败时本进程内不再打 push2his (避免每段都 tenacity 重试)
+_em_push2his_circuit_open: bool = False
+
+
+def reset_em_cache() -> None:
+    """清东财探测缓存与 ``fetch_etf_daily_cascade`` 用的 push2his 熔断.
+
+    首次探测若因网络/代理失败, 会整段退回腾讯; ``sync_etf_daily`` 等入口
+    每任务开始调用, 避免「一次失败, 全程只爬腾讯」; 同次重置熔断以便新任务可再试东财。
+    """
+    global _em_healthy, _em_push2his_circuit_open
+    _em_healthy = None
+    _em_push2his_circuit_open = False
+
+
+def reset_qq_session() -> None:
+    """下次腾讯 K 线请求重建 ``requests.Session`` (改 ``DATACOLLECT_PROXY_URL`` 后需新进程或调此)."""
+    global _qq_session
+    _qq_session = None
 
 
 def _probe_em() -> bool:
@@ -244,6 +308,64 @@ def _fetch_etf_daily(code: str, start_date: str, end_date: str) -> list[dict]:
     return _qq_fetch_etf(code, start_date, end_date)
 
 
+def fetch_etf_daily_cascade(
+    code: str,
+    start_date: str,
+    end_date: str,
+    *,
+    kline_prefer: str = "auto",
+) -> tuple[list[dict], str | None]:
+    """东财 / 腾讯 K 线: 先按 ``kline_prefer`` 排序, 空或异常则换另一路再试.
+
+    东财在级联中 **单次请求、不重试**; 任一段连接失败会熔断 push2his, 本进程内后续段
+    不再打东财 K 线 URL, 直接试腾讯, 避免每段在 tenacity 上耗数秒才换源。
+
+    返回 ``(rows, tag)`` — tag 为 ``kline_eastmoney`` / ``kline_tencent``; 全失败 ``[]``, ``None``。
+    """
+    if kline_prefer not in ("eastmoney", "tencent", "auto"):
+        raise ValueError("kline_prefer 须为 eastmoney / tencent / auto")
+
+    def _em() -> list[dict]:
+        global _em_push2his_circuit_open
+        if _em_push2his_circuit_open:
+            return []
+        try:
+            return _em_fetch_etf(
+                code, start_date, end_date, quick_fail=True,
+            )
+        except Exception as e:  # noqa: BLE001
+            _em_push2his_circuit_open = True
+            logger.info(
+                "东财 push2his 本任务内不再请求(连接失败), 已熔断; 同段改试腾讯/新浪等: %s", e,
+            )
+            return []
+
+    def _qq() -> list[dict]:
+        return _qq_fetch_etf(code, start_date, end_date)
+
+    if kline_prefer == "eastmoney":
+        order: tuple[tuple[str, Any], ...] = (("kline_eastmoney", _em), ("kline_tencent", _qq))
+    elif kline_prefer == "tencent":
+        order = (("kline_tencent", _qq), ("kline_eastmoney", _em))
+    else:
+        if _probe_em():
+            order = (("kline_eastmoney", _em), ("kline_tencent", _qq))
+        else:
+            order = (("kline_tencent", _qq), ("kline_eastmoney", _em))
+
+    for name, fn in order:
+        try:
+            rows = fn()
+        except Exception as e:  # noqa: BLE001
+            logger.debug(
+                "ETF K线 %s %s 段 %s~%s: %s", name, code, start_date, end_date, e,
+            )
+            continue
+        if rows:
+            return rows, name
+    return [], None
+
+
 def _fetch_index_daily(code: str, start_date: str, end_date: str) -> list[dict]:
     source = _active_source
     if source == "auto":
@@ -277,8 +399,12 @@ def _em_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
     return records
 
 
-def _em_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
-    rows = _em_fetch_kline(_em_etf_secid(code), start_date, end_date)
+def _em_fetch_etf(
+    code: str, start_date: str, end_date: str, *, quick_fail: bool = False,
+) -> list[dict]:
+    rows = _em_fetch_kline(
+        _em_etf_secid(code), start_date, end_date, quick_fail=quick_fail,
+    )
     records: list[dict] = []
     for p in rows:
         td = _safe_date(p[0])

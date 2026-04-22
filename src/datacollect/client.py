@@ -143,12 +143,14 @@ class SmartHttpClient:
 
     def get(
         self, url: str, *, headers: dict[str, str] | None = None,
-        params: dict[str, Any] | None = None, **kwargs,
+        params: dict[str, Any] | None = None, skip_retry: bool = False, **kwargs,
     ) -> Any:
-        """发送 GET 请求, 带重试、UA 轮换和反爬检测。"""
+        """发送 GET 请求, 带重试、UA 轮换和反爬检测。
+
+        ``skip_retry=True`` 时单次请求 (用于 K 线多源级联: 失败则换源, 不在此源上耗 tenacity)。
+        """
         headers = self._rotate_ua(headers)
 
-        @self._retry
         def _do():
             session = self._get_session()
             t0 = time.monotonic()
@@ -160,7 +162,9 @@ class SmartHttpClient:
             resp.raise_for_status()
             return resp
 
-        return _do()
+        if skip_retry:
+            return _do()
+        return self._retry(_do)()
 
     def post(
         self, url: str, *, headers: dict[str, str] | None = None,

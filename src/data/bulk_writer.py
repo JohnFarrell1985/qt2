@@ -94,7 +94,7 @@ class BulkWriter:
         "trade_order", "trade_position", "trade_daily_report",
         "data_sync_log", "strategy", "instrument_pool",
         "strategy_allocation", "macro_state_log", "sector_data",
-        "stock_download_progress", "stock_realtime",
+        "stock_download_progress", "etf_download_progress", "stock_realtime",
         "watchlist_stock", "watchlist_intel", "global_market_snapshot",
         "sentiment_daily", "sentiment_ingest_log",
         "collect_log", "collect_dead_letter",

@@ -623,6 +623,35 @@ class StockDownloadProgress(Base):
     )
 
 
+class EtfDownloadProgress(Base):
+    """ETF 数据下载进度表 (与 ``stock_download_progress`` 字段对齐, 供 ``etf_daily`` 断点续下)."""
+
+    __tablename__ = "etf_download_progress"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(20), nullable=False, comment="ETF 代码 如 510300.SH")
+    sync_type = Column(String(20), nullable=False, comment="同步类型, 现用 etf_daily")
+    status = Column(String(20), comment="状态: pending/running/success/failed")
+    start_date = Column(Date, comment="计划开始日期(全局地板/本轮)")
+    end_date = Column(Date, comment="计划结束日期(本轮截止)")
+    actual_start_date = Column(Date, comment="当前/最近段实际起始")
+    actual_end_date = Column(Date, comment="当前/最近段实际结束")
+    records_count = Column(Integer, comment="本标的已落入 etf_daily 的累计行数(本轮各段合计)")
+    expected_count = Column(Integer, comment="预期记录数(保留)")
+    retry_count = Column(Integer, comment="重试次数")
+    max_retries = Column(Integer, comment="最大重试次数")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    completed_at = Column(DateTime, comment="完成时间")
+    error_message = Column(String(500), comment="错误信息")
+
+    __table_args__ = (
+        UniqueConstraint("code", "sync_type", name="uq_edp_code_sync_type"),
+        Index("idx_edp_code_type", "code", "sync_type"),
+        Index("idx_edp_status", "status"),
+    )
+
+
 class StockRealtime(Base):
     """股票实时行情快照表"""
     __tablename__ = "stock_realtime"

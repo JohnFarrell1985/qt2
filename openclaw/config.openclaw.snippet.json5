@@ -1,0 +1,20 @@
+// 将以下片段合并到 ~/.openclaw/openclaw.json5（或 Gateway 配置）中。
+//
+// 方式 A — 不配置 extraDirs: 在 OpenClaw 里把 **workspace 根** 设为本机路径:
+//   C:/Users/YOU/git/qt/openclaw/workspace
+// 这样会自动加载该目录下的 skills/ 与 .agents/skills/（与官方行为一致）。
+//
+// 方式 B — 只追加技能目录: 将 extraDirs 改为你本机 **workspace/skills** 的绝对路径:
+//   Windows 示例: "C:/Users/YOU/git/qt/openclaw/workspace/skills"
+// 注意: extraDirs 下应直接为各技能子目录（每目录内有 SKILL.md）。
+
+{
+  skills: {
+    load: {
+      extraDirs: [
+        "C:/Users/YOU/git/qt/openclaw/workspace/skills",
+      ],
+      watch: true,
+    },
+  },
+}
