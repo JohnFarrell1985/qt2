@@ -60,6 +60,10 @@ class FactorPool:
                 "category": r.category,
                 "description": r.description,
                 "data_source": r.data_source,
+                "qmt_field": r.qmt_field,
+                "factor_kind": r.factor_kind,
+                "update_freq": r.update_freq,
+                "storage_hint": r.storage_hint,
             }
             for r in all_rows
         ]
@@ -110,6 +114,9 @@ class FactorPool:
         category: str = "",
         description: str = "",
         data_source: str = "calculated",
+        factor_kind: Optional[str] = "calculated",
+        update_freq: Optional[str] = "daily",
+        storage_hint: Optional[str] = "factor_values",
     ) -> int:
         """注册因子新版本, 自动递增 version (P2-36)
 
@@ -129,6 +136,9 @@ class FactorPool:
                 category=category,
                 description=description,
                 data_source=data_source,
+                factor_kind=factor_kind,
+                update_freq=update_freq,
+                storage_hint=storage_hint,
             )
             session.add(meta)
             session.flush()

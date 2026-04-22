@@ -29,9 +29,13 @@ def create_factor_meta(session) -> List[FactorMeta]:
     for name, cat, desc in FACTOR_DEFS:
         fm = FactorMeta(
             factor_name=name,
+            version=1,
             category=cat,
             description=desc,
             data_source="calculated",
+            factor_kind="price_volume",
+            update_freq="daily",
+            storage_hint="factor_values",
         )
         metas.append(fm)
     session.add_all(metas)

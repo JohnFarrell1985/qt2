@@ -23,6 +23,12 @@ logger = get_logger(__name__)
 _UPGRADE_SQL = """
 ALTER TABLE public.factor_meta
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE public.factor_meta
+    ADD COLUMN IF NOT EXISTS factor_kind VARCHAR(40);
+ALTER TABLE public.factor_meta
+    ADD COLUMN IF NOT EXISTS update_freq VARCHAR(32);
+ALTER TABLE public.factor_meta
+    ADD COLUMN IF NOT EXISTS storage_hint VARCHAR(32);
 
 DO $$
 DECLARE

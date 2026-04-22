@@ -8,7 +8,7 @@
 - 技术/动量/情绪因子: 通过 K 线数据自行计算 (后续扩展)
 """
 from datetime import date
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 import pandas as pd
 from sqlalchemy import text
@@ -19,10 +19,12 @@ from src.common.logger import get_logger
 from src.data.models import FactorMeta, FactorValue
 from src.data.qmt_client import QMTClient
 from src.data.download_engine import DownloadEngine
+from src.data.qmt_factor_registry import merge_with_legacy
 
 logger = get_logger(__name__)
 
-FACTOR_CATALOG: Dict[str, List[Dict[str, str]]] = {
+# 手填 35 项 + 迅投 get_financial_data 全表列 + Qlib Alpha158 名 (价量) 去重合并
+_FACTOR_CATALOG_LEGACY: Dict[str, List[Dict[str, str]]] = {
     "fundamental": [
         {"name": "total_assets", "qmt_field": "Balance.tot_assets", "desc": "总资产"},
         {"name": "total_liabilities", "qmt_field": "Balance.tot_liab", "desc": "总负债"},
@@ -75,6 +77,8 @@ FACTOR_CATALOG: Dict[str, List[Dict[str, str]]] = {
     "momentum": [],
 }
 
+FACTOR_CATALOG: Dict[str, List[Dict[str, Any]]] = merge_with_legacy(_FACTOR_CATALOG_LEGACY)
+
 
 class FactorDataManager:
     """因子数据管理器"""
@@ -84,20 +88,34 @@ class FactorDataManager:
         self.engine = DownloadEngine(self.client)
 
     def init_factor_meta(self) -> int:
-        """初始化因子元信息表"""
+        """初始化因子元信息表: 新行插入, 按 (factor_name, version) 冲突则更新元数据/中文说明."""
         count = 0
         with get_session() as session:
             for category, factors in FACTOR_CATALOG.items():
                 for f in factors:
-                    stmt = insert(FactorMeta).values(
-                        factor_name=f["name"],
-                        version=1,
-                        category=category,
-                        description=f["desc"],
-                        data_source="qmt",
-                        qmt_field=f.get("qmt_field", ""),
-                    ).on_conflict_do_nothing(
+                    row = {
+                        "factor_name": f["name"],
+                        "version": 1,
+                        "category": category,
+                        "description": f.get("desc", ""),
+                        "data_source": f.get("data_source") or "qmt",
+                        "qmt_field": f.get("qmt_field", ""),
+                        "factor_kind": f.get("factor_kind"),
+                        "update_freq": f.get("update_freq"),
+                        "storage_hint": f.get("storage_hint"),
+                    }
+                    stmt = insert(FactorMeta).values(**row)
+                    stmt = stmt.on_conflict_do_update(
                         constraint="uq_factor_name_version",
+                        set_={
+                            "category": row["category"],
+                            "description": row["description"],
+                            "data_source": row["data_source"],
+                            "qmt_field": row["qmt_field"],
+                            "factor_kind": row["factor_kind"],
+                            "update_freq": row["update_freq"],
+                            "storage_hint": row["storage_hint"],
+                        },
                     )
                     session.execute(stmt)
                     count += 1

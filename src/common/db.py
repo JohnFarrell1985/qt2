@@ -18,6 +18,18 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 
+def _ensure_factor_meta_columns(conn) -> None:
+    """ORM 新增列时 ``create_all`` 不会 ALTER 旧库, 此处补列 (幂等)."""
+    conn.execute(text("""
+        ALTER TABLE public.factor_meta
+            ADD COLUMN IF NOT EXISTS factor_kind VARCHAR(40);
+        ALTER TABLE public.factor_meta
+            ADD COLUMN IF NOT EXISTS update_freq VARCHAR(32);
+        ALTER TABLE public.factor_meta
+            ADD COLUMN IF NOT EXISTS storage_hint VARCHAR(32);
+    """))
+
+
 class Base(DeclarativeBase):
     """ORM 模型基类 — SQLAlchemy 2.x DeclarativeBase"""
     pass
@@ -106,9 +118,10 @@ def init_database():
     for attempt in range(1, max_retries + 1):
         try:
             engine = get_engine()
-            with engine.connect() as conn:
+            with engine.begin() as conn:
                 conn.execute(text("SELECT 1"))
-            Base.metadata.create_all(bind=engine)
+                Base.metadata.create_all(bind=conn)
+                _ensure_factor_meta_columns(conn)
             logger.info("数据库初始化完成")
             return
         except Exception as e:

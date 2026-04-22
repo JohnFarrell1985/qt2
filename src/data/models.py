@@ -250,16 +250,33 @@ class ETFDaily(Base):
 # ============ 因子数据 ============
 
 class FactorMeta(Base):
-    """因子元信息表 (P2-36: 支持版本追溯)"""
+    """因子元信息表 (P2-36: 支持版本追溯)
+
+    维度说明 (常见特征库/量化平台惯例):
+    - factor_kind: 语义域 — fundamental 财报科目 / per_share 每股与主要指标 / price_volume 价量
+      / capital 股本 / shareholder 股东户 / top10 十大股东 / unknown
+    - update_freq: 更新节奏 — daily 日频 / quarterly 财报季 / per_report 按报告披露
+    - storage_hint: 是否默认写入 ``factor_values`` 长表 — factor_values / not_stored (价量仅元数据)
+    """
+
     __tablename__ = "factor_meta"
 
     factor_id = Column(Integer, primary_key=True, autoincrement=True)
     factor_name = Column(String(100), nullable=False)
     version = Column(Integer, nullable=False, default=1, comment="因子版本号")
-    category = Column(String(50), comment="因子分类")
-    description = Column(Text)
-    data_source = Column(String(50), comment="qmt/calculated")
-    qmt_field = Column(String(200), comment="QMT字段映射")
+    category = Column(String(50), comment="因子分类(含 qmt_* / qlib_alpha158 等业务分桶)")
+    description = Column(Text, comment="中文说明(主展示)")
+    data_source = Column(String(50), comment="qmt / calculated / joinquant / …")
+    qmt_field = Column(String(200), comment="QMT 表.列, 价量类可为空")
+    factor_kind = Column(
+        String(40), comment="fundamental|per_share|price_volume|capital|shareholder|top10|unknown",
+    )
+    update_freq = Column(
+        String(32), comment="daily|quarterly|per_report|unknown",
+    )
+    storage_hint = Column(
+        String(32), comment="factor_values|not_stored",
+    )
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (
@@ -741,4 +758,106 @@ class GlobalMarketSnapshot(Base):
     __table_args__ = (
         Index("idx_gms_date_symbol", "trade_date", "symbol"),
         UniqueConstraint("trade_date", "symbol", "source", name="uq_gms_date_symbol_source"),
+    )
+
+
+# ============ 资金 / 事件 / 调研 (Tushare / AkShare 多源) ============
+# 与 ETF/股票日线下载同思路: 限流、按日/区间批拉、on_conflict 落库
+
+
+class HsgtMarketDaily(Base):
+    """沪深港通北向(及分项)日度资金 — 市场级, 无个股"""
+
+    __tablename__ = "hsgt_market_daily"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trade_date = Column(Date, nullable=False, comment="交易日期")
+    hgt = Column(Float, comment="沪股通(或沪)(万元/亿, 见 source 口径说明)")
+    sgt = Column(Float, comment="深股通(或深)")
+    north_net = Column(Float, comment="北向净买入合计(同口径下)")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict, comment="原始行 JSON")
+    source = Column(String(20), nullable=False, default="tushare", comment="tushare/akshare")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("trade_date", "source", name="uq_hsgt_date_source"),
+        Index("idx_hsgt_trade_date", "trade_date"),
+    )
+
+
+class StockMoneyflowDaily(Base):
+    """个股日度资金流向 — 东财/ Tushare moneyflow 口径"""
+
+    __tablename__ = "stock_moneyflow_daily"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="6 位股票代码")
+    trade_date = Column(Date, nullable=False, comment="交易日期")
+    buy_sm = Column(Float, comment="小单买")
+    buy_md = Column(Float, comment="中单买")
+    buy_lg = Column(Float, comment="大单买")
+    buy_elg = Column(Float, comment="超大单买")
+    sell_sm = Column(Float, comment="小单卖")
+    sell_md = Column(Float, comment="中单卖")
+    sell_lg = Column(Float, comment="大单卖")
+    sell_elg = Column(Float, comment="超大单卖")
+    net_mf = Column(Float, comment="主力净额(若接口提供)")
+    net_mf_rate = Column(Float, comment="主力净占比%")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict)
+    source = Column(String(20), nullable=False, default="tushare")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("code", "trade_date", name="uq_smd_code_date"),
+        Index("idx_smd_code_date", "code", "trade_date"),
+        Index("idx_smd_date", "trade_date"),
+    )
+
+
+class StockLhbDaily(Base):
+    """龙虎榜日明细 (可按同一日多行: 买卖方向/原因不同)"""
+
+    __tablename__ = "stock_lhb_daily"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="6 位股票代码")
+    name = Column(String(50), default="", comment="股票名称")
+    trade_date = Column(Date, nullable=False, comment="交易日期")
+    reason = Column(String(200), default="", comment="上榜原因/解读")
+    side = Column(String(10), default="", comment="买/卖/等")
+    buy = Column(Float, comment="买额(万)")
+    sell = Column(Float, comment="卖额(万)")
+    net = Column(Float, comment="净额(万)")
+    amount_rate = Column(Float, comment="成交额占市场% 等(若有)")
+    turnover = Column(Float, comment="市场总成交(万) 等(若有)")
+    float_ratio = Column(Float, comment="流通市值比% 等(若有)")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict)
+    source = Column(String(20), nullable=False, default="tushare")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_slb_code_date", "code", "trade_date"),
+        UniqueConstraint("code", "trade_date", "reason", "side", name="uq_lhb_code_date_reason_side"),
+    )
+
+
+class InstitutionSurvey(Base):
+    """机构调研 (上市公司接待调研活动)"""
+
+    __tablename__ = "institution_survey"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="6 位股票代码")
+    name = Column(String(100), default="", comment="公司简称")
+    survey_date = Column(Date, nullable=False, comment="公告/调研活动日期(通常取公告日)")
+    org_name = Column(String(200), default="", comment="机构名称")
+    org_type = Column(String(100), default="", comment="机构类型/接待对象类型")
+    content = Column(Text, comment="调研内容摘要(若有)")
+    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict)
+    source = Column(String(20), nullable=False, default="tushare")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_isvy_code_date", "code", "survey_date"),
+        UniqueConstraint("code", "survey_date", "org_name", name="uq_isvy_code_date_org"),
     )
