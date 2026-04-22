@@ -10,8 +10,13 @@
 
 ETF 日线与东财 F10 页面优先走 ``src.datacollect.client.SmartHttpClient`` 与
 ``kline_bulk_sync``(东财/腾讯); 单请求腾讯约 500 根, ``kline_bulk_sync`` 已分页。
-其后 (任一有数据即停): 新浪、AkShare 东财页 ``fund_etf_hist_em``、Tushare(需 token)、
-**baostock**、yfinance. K 线主路在 ``kline_bulk_sync.fetch_etf_daily_cascade`` 内东财+腾讯两路都试.
+其后 (任一有数据即停): 新浪、**Tushare** ``fund_daily``(场内基金/ETF; 需 ``TUSHARE_TOKEN`` 与接口权限,
+无数据时再回退股票 ``daily``)、AkShare 东财页 ``fund_etf_hist_em``、**baostock**、yfinance。
+K 线主路在 ``kline_bulk_sync.fetch_etf_daily_cascade`` 内东财+腾讯两路都试.
+
+其他可整合但**未接代码**的商用/独立源 (需自行申请 Key, 防爬与东财/新浪不同):
+智兔数服、黑狼数据、聚合数据等 ETF 日 K; 接入方式与 ``TushareCollector.query`` 类似, 可增独立 fetch 与 env 开关。
+
 OKX/CCXT 为加密货币, 不接入 A 股 ETF.
 """
 from __future__ import annotations
@@ -543,31 +548,47 @@ class AkshareFinancialSync:
     def _etf_daily_records_from_tushare(
         self, full_code: str, start_date: str, end_date: str, ts: Any,
     ) -> list[dict]:
+        """Tushare: 优先 ``fund_daily``(场内基金/ETF 专用); 无数据时回退股票 ``daily``。"""
         if not ts or not getattr(ts, "available", True):
             return []
+        code = self._tushare_ts_code(full_code)
+
+        def _from_df(df: Any) -> list[dict]:
+            if df is None or df.empty:
+                return []
+            out = pd.DataFrame(
+                {
+                    "日期": pd.to_datetime(
+                        df["trade_date"].astype(str), format="%Y%m%d", errors="coerce",
+                    ),
+                    "开盘": pd.to_numeric(df["open"], errors="coerce"),
+                    "收盘": pd.to_numeric(df["close"], errors="coerce"),
+                    "最高": pd.to_numeric(df["high"], errors="coerce"),
+                    "最低": pd.to_numeric(df["low"], errors="coerce"),
+                    "成交量": pd.to_numeric(df.get("vol"), errors="coerce"),
+                    "成交额": pd.to_numeric(df.get("amount"), errors="coerce"),
+                },
+            )
+            return self._map_etf_daily(out, full_code)
+
         try:
-            df = ts.query_daily(
-                ts_code=self._tushare_ts_code(full_code),
-                start_date=start_date,
-                end_date=end_date,
+            df = ts.query_fund_daily(
+                ts_code=code, start_date=start_date, end_date=end_date,
             )
         except Exception as ex:  # noqa: BLE001
-            logger.debug("ETF %s tushare: %s", full_code, ex)
+            logger.debug("ETF %s tushare fund_daily: %s", full_code, ex)
+            df = None
+        rec = _from_df(df)
+        if rec:
+            return rec
+        try:
+            df2 = ts.query_daily(
+                ts_code=code, start_date=start_date, end_date=end_date,
+            )
+        except Exception as ex:  # noqa: BLE001
+            logger.debug("ETF %s tushare daily(回退): %s", full_code, ex)
             return []
-        if df is None or df.empty:
-            return []
-        out = pd.DataFrame(
-            {
-                "日期": pd.to_datetime(df["trade_date"].astype(str), format="%Y%m%d", errors="coerce"),
-                "开盘": pd.to_numeric(df["open"], errors="coerce"),
-                "收盘": pd.to_numeric(df["close"], errors="coerce"),
-                "最高": pd.to_numeric(df["high"], errors="coerce"),
-                "最低": pd.to_numeric(df["low"], errors="coerce"),
-                "成交量": pd.to_numeric(df.get("vol"), errors="coerce"),
-                "成交额": pd.to_numeric(df.get("amount"), errors="coerce"),
-            },
-        )
-        return self._map_etf_daily(out, full_code)
+        return _from_df(df2)
 
     def _etf_daily_records_from_akshare_em(
         self, full_code: str, start_date: str, end_date: str,
@@ -755,7 +776,7 @@ class AkshareFinancialSync:
         resume: bool = True,
         kline_source: str = "eastmoney",
         sina_only: bool = False,
-        stall_no_rows_sec: float = 120.0,
+        stall_no_rows_sec: float = 60.0,
         use_download_progress: bool = True,
     ) -> int:
         """为 ``etf_info`` 中的每只 ETF 采集日线, 新行 INSERT 到 ``etf_daily`` (主键已存在则跳过, 不覆盖, 段级 commit).
@@ -974,16 +995,11 @@ class AkshareFinancialSync:
             )
             if r:
                 return r, src
+            # 无东财/腾讯 K 后: 新浪 → Tushare(fund_daily 场内基金专用) → 东财 page 直拉 → …
             fb: list[tuple[str, Any]] = [
                 (
                     "sina",
                     lambda: self._etf_daily_records_from_sina(
-                        full_code, seg_s, seg_e,
-                    ),
-                ),
-                (
-                    "akshare_fund_etf_hist_em",
-                    lambda: self._etf_daily_records_from_akshare_em(
                         full_code, seg_s, seg_e,
                     ),
                 ),
@@ -995,6 +1011,14 @@ class AkshareFinancialSync:
                         full_code, seg_s, seg_e, ts_col,
                     ),
                 ))
+            fb.append(
+                (
+                    "akshare_fund_etf_hist_em",
+                    lambda: self._etf_daily_records_from_akshare_em(
+                        full_code, seg_s, seg_e,
+                    ),
+                ),
+            )
 
             def _bs1() -> list[dict]:
                 bc2 = _ensure_baostock()
@@ -1694,36 +1718,36 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--start-date",
-        default="20160101",
-        help="ETF 日线起始日期 (默认约 10 年: 20160101); 续传时仅作新标的地板 / 向下补历史",
+        default=None,
+        help="ETF 日线起始日期; 未指定时使用 env DATACOLLECT_ETF_DAILY_START_DATE (续传时作地板等)",
     )
     parser.add_argument(
         "--no-resume",
         action="store_true",
-        help="ETF 日线不从库中 MAX(trade_date) 续传, 对全部标的自 --start-date 重拉",
+        help="ETF 日线不从库中 MAX(trade_date) 续传 (覆盖 env DATACOLLECT_ETF_DAILY_RESUME)",
     )
     parser.add_argument(
         "--kline-source",
         choices=["eastmoney", "tencent", "auto"],
-        default="auto",
-        help="ETF 日K: eastmoney=东财(lmt=0 整段, 长历史优先, 配代理); "
-        "tencent=已分页非单段500; auto=每轮重探东财, 失败再用腾讯",
+        default=None,
+        help="未指定则 env DATACOLLECT_ETF_DAILY_KLINE_SOURCE: "
+        "eastmoney|tencent|auto",
     )
     parser.add_argument(
         "--sina-only-etf",
         action="store_true",
-        help="ETF 日线仅用新浪 (东财/腾讯均不顺时最后一档)",
+        help="与 env DATACOLLECT_ETF_DAILY_SINA_ONLY 或关系: 任一为真则仅新浪日K",
     )
     parser.add_argument(
         "--stall-sec",
         type=float,
-        default=120.0,
-        help="仍有待拉 ETF 时, 若连续 N 秒无新 K 线落库则退出码 2 以便换源; 0=关闭",
+        default=None,
+        help="无新K线停顿秒数; 未指定则 env DATACOLLECT_ETF_DAILY_STALL_SEC; 0=关闭",
     )
     parser.add_argument(
         "--no-etf-progress",
         action="store_true",
-        help="不写入 etf_download_progress, 不强制按段 commit (调试用)",
+        help="不写入 etf_download_progress (覆盖 env DATACOLLECT_ETF_DAILY_USE_PROGRESS)",
     )
     parser.add_argument("--start-year", default="2023", help="财务指标起始年份")
     parser.add_argument("--codes", nargs="*", help="股票代码列表 (仅 report/indicator)")
@@ -1732,6 +1756,29 @@ if __name__ == "__main__":
         help="报告期列表 (仅 batch, 如 20240331 20240630 20240930 20241231)",
     )
     args = parser.parse_args()
+
+    from src.common.config import settings
+
+    _dc = settings.datacollect
+    _start = (
+        args.start_date
+        if args.start_date is not None
+        else _dc.etf_daily_start_date
+    )
+    _kline = (
+        args.kline_source
+        if args.kline_source is not None
+        else _dc.etf_daily_kline_source
+    )
+    _stall = args.stall_sec if args.stall_sec is not None else _dc.etf_daily_stall_sec
+    _stall = float(_stall or 0.0)
+    _resume = _dc.etf_daily_resume
+    if args.no_resume:
+        _resume = False
+    _sina = bool(_dc.etf_daily_sina_only or args.sina_only_etf)
+    _use_progress = _dc.etf_daily_use_progress
+    if args.no_etf_progress:
+        _use_progress = False
 
     syncer = AkshareFinancialSync()
 
@@ -1742,12 +1789,12 @@ if __name__ == "__main__":
     if args.action in ("etf_daily", "etf_full"):
         try:
             syncer.sync_etf_daily(
-                start_date=args.start_date,
-                resume=not args.no_resume,
-                kline_source=args.kline_source,
-                sina_only=args.sina_only_etf,
-                stall_no_rows_sec=float(args.stall_sec or 0.0),
-                use_download_progress=not args.no_etf_progress,
+                start_date=_start,
+                resume=_resume,
+                kline_source=_kline,
+                sina_only=_sina,
+                stall_no_rows_sec=_stall,
+                use_download_progress=_use_progress,
             )
         except EtfDailyStallError as exc:
             logger.warning("%s", exc)

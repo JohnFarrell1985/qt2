@@ -116,6 +116,25 @@ class TushareCollector(BaseCollector):
             params["end_date"] = end_date
         return self.query("daily", **params)
 
+    def query_fund_daily(
+        self,
+        ts_code: str = "",
+        trade_date: str = "",
+        start_date: str = "",
+        end_date: str = "",
+    ) -> Any:
+        """场内基金 / ETF 日线 (Pro 接口 fund_daily, 与股票 daily 不同, 需对应权限与积分)。"""
+        params: dict[str, str] = {}
+        if ts_code:
+            params["ts_code"] = ts_code
+        if trade_date:
+            params["trade_date"] = trade_date
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        return self.query("fund_daily", **params)
+
     def query_index_daily(
         self,
         ts_code: str = "",

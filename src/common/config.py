@@ -4,6 +4,7 @@
 文件按模块拆分在 env/ 目录下, 便于维护:
   env/.env.db, env/.env.qmt, env/.env.datacollect, env/.env.api,
   env/.env.ml, env/.env.trading, env/.env.strategy, env/.env.webhook
+多文件出现**同键**时, 以 **.env.datacollect 最后加载** 为准 (避免与其它 .env.* 中同步的占位值互相覆盖)。
 
 P2-22: 新增 config/base.toml 分层配置 (非敏感参数)
 """
@@ -16,10 +17,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 _ENV_DIR = PROJECT_ROOT / "env"
-_ENV_FILES: tuple[str, ...] = tuple(
-    str(p) for p in sorted(_ENV_DIR.glob(".env.*"))
-    if p.name != ".env.example"
-)
+_dc_path = _ENV_DIR / ".env.datacollect"
+# 多文件存在同键时, pydantic-settings 中 **后列出的 env 文件优先生效**。
+# 将 .env.datacollect 固定放最后, 避免与其它 .env.* 中同步的 DATACOLLECT_* 重复键时误被覆盖。
+_raw_env = [p for p in sorted(_ENV_DIR.glob(".env.*")) if p.name != ".env.example"]
+if _dc_path in _raw_env:
+    _raw_env = [p for p in _raw_env if p != _dc_path] + [_dc_path]
+_ENV_FILES: tuple[str, ...] = tuple(str(p) for p in _raw_env)
 
 _SHARED_CFG = SettingsConfigDict(
     populate_by_name=True,
@@ -434,6 +438,41 @@ class DatacollectConfig(BaseSettings):
     rsshub_base_url: str = Field(default="https://rsshub.app", alias="DATACOLLECT_RSSHUB_BASE_URL")
     rss_max_entries: int = Field(default=50, alias="DATACOLLECT_RSS_MAX_ENTRIES")
     rss_summary_max_chars: int = Field(default=500, alias="DATACOLLECT_RSS_SUMMARY_MAX_CHARS")
+
+    # akshare_financial_sync: ETF 日线 (etf_daily / etf_full) — CLI 未显式给参数时的默认
+    etf_daily_start_date: str = Field(
+        default="20160101",
+        alias="DATACOLLECT_ETF_DAILY_START_DATE",
+    )
+    etf_daily_stall_sec: float = Field(
+        default=60.0,
+        alias="DATACOLLECT_ETF_DAILY_STALL_SEC",
+    )
+    etf_daily_kline_source: str = Field(
+        default="auto",
+        alias="DATACOLLECT_ETF_DAILY_KLINE_SOURCE",
+    )
+    etf_daily_sina_only: bool = Field(
+        default=False,
+        alias="DATACOLLECT_ETF_DAILY_SINA_ONLY",
+    )
+    etf_daily_resume: bool = Field(
+        default=True,
+        alias="DATACOLLECT_ETF_DAILY_RESUME",
+    )
+    etf_daily_use_progress: bool = Field(
+        default=True,
+        alias="DATACOLLECT_ETF_DAILY_USE_PROGRESS",
+    )
+
+    @field_validator("etf_daily_kline_source", mode="before")
+    @classmethod
+    def _norm_etf_kline_source(cls, v) -> str:
+        s = (v if v is not None else "auto")
+        s = str(s).strip().lower()
+        if s not in ("eastmoney", "tencent", "auto"):
+            raise ValueError("DATACOLLECT_ETF_DAILY_KLINE_SOURCE 须为 eastmoney|tencent|auto")
+        return s
 
 
 # ================================================================
