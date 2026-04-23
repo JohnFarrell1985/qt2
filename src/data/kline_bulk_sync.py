@@ -1,26 +1,42 @@
 """并发批量下载 A股 + ETF + 指数 日K线数据
 
-多数据源自动降级:
+多数据源自动降级 (``--source auto`` 默认):
+  0. **MiniQMT / xtdata** (本地迅投; 需已安装 ``xtquant`` 并启动 MiniQMT 或 QMT 终端)
   1. 东方财富 (curl_cffi + Chrome指纹 + UA轮换 + 令牌桶限流)
   2. 腾讯财经 (requests 直连; 单次约 500 根 K 线, 已内部分页拉满区间)
 
+**续传 (默认)**: 与 ``akshare_financial_sync.sync_etf_daily`` 一致 —— 落库可能只有**中间一段**时,
+会拉 **(MAX+1..今日)** 与 **(地板..MIN-1)**; 且当 ``DATACOLLECT_KLINE_FILL_INTERIOR_GAPS``(默认) 为真时,
+再按 XSHG 历补 **MIN~MAX 内** 缺日(关则与旧版相同、不扫中缝). 全队列在 resume 下按区段 (末, 起) 降序.
+
+**ETF 默认近 10 年**: 仅 ``etf`` 模式且未传 ``--days-back`` 时, 地板为约 **3650 自然日前**
+(可 ``DATACOLLECT_KLINE_ETF_DAYS_BACK``); 股票/指数单模式未指定时仍为 365. ``all`` 未指定时 ETF 用 10 年、股/指用 1 年.
+
 用法:
     uv run python -m src.data.kline_bulk_sync stock   --days-back 365
-    uv run python -m src.data.kline_bulk_sync etf     --days-back 365
+    uv run python -m src.data.kline_bulk_sync etf
     uv run python -m src.data.kline_bulk_sync index   --days-back 365
     uv run python -m src.data.kline_bulk_sync all     --days-back 365 --concurrency 8
     uv run python -m src.data.kline_bulk_sync all     --days-back 365 --source tencent
+    uv run python -m src.data.kline_bulk_sync stock   --no-resume
+    uv run python -m src.data.kline_bulk_sync stock   --source qmt
+    # 配置见 ``QMT_PATH`` (``env/.env.qmt``), 与全项目 QMT 一致
 """
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
+
+import pandas as pd
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
+from src.common.config import settings
 from src.common.db import get_session
 from src.common.logger import get_logger
 from src.data.models import ETFDaily, ETFInfo, MarketIndex, StockDaily, Stock
@@ -88,7 +104,10 @@ def _em_fetch_kline(
     """东方财富 K线 API, 返回原始行 [date, open, close, high, low, vol, amount, amp, pct, chg, turnover].
 
     ``quick_fail=True`` 时不在 ``SmartHttpClient`` 上多次重试, 供多源级联尽快换路。
+    若 ``_probe_em()`` 已判东财不可达, 直接空返回, 避免多线程每段都触发 curl 重试刷屏.
     """
+    if not _probe_em():
+        return []
     limiter = _get_em_limiter()
     limiter.acquire()
     client = _get_em_client()
@@ -240,16 +259,22 @@ def _safe_date(v: str) -> date | None:
 _em_healthy: bool | None = None
 # 级联里东财曾连接失败时本进程内不再打 push2his (避免每段都 tenacity 重试)
 _em_push2his_circuit_open: bool = False
+_qmt_healthy: bool | None = None  # MiniQMT / xtdata 可用性 (与 reset_em_cache 一并重置)
+# 是否已打 ETF 板块只数 vs 阈值的说明日志 (与 reset 一并清, 新任务可再打一次)
+_qmt_etf_diagnostics_logged: bool = False
 
 
 def reset_em_cache() -> None:
-    """清东财探测缓存与 ``fetch_etf_daily_cascade`` 用的 push2his 熔断.
+    """清东财探测缓存、MiniQMT 可达缓存与 ``fetch_etf_daily_cascade`` 用的 push2his 熔断.
 
     首次探测若因网络/代理失败, 会整段退回腾讯; ``sync_etf_daily`` 等入口
-    每任务开始调用, 避免「一次失败, 全程只爬腾讯」; 同次重置熔断以便新任务可再试东财。
+    每任务开始调用, 避免「一次失败, 全程只爬腾讯」; 同次重置熔断以便新任务可再试东财.
+    亦重置 ``_qmt_healthy`` / ETF 板块诊断日志标记, 避免误缓存.
     """
-    global _em_healthy, _em_push2his_circuit_open
+    global _em_healthy, _em_push2his_circuit_open, _qmt_healthy, _qmt_etf_diagnostics_logged
     _em_healthy = None
+    _qmt_healthy = None
+    _qmt_etf_diagnostics_logged = False
     _em_push2his_circuit_open = False
 
 
@@ -285,14 +310,419 @@ def _probe_em() -> bool:
 
 
 # ==================================================================
+# MiniQMT / xtdata (与 QMTClient 相同入口; 与 download_engine 行为一致)
+# ==================================================================
+_kline_qmt_client: Any = None
+_qmt_kline_lock = threading.Lock()
+
+
+def _get_kline_qmt_client() -> Any:
+    global _kline_qmt_client
+    if _kline_qmt_client is None:
+        from src.data.qmt_client import QMTClient
+
+        _kline_qmt_client = QMTClient()
+    return _kline_qmt_client
+
+
+def _probe_qmt() -> bool:
+    """本进程内缓存: 能否加载 xtdata 并连接 (MiniQMT/标准 QMT)。"""
+    global _qmt_healthy
+    if _qmt_healthy is not None:
+        return _qmt_healthy
+    try:
+        c = _get_kline_qmt_client()
+        _ = c.xtdata
+        _qmt_healthy = True
+    except Exception as e:
+        logger.warning("xtdata (MiniQMT) 不可用, 日线将走东财/腾讯: %s", e)
+        _qmt_healthy = False
+    logger.info("xtdata (MiniQMT) 可用: %s", _qmt_healthy)
+    return _qmt_healthy
+
+
+def probe_qmt_etf_sector_size() -> tuple[int, str]:
+    """QMT 中 ETF 板块可列出的合约数 (与本地行情覆盖相关). 失败返回 (0, 原因)。"""
+    try:
+        c = _get_kline_qmt_client()
+        for name in ("沪深ETF", "ETF", "全部ETF"):
+            try:
+                codes = c.get_stock_list_in_sector(name)
+            except Exception:
+                continue
+            n = len(codes) if codes else 0
+            if n > 0:
+                return n, name
+        return 0, "无可用ETF板块"
+    except Exception as e:
+        return 0, str(e)
+
+
+def _log_etf_qmt_sector_diagnostics_if_needed() -> None:
+    """在已会走 QMT 的上下文中, 进程内至多打一次 ETF 板块只数与 ``DATACOLLECT_QMT_ETF_MIN_SECTOR_SIZE`` 对比.
+
+    只用于观测, **不**再作为「是否先拉 MiniQMT」的门槛 (与股票 auto 一致: 只要 ``_probe_qmt()`` 为真即先试 xtdata).
+    """
+    global _qmt_etf_diagnostics_logged
+    if _qmt_etf_diagnostics_logged:
+        return
+    _qmt_etf_diagnostics_logged = True
+    n, label = probe_qmt_etf_sector_size()
+    threshold = int(getattr(settings.datacollect, "qmt_etf_min_sector_size", 1500))
+    logger.info(
+        "ETF 日线: QMT 板块「%s」%d 只, 配置阈值 %d(仅参考); 仍优先 MiniQMT, 无数据再落网页多源",
+        label,
+        n,
+        threshold,
+    )
+
+
+def _qmt_code_stock_etf(code: str) -> str:
+    c = (code or "").strip()
+    if "." in c:
+        return c
+    pure = c[:6]
+    if not pure:
+        return c
+    if pure.startswith(("6", "5", "9")):
+        return f"{pure}.SH"
+    return f"{pure}.SZ"
+
+
+def _qmt_code_index(code: str) -> str:
+    pure = (code or "").split(".")[0]
+    if pure.startswith("399"):
+        return f"{pure}.SZ"
+    return f"{pure}.SH"
+
+
+def _qmt_ts_to_date(ts: Any) -> date | None:
+    if isinstance(ts, pd.Timestamp):
+        return ts.date()
+    s = str(ts)
+    if len(s) >= 10 and s[4] == "-":
+        return _safe_date(s[:10])
+    s2 = "".join(ch for ch in s if ch.isdigit())[:8]
+    if len(s2) == 8:
+        try:
+            return datetime.strptime(s2, "%Y%m%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _qmt_clip_df(
+    df: pd.DataFrame, start_ymd: str, end_ymd: str,
+) -> pd.DataFrame:
+    s = datetime.strptime(start_ymd[:8], "%Y%m%d").date()
+    e = datetime.strptime(end_ymd[:8], "%Y%m%d").date()
+    out: list[pd.Timestamp] = []
+    for ts in df.index:
+        d = _qmt_ts_to_date(ts)
+        if d is not None and s <= d <= e:
+            out.append(ts)
+    if not out:
+        return df.iloc[0:0]
+    return df.loc[out]
+
+
+def _qmt_df_to_stock_records(
+    code: str, df: pd.DataFrame, start_ymd: str, end_ymd: str,
+) -> list[dict]:
+    df2 = _qmt_clip_df(df, start_ymd, end_ymd)
+    if df2.empty:
+        return []
+    df2 = df2.sort_index()
+    records: list[dict] = []
+    prev_close: float | None = None
+    for ts, row in df2.iterrows():
+        td = _qmt_ts_to_date(ts)
+        if not td:
+            continue
+        op = _safe_float(row.get("open"))
+        hi = _safe_float(row.get("high"))
+        lo = _safe_float(row.get("low"))
+        close_val = _safe_float(row.get("close"))
+        vol = _safe_int(row.get("volume"))
+        amt: float | None
+        if "amount" in row.index:
+            amt = _safe_float(row.get("amount"))
+        else:
+            amt = None
+        chg = (close_val - prev_close) if close_val and prev_close else None
+        pct = (chg / prev_close * 100) if chg and prev_close else _safe_float(row.get("change_pct"))
+        records.append({
+            "code": code, "trade_date": td,
+            "open": op, "close": close_val,
+            "high": hi, "low": lo,
+            "volume": vol, "amount": amt,
+            "amplitude": _safe_float(row.get("amplitude")),
+            "change_pct": pct, "change": chg,
+            "turnover_rate": _safe_float(
+                row.get("turnover_rate") or row.get("turnover"),
+            ),
+        })
+        prev_close = close_val
+    return records
+
+
+def _qmt_df_to_etf_records(
+    code: str, df: pd.DataFrame, start_ymd: str, end_ymd: str,
+) -> list[dict]:
+    df2 = _qmt_clip_df(df, start_ymd, end_ymd)
+    if df2.empty:
+        return []
+    records: list[dict] = []
+    for ts, row in df2.sort_index().iterrows():
+        td = _qmt_ts_to_date(ts)
+        if not td:
+            continue
+        amt: float | None
+        if "amount" in row.index:
+            amt = _safe_float(row.get("amount"))
+        else:
+            amt = None
+        records.append({
+            "code": code, "trade_date": td,
+            "open": _safe_float(row.get("open")),
+            "close": _safe_float(row.get("close")),
+            "high": _safe_float(row.get("high")),
+            "low": _safe_float(row.get("low")),
+            "volume": _safe_int(row.get("volume")),
+            "amount": amt,
+        })
+    return records
+
+
+def _qmt_df_to_index_records(
+    index_key: str, index_name: str, df: pd.DataFrame, start_ymd: str, end_ymd: str,
+) -> list[dict]:
+    df2 = _qmt_clip_df(df, start_ymd, end_ymd)
+    if df2.empty:
+        return []
+    records: list[dict] = []
+    prev_close: float | None = None
+    for ts, row in df2.sort_index().iterrows():
+        td = _qmt_ts_to_date(ts)
+        if not td:
+            continue
+        close_val = _safe_float(row.get("close"))
+        chg = (close_val - prev_close) if close_val and prev_close else None
+        pct = (chg / prev_close * 100) if chg and prev_close else _safe_float(
+            row.get("change_pct"),
+        )
+        amt: float | None
+        if "amount" in row.index:
+            amt = _safe_float(row.get("amount"))
+        else:
+            amt = None
+        records.append({
+            "index_code": index_key, "index_name": index_name, "trade_date": td,
+            "open": _safe_float(row.get("open")), "close": close_val,
+            "high": _safe_float(row.get("high")), "low": _safe_float(row.get("low")),
+            "volume": _safe_int(row.get("volume")), "amount": amt,
+            "change": chg, "change_pct": pct,
+        })
+        prev_close = close_val
+    return records
+
+
+def _qmt_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
+    sym = _qmt_code_stock_etf(code)
+    c = _get_kline_qmt_client()
+    with _qmt_kline_lock:
+        c.download_history_data(
+            sym, "1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+        data = c.get_market_data_ex(
+            [sym], period="1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+    df = data.get(sym) if isinstance(data, dict) else None
+    if df is None or (hasattr(df, "empty") and df.empty):
+        return []
+    return _qmt_df_to_stock_records(code, df, start_date, end_date)
+
+
+def _qmt_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
+    sym = _qmt_code_stock_etf(code)
+    c = _get_kline_qmt_client()
+    with _qmt_kline_lock:
+        c.download_history_data(
+            sym, "1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+        data = c.get_market_data_ex(
+            [sym], period="1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+    df = data.get(sym) if isinstance(data, dict) else None
+    if df is None or (hasattr(df, "empty") and df.empty):
+        return []
+    return _qmt_df_to_etf_records(code, df, start_date, end_date)
+
+
+def _qmt_fetch_index(code: str, start_date: str, end_date: str) -> list[dict]:
+    sym = _qmt_code_index(code)
+    name = INDEX_NAME_MAP.get(code, code)
+    c = _get_kline_qmt_client()
+    with _qmt_kline_lock:
+        c.download_history_data(
+            sym, "1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+        data = c.get_market_data_ex(
+            [sym], period="1d",
+            start_time=start_date[:8], end_time=end_date[:8],
+        )
+    df = data.get(sym) if isinstance(data, dict) else None
+    if df is None or (hasattr(df, "empty") and df.empty):
+        return []
+    return _qmt_df_to_index_records(code, name, df, start_date, end_date)
+
+
+def _etf_sina_symbol(full_code: str) -> str:
+    num = (full_code or "").split(".")[0]
+    if (full_code or "").upper().endswith(".SH"):
+        return f"sh{num}"
+    return f"sz{num}"
+
+
+def _map_etf_daily_rows(df: pd.DataFrame, code: str) -> list[dict]:
+    """akshare 风格列 (日期/开收高低成交量额) → ``etf_daily`` 行."""
+    col_map = {
+        "日期": "trade_date",
+        "开盘": "open",
+        "收盘": "close",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume",
+        "成交额": "amount",
+    }
+    records: list[dict] = []
+    for _, row in df.iterrows():
+        raw = row.get("日期")
+        if raw is not None and hasattr(raw, "date"):
+            trade_date = raw.date()
+        else:
+            trade_date = _safe_date(str(raw)[:10]) if raw is not None else None
+        if trade_date is None:
+            continue
+        rec: dict[str, Any] = {"code": code, "trade_date": trade_date}
+        for cn_col, db_col in col_map.items():
+            if db_col == "trade_date":
+                continue
+            val = row.get(cn_col)
+            if db_col == "volume":
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    rec[db_col] = int(val)
+                else:
+                    rec[db_col] = None
+            else:
+                rec[db_col] = _safe_float(val)
+        records.append(rec)
+    return records
+
+
+def _sina_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
+    try:
+        import akshare as ak
+    except ImportError:
+        return []
+    try:
+        df2 = ak.fund_etf_hist_sina(symbol=_etf_sina_symbol(code))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("新浪 ETF 日线 %s: %s", code, e)
+        return []
+    if df2 is None or df2.empty:
+        return []
+    out = pd.DataFrame()
+    out["日期"] = df2["date"]
+    out["开盘"] = df2["open"]
+    out["收盘"] = df2["close"]
+    out["最高"] = df2["high"]
+    out["最低"] = df2["low"]
+    out["成交量"] = df2["volume"]
+    out["成交额"] = None
+    start_d = _safe_date(
+        f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:8]}",
+    )
+    end_d = _safe_date(
+        f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:8]}",
+    )
+    if start_d is not None:
+        out = out[out["日期"] >= pd.Timestamp(start_d)]
+    if end_d is not None:
+        out = out[out["日期"] <= pd.Timestamp(end_d)]
+    return _map_etf_daily_rows(out, code)
+
+
+def _web_fetch_etf_cascade(code: str, start_date: str, end_date: str) -> list[dict]:
+    """腾讯/新浪/东财, 有数据即停. 东财经探测不可达时 **不再** 每段重试, 避免刷屏与拖慢。
+
+    顺序: 先腾讯、新浪, 东财仅 ``_probe_em()`` 为真时参与。
+    """
+    order: list[tuple[str, Any]] = [
+        ("tencent", lambda: _qq_fetch_etf(code, start_date, end_date)),
+        ("sina", lambda: _sina_fetch_etf(code, start_date, end_date)),
+    ]
+    if _probe_em():
+        order.insert(0, ("eastmoney", lambda: _em_fetch_etf(code, start_date, end_date)))
+    for label, fn in order:
+        try:
+            rows = fn()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("ETF %s %s: %s", code, label, e)
+            continue
+        if rows:
+            return rows
+    return []
+
+
+def _web_source_stock() -> str:
+    return "eastmoney" if _probe_em() else "tencent"
+
+
+def _web_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
+    src = _web_source_stock()
+    if src == "eastmoney":
+        return _em_fetch_stock(code, start_date, end_date)
+    return _qq_fetch_stock(code, start_date, end_date)
+
+
+def _web_fetch_index(code: str, start_date: str, end_date: str) -> list[dict]:
+    src = _web_source_stock()
+    if src == "eastmoney":
+        return _em_fetch_index(code, start_date, end_date)
+    return _qq_fetch_index(code, start_date, end_date)
+
+
+# ==================================================================
 # 标的拉取 (线程池中运行) — 自动选择数据源
 # ==================================================================
 
 def _fetch_stock_daily(code: str, start_date: str, end_date: str) -> list[dict]:
     source = _active_source
+    if source == "qmt":
+        if not _probe_qmt():
+            return []
+        try:
+            return _qmt_fetch_stock(code, start_date, end_date)
+        except Exception as e:
+            logger.warning("QMT 股票日线 %s %s~%s: %s", code, start_date, end_date, e)
+            return []
     if source == "auto":
-        source = "eastmoney" if _probe_em() else "tencent"
-
+        if _probe_qmt():
+            try:
+                qrows = _qmt_fetch_stock(code, start_date, end_date)
+                if qrows:
+                    return qrows
+            except Exception as e:
+                logger.debug(
+                    "QMT 股票日线 %s %s~%s: %s", code, start_date, end_date, e,
+                )
+        return _web_fetch_stock(code, start_date, end_date)
     if source == "eastmoney":
         return _em_fetch_stock(code, start_date, end_date)
     return _qq_fetch_stock(code, start_date, end_date)
@@ -300,9 +730,26 @@ def _fetch_stock_daily(code: str, start_date: str, end_date: str) -> list[dict]:
 
 def _fetch_etf_daily(code: str, start_date: str, end_date: str) -> list[dict]:
     source = _active_source
+    if source == "qmt":
+        if not _probe_qmt():
+            return []
+        try:
+            return _qmt_fetch_etf(code, start_date, end_date)
+        except Exception as e:
+            logger.warning("QMT ETF 日线 %s %s~%s: %s", code, start_date, end_date, e)
+            return []
     if source == "auto":
-        source = "eastmoney" if _probe_em() else "tencent"
-
+        if _probe_qmt():
+            _log_etf_qmt_sector_diagnostics_if_needed()
+            try:
+                qrows = _qmt_fetch_etf(code, start_date, end_date)
+                if qrows:
+                    return qrows
+            except Exception as e:
+                logger.debug(
+                    "QMT ETF 日线 %s %s~%s: %s", code, start_date, end_date, e,
+                )
+        return _web_fetch_etf_cascade(code, start_date, end_date)
     if source == "eastmoney":
         return _em_fetch_etf(code, start_date, end_date)
     return _qq_fetch_etf(code, start_date, end_date)
@@ -315,15 +762,15 @@ def fetch_etf_daily_cascade(
     *,
     kline_prefer: str = "auto",
 ) -> tuple[list[dict], str | None]:
-    """东财 / 腾讯 K 线: 先按 ``kline_prefer`` 排序, 空或异常则换另一路再试.
+    """MiniQMT (xtdata) / 东财 / 腾讯; ``kline_prefer=auto`` 时 **优先本地 QMT**, 再按东财/腾讯.
 
     东财在级联中 **单次请求、不重试**; 任一段连接失败会熔断 push2his, 本进程内后续段
-    不再打东财 K 线 URL, 直接试腾讯, 避免每段在 tenacity 上耗数秒才换源。
+    不再打东财 K 线 URL, 直接试腾讯, 避免每段在 tenacity 上耗数秒才换源.
 
-    返回 ``(rows, tag)`` — tag 为 ``kline_eastmoney`` / ``kline_tencent``; 全失败 ``[]``, ``None``。
+    返回 ``(rows, tag)`` — tag 为 ``kline_qmt`` / ``kline_eastmoney`` / ``kline_tencent`` 等; 全失败 ``[]``, ``None``。
     """
-    if kline_prefer not in ("eastmoney", "tencent", "auto"):
-        raise ValueError("kline_prefer 须为 eastmoney / tencent / auto")
+    if kline_prefer not in ("eastmoney", "tencent", "auto", "qmt"):
+        raise ValueError("kline_prefer 须为 eastmoney / tencent / auto / qmt")
 
     def _em() -> list[dict]:
         global _em_push2his_circuit_open
@@ -343,15 +790,49 @@ def fetch_etf_daily_cascade(
     def _qq() -> list[dict]:
         return _qq_fetch_etf(code, start_date, end_date)
 
+    def _qmt() -> list[dict]:
+        if not _probe_qmt():
+            return []
+        try:
+            return _qmt_fetch_etf(code, start_date, end_date)
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _sina() -> list[dict]:
+        return _sina_fetch_etf(code, start_date, end_date)
+
     if kline_prefer == "eastmoney":
-        order: tuple[tuple[str, Any], ...] = (("kline_eastmoney", _em), ("kline_tencent", _qq))
+        order = (
+            ("kline_eastmoney", _em),
+            ("kline_tencent", _qq),
+            ("kline_sina", _sina),
+        )
     elif kline_prefer == "tencent":
-        order = (("kline_tencent", _qq), ("kline_eastmoney", _em))
-    else:
+        order = (
+            ("kline_tencent", _qq),
+            ("kline_eastmoney", _em),
+            ("kline_sina", _sina),
+        )
+    elif kline_prefer == "qmt":
+        order = (
+            ("kline_qmt", _qmt),
+            ("kline_eastmoney", _em),
+            ("kline_tencent", _qq),
+            ("kline_sina", _sina),
+        )
+    else:  # auto: xtdata 可用则先 QMT, 再东财/腾讯/新浪
+        olist: list[tuple[str, Any]] = []
+        if _probe_qmt():
+            _log_etf_qmt_sector_diagnostics_if_needed()
+            olist.append(("kline_qmt", _qmt))
         if _probe_em():
-            order = (("kline_eastmoney", _em), ("kline_tencent", _qq))
+            olist.append(("kline_eastmoney", _em))
+            olist.append(("kline_tencent", _qq))
         else:
-            order = (("kline_tencent", _qq), ("kline_eastmoney", _em))
+            olist.append(("kline_tencent", _qq))
+            olist.append(("kline_eastmoney", _em))
+        olist.append(("kline_sina", _sina))
+        order = tuple(olist)
 
     for name, fn in order:
         try:
@@ -368,9 +849,25 @@ def fetch_etf_daily_cascade(
 
 def _fetch_index_daily(code: str, start_date: str, end_date: str) -> list[dict]:
     source = _active_source
+    if source == "qmt":
+        if not _probe_qmt():
+            return []
+        try:
+            return _qmt_fetch_index(code, start_date, end_date)
+        except Exception as e:
+            logger.warning("QMT 指数日线 %s %s~%s: %s", code, start_date, end_date, e)
+            return []
     if source == "auto":
-        source = "eastmoney" if _probe_em() else "tencent"
-
+        if _probe_qmt():
+            try:
+                qrows = _qmt_fetch_index(code, start_date, end_date)
+                if qrows:
+                    return qrows
+            except Exception as e:
+                logger.debug(
+                    "QMT 指数日线 %s %s~%s: %s", code, start_date, end_date, e,
+                )
+        return _web_fetch_index(code, start_date, end_date)
     if source == "eastmoney":
         return _em_fetch_index(code, start_date, end_date)
     return _qq_fetch_index(code, start_date, end_date)
@@ -654,86 +1151,495 @@ async def _async_download(
 
 
 # ==================================================================
-# 任务构建
+# 任务构建: 与 sync_etf_daily 的续传语义一致 (中间段 + 向今 + 向史)
 # ==================================================================
 
-def _get_stock_tasks(days_back: int) -> list[tuple[str, str, str]]:
+
+def _row_date_to_ymd(v: Any) -> str | None:
+    if v is None:
+        return None
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y%m%d")
+    s = str(v)[:10].replace("-", "")
+    return s[:8] if len(s) >= 8 else None
+
+
+def kline_per_code_floor(
+    global_start: str,
+    establish: Any,
+    earliest_ymd_in_db: str | None = None,
+) -> str:
+    """单标的有效地板: ``max(用户 floor, 上市/成立日)``; 可用库内最早日纠偏 (与 etf 侧一致)。"""
+    if not global_start or len(global_start) < 8:
+        return global_start
+    try:
+        gs = int(global_start[:8])
+    except ValueError:
+        return global_start
+    if establish is None:
+        return global_start
+    ed: int | None = None
+    try:
+        if hasattr(establish, "strftime"):
+            ed = int(establish.strftime("%Y%m%d"))
+        else:
+            s = str(establish)[:10].replace("-", "")
+            if len(s) >= 8:
+                ed = int(s[:8])
+    except (TypeError, ValueError):
+        return global_start
+    if ed is None:
+        return global_start
+    raw = int(str(max(gs, ed)))
+    if (
+        earliest_ymd_in_db
+        and len(earliest_ymd_in_db) >= 8
+    ):
+        try:
+            m_ymd = int(earliest_ymd_in_db[:8])
+            if m_ymd < raw:
+                return global_start
+        except ValueError:
+            pass
+    return str(raw)
+
+
+def daily_kline_work_segments(
+    floor_start: str,
+    end_date: str,
+    last_ymd: str | None,
+    first_ymd: str | None,
+    resume: bool,
+) -> list[tuple[str, str]]:
+    """缺段列表: 无库为 ``[(floor, end)]``; 有库时向今 + 向史, 顺序 **先今后史** (与 ``_etf_work_segments`` 同构).
+
+    ``last_ymd``/``first_ymd`` 为库内 max/min; 无行时传 ``None``/``None``.
+
+    **不覆盖** 库内 ``MIN..MAX`` 之间零散缺日: 在 ``DATACOLLECT_KLINE_FILL_INTERIOR_GAPS``(默认开) 时
+    由 ``_maybe_append_interior_tasks`` / ``merge_etf_resume_with_interior_gaps`` 追加 XSHG 历缺口区段.
+    """
+    if not resume:
+        return [(floor_start, end_date)]
+    if not last_ymd:
+        return [(floor_start, end_date)]
+    end_s = (end_date[:8] if len(end_date) >= 8 else end_date).ljust(8, "0")
+    fl_s = (floor_start[:8] if len(floor_start) >= 8 else floor_start).ljust(8, "0")
+    try:
+        floor_d = datetime.strptime(fl_s, "%Y%m%d").date()
+        end_d = datetime.strptime(end_s, "%Y%m%d").date()
+        last_d = datetime.strptime(last_ymd[:8], "%Y%m%d").date()
+    except ValueError:
+        return [(floor_start, end_date)]
+    first = first_ymd or last_ymd
+    back_segs: list[tuple[str, str]] = []
+    fwd_segs: list[tuple[str, str]] = []
+    try:
+        first_d = datetime.strptime(first[:8], "%Y%m%d").date()
+    except ValueError:
+        first_d = floor_d
+    if first_d > floor_d:
+        back_end_d = first_d - timedelta(days=1)
+        if back_end_d >= floor_d:
+            back_segs.append((fl_s, back_end_d.strftime("%Y%m%d")))
+    nxt_d = last_d + timedelta(days=1)
+    if nxt_d <= end_d:
+        nxt_s = nxt_d.strftime("%Y%m%d")
+        eff = nxt_s if nxt_s >= fl_s else fl_s
+        if eff <= end_s:
+            fwd_segs.append((eff, end_s))
+    return fwd_segs + back_segs
+
+
+def _kline_fill_interior_gaps_enabled() -> bool:
+    return bool(getattr(settings.datacollect, "kline_fill_interior_gaps", True))
+
+
+def _cell_to_date(v: Any) -> date:
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    raise TypeError(f"expected date, got {type(v)}")
+
+
+def _xshg_trading_session_dates(d0: date, d1: date) -> list[date]:
+    """沪深京市历 (``XSHG``) 在 ``[d0,d1]`` 闭区间内的交易日列表, 升序。"""
+    if d0 > d1:
+        return []
+    import exchange_calendars as ec
+
+    cal = ec.get_calendar("XSHG")
+    sess = cal.sessions_in_range(
+        pd.Timestamp(d0),
+        pd.Timestamp(d1),
+    )
+    return [ts.date() for ts in sess]
+
+
+def _load_table_code_trade_dates(
+    table: str,
+    code_col: str,
+) -> dict[str, set[date]]:
+    """白名单表: ``etf_daily`` / ``stock_daily`` / ``market_index``。"""
+    allowed = {
+        ("etf_daily", "code"),
+        ("stock_daily", "code"),
+        ("market_index", "index_code"),
+    }
+    if (table, code_col) not in allowed:
+        raise ValueError(f"unsupported table/column: {table} {code_col}")
+    sql = text(f"SELECT {code_col} AS c, trade_date AS td FROM {table}")  # noqa: S608
+    by_code: dict[str, set[date]] = defaultdict(set)
+    with get_session(readonly=True) as session:
+        for c, td in session.execute(sql):
+            if not c:
+                continue
+            by_code[str(c)].add(_cell_to_date(td))
+    return by_code
+
+
+def interior_trading_gaps_ymd(
+    first_ymd: str,
+    last_ymd: str,
+    have: set[date],
+    all_sessions: list[date],
+) -> list[tuple[str, str]]:
+    """在 ``[first_ymd, last_ymd]`` 闭区间内, 相对 ``all_sessions`` 缺行且非 ``have`` 的连续交易日 → 闭区间段 YYYYMMDD.
+
+    ``all_sessions`` 须已覆盖 ``[first,last]`` (通常取全局最早~最晚一次预计算切片).
+    """
+    from bisect import bisect_left, bisect_right
+
+    if not have or not all_sessions:
+        return []
+    try:
+        f_d = datetime.strptime(first_ymd[:8], "%Y%m%d").date()
+        l_d = datetime.strptime(last_ymd[:8], "%Y%m%d").date()
+    except ValueError:
+        return []
+    if f_d > l_d:
+        return []
+    lo = bisect_left(all_sessions, f_d)
+    hi_ex = bisect_right(all_sessions, l_d)
+    slice_ = all_sessions[lo:hi_ex]
+    out: list[tuple[str, str]] = []
+    run_s, run_e = None, None
+    for d in slice_:
+        if d in have:
+            if run_s is not None and run_e is not None:
+                out.append(
+                    (run_s.strftime("%Y%m%d"), run_e.strftime("%Y%m%d")),
+                )
+                run_s = run_e = None
+        else:
+            if run_s is None:
+                run_s = run_e = d
+            else:
+                run_e = d
+    if run_s is not None and run_e is not None:
+        out.append((run_s.strftime("%Y%m%d"), run_e.strftime("%Y%m%d")))
+    return out
+
+
+def build_etf_interior_context() -> tuple[dict[str, set[date]], list[date]] | None:
+    """供 ``akshare`` ``sync_etf_daily`` 与 ``_etf_work_segments`` 复用, 成功则返回 (have, xshg_sessions)。"""
+    if not _kline_fill_interior_gaps_enabled():
+        return None
+    have = _load_table_code_trade_dates("etf_daily", "code")
+    if not have:
+        return None
+    d_lo = min(min(s) for s in have.values() if s)
+    d_hi = max(max(s) for s in have.values() if s)
+    sess = _xshg_trading_session_dates(d_lo, d_hi)
+    if not sess:
+        return None
+    return (have, sess)
+
+
+def merge_etf_resume_with_interior_gaps(
+    base: list[tuple[str, str]],
+    code: str,
+    first_ymd: str | None,
+    last_ymd: str | None,
+    resume: bool,
+    ctx: tuple[dict[str, set[date]], list[date]] | None,
+) -> list[tuple[str, str]]:
+    """``sync_etf_daily`` 用: 在 ``daily_kline_work_segments`` 结果上追加 MIN~MAX 内缺口段。"""
+    if not ctx or not resume or not first_ymd or not last_ymd:
+        return list(base)
+    have_by, sessions = ctx
+    extra = interior_trading_gaps_ymd(
+        first_ymd, last_ymd, have_by.get(code) or set(), sessions,
+    )
+    return list(base) + extra
+
+
+def _append_interior_kline_tasks(
+    work: list[tuple[str, str, str]],
+    min_m: dict[str, str],
+    max_m: dict[str, str],
+    have: dict[str, set[date]],
+    all_sess: list[date],
+) -> int:
+    """向 ``work`` 追加缺口区段, 返回追加条数。"""
+    n_add = 0
+    for code, first_ymd in min_m.items():
+        last_ymd = max_m.get(code)
+        if not last_ymd:
+            continue
+        hs = have.get(code)
+        if not hs:
+            continue
+        for a, b in interior_trading_gaps_ymd(first_ymd, last_ymd, hs, all_sess):
+            work.append((code, a, b))
+            n_add += 1
+    return n_add
+
+
+def _maybe_append_interior_tasks(
+    *,
+    work: list[tuple[str, str, str]],
+    resume: bool,
+    min_m: dict[str, str],
+    max_m: dict[str, str],
+    table: str,
+    code_col: str,
+) -> None:
+    if not resume or not _kline_fill_interior_gaps_enabled():
+        return
+    have = _load_table_code_trade_dates(table, code_col)
+    if not have:
+        return
+    d_lo = min(min(s) for s in have.values() if s)
+    d_hi = max(max(s) for s in have.values() if s)
+    all_sess = _xshg_trading_session_dates(d_lo, d_hi)
+    if not all_sess:
+        return
+    n = _append_interior_kline_tasks(work, min_m, max_m, have, all_sess)
+    if n:
+        logger.info(
+            "K-line 续传: 已追加 %d 个「MIN~MAX 内 XSHG 缺口」区段 (%s)",
+            n, table,
+        )
+
+
+def _stock_min_max_maps(session) -> tuple[dict[str, str], dict[str, str]]:
+    rows = session.execute(text(
+        "SELECT code, MIN(trade_date) AS dmin, MAX(trade_date) AS dmax "
+        "FROM stock_daily GROUP BY code",
+    )).fetchall()
+    min_m: dict[str, str] = {}
+    max_m: dict[str, str] = {}
+    for code, dmin, dmax in rows:
+        if not code:
+            continue
+        c = str(code)
+        a, b = _row_date_to_ymd(dmin), _row_date_to_ymd(dmax)
+        if a:
+            min_m[c] = a
+        if b:
+            max_m[c] = b
+    return min_m, max_m
+
+
+def _etf_min_max_maps(session) -> tuple[dict[str, str], dict[str, str]]:
+    rows = session.execute(text(
+        "SELECT code, MIN(trade_date) AS dmin, MAX(trade_date) AS dmax "
+        "FROM etf_daily GROUP BY code",
+    )).fetchall()
+    min_m: dict[str, str] = {}
+    max_m: dict[str, str] = {}
+    for code, dmin, dmax in rows:
+        if not code:
+            continue
+        c = str(code)
+        a, b = _row_date_to_ymd(dmin), _row_date_to_ymd(dmax)
+        if a:
+            min_m[c] = a
+        if b:
+            max_m[c] = b
+    return min_m, max_m
+
+
+def _index_min_max_maps(session) -> tuple[dict[str, str], dict[str, str]]:
+    rows = session.execute(text(
+        "SELECT index_code, MIN(trade_date) AS dmin, MAX(trade_date) AS dmax "
+        "FROM market_index GROUP BY index_code",
+    )).fetchall()
+    min_m: dict[str, str] = {}
+    max_m: dict[str, str] = {}
+    for code, dmin, dmax in rows:
+        if not code:
+            continue
+        c = str(code)
+        a, b = _row_date_to_ymd(dmin), _row_date_to_ymd(dmax)
+        if a:
+            min_m[c] = a
+        if b:
+            max_m[c] = b
+    return min_m, max_m
+
+
+def _get_stock_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
-
     with get_session() as session:
-        codes = [row[0] for row in session.query(Stock.code).all()]
-        max_dates_rows = session.execute(text(
-            "SELECT code, MAX(trade_date) FROM stock_daily GROUP BY code"
-        )).fetchall()
+        meta = session.query(Stock.code, Stock.list_date).all()
+        min_m, max_m = _stock_min_max_maps(session)
+    work: list[tuple[str, str, str]] = []
+    for code, list_date in meta:
+        pcf = kline_per_code_floor(
+            fallback_start, list_date, min_m.get(code),
+        )
+        last = max_m.get(code)
+        first = min_m.get(code) or last
+        for seg_s, seg_e in daily_kline_work_segments(
+            pcf, end_date, last, first, resume,
+        ):
+            work.append((code, seg_s, seg_e))
+    _maybe_append_interior_tasks(
+        work=work, resume=resume, min_m=min_m, max_m=max_m,
+        table="stock_daily", code_col="code",
+    )
+    if work and resume:
+        work.sort(key=lambda t: (t[2], t[1]), reverse=True)
+    return work
 
-    max_dates = {row[0]: row[1].strftime("%Y%m%d") for row in max_dates_rows if row[1]}
-    return [(code, max_dates.get(code, fallback_start), end_date) for code in codes]
 
-
-def _get_etf_tasks(days_back: int) -> list[tuple[str, str, str]]:
+def _get_etf_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
-
     with get_session() as session:
-        codes = [row[0] for row in session.query(ETFInfo.code).all()]
-        max_dates_rows = session.execute(text(
-            "SELECT code, MAX(trade_date) FROM etf_daily GROUP BY code"
-        )).fetchall()
+        meta = session.query(ETFInfo.code, ETFInfo.establish_date).all()
+        min_m, max_m = _etf_min_max_maps(session)
+    work: list[tuple[str, str, str]] = []
+    for code, est in meta:
+        pcf = kline_per_code_floor(fallback_start, est, min_m.get(code))
+        last = max_m.get(code)
+        first = min_m.get(code) or last
+        for seg_s, seg_e in daily_kline_work_segments(
+            pcf, end_date, last, first, resume,
+        ):
+            work.append((code, seg_s, seg_e))
+    _maybe_append_interior_tasks(
+        work=work, resume=resume, min_m=min_m, max_m=max_m,
+        table="etf_daily", code_col="code",
+    )
+    if work and resume:
+        work.sort(key=lambda t: (t[2], t[1]), reverse=True)
+    return work
 
-    max_dates = {row[0]: row[1].strftime("%Y%m%d") for row in max_dates_rows if row[1]}
-    return [(code, max_dates.get(code, fallback_start), end_date) for code in codes]
 
-
-def _get_index_tasks(days_back: int) -> list[tuple[str, str, str]]:
+def _get_index_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
-
     with get_session() as session:
-        max_dates_rows = session.execute(text(
-            "SELECT index_code, MAX(trade_date) FROM market_index GROUP BY index_code"
-        )).fetchall()
-
-    max_dates = {row[0]: row[1].strftime("%Y%m%d") for row in max_dates_rows if row[1]}
-    return [(code, max_dates.get(code, fallback_start), end_date) for code in INDEX_NAME_MAP]
+        min_m, max_m = _index_min_max_maps(session)
+    work: list[tuple[str, str, str]] = []
+    for code in INDEX_NAME_MAP:
+        pcf = kline_per_code_floor(
+            fallback_start, None, min_m.get(code),
+        )
+        last = max_m.get(code)
+        first = min_m.get(code) or last
+        for seg_s, seg_e in daily_kline_work_segments(
+            pcf, end_date, last, first, resume,
+        ):
+            work.append((code, seg_s, seg_e))
+    _maybe_append_interior_tasks(
+        work=work, resume=resume, min_m=min_m, max_m=max_m,
+        table="market_index", code_col="index_code",
+    )
+    if work and resume:
+        work.sort(key=lambda t: (t[2], t[1]), reverse=True)
+    return work
 
 
 # ==================================================================
 # 主入口
 # ==================================================================
 
+
+def _resolve_kline_days(
+    mode: str,
+    days_back: int | None,
+) -> tuple[int | None, int | None, int | None]:
+    """返回 (stock_days, index_days, etf_days); None 表示本模式不跑.
+
+    未指定 days_back: ETF 单模式=配置默认约 10 年; 股/指=1 年; all=股/指1年+ETF10年.
+    指定 days_back: 对参与的模式统一用该值.
+    """
+    dc = settings.datacollect
+    d_etf = int(getattr(dc, "kline_etf_default_days_back", 3650))
+    d_other = int(getattr(dc, "kline_non_etf_default_days_back", 365))
+    if days_back is not None:
+        u = int(days_back)
+        if mode == "all":
+            return u, u, u
+        if mode == "stock":
+            return u, None, None
+        if mode == "index":
+            return None, u, None
+        if mode == "etf":
+            return None, None, u
+    if mode == "all":
+        return d_other, d_other, d_etf
+    if mode == "stock":
+        return d_other, None, None
+    if mode == "index":
+        return None, d_other, None
+    if mode == "etf":
+        return None, None, d_etf
+    return d_other, d_other, d_etf
+
+
 async def run(
     mode: str = "all",
-    days_back: int = 365,
+    days_back: int | None = None,
     concurrency: int = 8,
     source: str = "auto",
     rate: float = 3.0,
     burst: int = 5,
+    resume: bool = True,
 ):
     global _active_source
     _active_source = source
+    reset_em_cache()
+    if source in ("tencent", "auto", "qmt"):
+        reset_qq_session()
 
     if source in ("eastmoney", "auto"):
         _get_em_limiter(rate=rate, burst=burst)
 
+    d_st, d_ix, d_e = _resolve_kline_days(mode, days_back)
+    if d_e is not None and mode in ("etf", "all"):
+        logger.info(
+            "ETF 日线区段地板: 回溯 %d 自然日 (约 %.1f 年, env DATACOLLECT_KLINE_ETF_DAYS_BACK 可改)",
+            d_e, d_e / 365.25,
+        )
+    if (d_st is not None or d_ix is not None) and mode in ("stock", "index", "all"):
+        d0 = d_st or d_ix
+        if d0:
+            logger.info("股票/指数区段地板: 回溯 %d 日", d0)
+
     total = 0
 
-    if mode in ("stock", "all"):
-        tasks = _get_stock_tasks(days_back)
+    if mode in ("stock", "all") and d_st is not None:
+        tasks = _get_stock_tasks(d_st, resume)
         total += await _async_download(
             tasks, _fetch_stock_daily, _bulk_upsert_stock_daily,
             label="Stock K-line", concurrency=concurrency,
         )
 
-    if mode in ("etf", "all"):
-        tasks = _get_etf_tasks(days_back)
+    if mode in ("etf", "all") and d_e is not None:
+        tasks = _get_etf_tasks(d_e, resume)
         total += await _async_download(
             tasks, _fetch_etf_daily, _bulk_upsert_etf_daily,
             label="ETF K-line", concurrency=concurrency,
         )
 
-    if mode in ("index", "all"):
-        tasks = _get_index_tasks(days_back)
+    if mode in ("index", "all") and d_ix is not None:
+        tasks = _get_index_tasks(d_ix, resume)
         total += await _async_download(
             tasks, _fetch_index_daily, _bulk_upsert_index_daily,
             label="Index K-line", concurrency=concurrency,
@@ -751,14 +1657,26 @@ if __name__ == "__main__":
         "mode", choices=["stock", "etf", "index", "all"],
         help="stock=A股, etf=ETF, index=指数, all=全部",
     )
-    parser.add_argument("--days-back", type=int, default=365, help="回溯天数 (默认365)")
+    parser.add_argument(
+        "--days-back",
+        type=int,
+        default=None,
+        help="回溯自然日; 省略带环境默认: 仅 etf=约10年(3650), 仅 stock/index=365, all=股/指365+ETF10年",
+    )
     parser.add_argument("--concurrency", type=int, default=8, help="并发线程数 (默认8)")
     parser.add_argument(
-        "--source", choices=["auto", "eastmoney", "tencent"], default="auto",
-        help="数据源: auto=自动探测降级, eastmoney=东财, tencent=腾讯 (默认auto)",
+        "--source",
+        choices=["auto", "qmt", "eastmoney", "tencent"],
+        default="auto",
+        help="数据源: auto=MiniQMT 优先, 再东财/腾讯; qmt=仅 xtdata; 其余=仅东财/腾讯",
     )
     parser.add_argument("--rate", type=float, default=3.0, help="东财限流速率 req/s")
     parser.add_argument("--burst", type=int, default=5, help="东财限流突发上限")
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="关闭缺口续传: 每标的一段 [days-back 与上市日之较晚者, 今日], 不拆向今/向史",
+    )
     args = parser.parse_args()
 
     asyncio.run(run(
@@ -768,4 +1686,5 @@ if __name__ == "__main__":
         source=args.source,
         rate=args.rate,
         burst=args.burst,
+        resume=not args.no_resume,
     ))

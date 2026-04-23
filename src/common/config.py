@@ -381,6 +381,25 @@ class DatacollectConfig(BaseSettings):
     retry_backoff_base: float = Field(default=2.0, alias="DATACOLLECT_RETRY_BACKOFF")
     request_timeout: int = Field(default=30, alias="DATACOLLECT_REQUEST_TIMEOUT")
     proxy_url: str = Field(default="", alias="DATACOLLECT_PROXY_URL")
+    # 与 ``probe_qmt_etf_sector_size`` 只数对比, 仅打日志参考; 不限制 ETF 是否先拉 MiniQMT
+    qmt_etf_min_sector_size: int = Field(
+        default=1500,
+        alias="DATACOLLECT_QMT_ETF_MIN_SECTOR_SIZE",
+    )
+    # kline_bulk_sync: 未指定 --days-back 时 ETF 单模式默认约 10 年
+    kline_etf_default_days_back: int = Field(
+        default=3650,
+        alias="DATACOLLECT_KLINE_ETF_DAYS_BACK",
+    )
+    kline_non_etf_default_days_back: int = Field(
+        default=365,
+        alias="DATACOLLECT_KLINE_STOCK_DAYS_BACK",
+    )
+    # 续传时除「向今/向史」外, 按 XSHG 历补全库内 MIN~MAX 之间缺失的交易日(股票/ETF/指数 K 线)
+    kline_fill_interior_gaps: bool = Field(
+        default=True,
+        alias="DATACOLLECT_KLINE_FILL_INTERIOR_GAPS",
+    )
     archive_days: int = Field(default=90, alias="DATACOLLECT_ARCHIVE_DAYS")
     impersonate: str = Field(default="chrome", alias="DATACOLLECT_IMPERSONATE")
 
@@ -464,14 +483,19 @@ class DatacollectConfig(BaseSettings):
         default=True,
         alias="DATACOLLECT_ETF_DAILY_USE_PROGRESS",
     )
+    # ``etf_download_progress.max_retries`` / :meth:`EtfDownloadProgressDAO.init_progress`
+    etf_download_max_retries: int = Field(
+        default=5,
+        alias="ETF_DOWNLOAD_MAX_RETRIES",
+    )
 
     @field_validator("etf_daily_kline_source", mode="before")
     @classmethod
     def _norm_etf_kline_source(cls, v) -> str:
         s = (v if v is not None else "auto")
         s = str(s).strip().lower()
-        if s not in ("eastmoney", "tencent", "auto"):
-            raise ValueError("DATACOLLECT_ETF_DAILY_KLINE_SOURCE 须为 eastmoney|tencent|auto")
+        if s not in ("eastmoney", "tencent", "auto", "qmt"):
+            raise ValueError("DATACOLLECT_ETF_DAILY_KLINE_SOURCE 须为 eastmoney|tencent|auto|qmt")
         return s
 
 

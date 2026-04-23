@@ -12,7 +12,7 @@ ETF 日线与东财 F10 页面优先走 ``src.datacollect.client.SmartHttpClient
 ``kline_bulk_sync``(东财/腾讯); 单请求腾讯约 500 根, ``kline_bulk_sync`` 已分页。
 其后 (任一有数据即停): 新浪、**Tushare** ``fund_daily``(场内基金/ETF; 需 ``TUSHARE_TOKEN`` 与接口权限,
 无数据时再回退股票 ``daily``)、AkShare 东财页 ``fund_etf_hist_em``、**baostock**、yfinance。
-K 线主路在 ``kline_bulk_sync.fetch_etf_daily_cascade`` 内东财+腾讯两路都试.
+K 线主路在 ``kline_bulk_sync.fetch_etf_daily_cascade`` 内 **MiniQMT(xtdata) 优先**, 再东财+腾讯.
 
 其他可整合但**未接代码**的商用/独立源 (需自行申请 Key, 防爬与东财/新浪不同):
 智兔数服、黑狼数据、聚合数据等 ETF 日 K; 接入方式与 ``TushareCollector.query`` 类似, 可增独立 fetch 与 env 开关。
@@ -130,6 +130,16 @@ def _parse_scale_yi_from_jbgk(s: str) -> float | None:
         return float(m.group(1).replace(",", ""))
     except ValueError:
         return None
+
+
+def _tushare_etf_likely_no_access(exc: BaseException) -> bool:
+    """Tushare 返回「未开通接口/无权限」等, 本进程内可跳过后续 tushare 尝试。"""
+    msg = str(exc).lower()
+    if "没有接口" in str(exc) or "权限" in str(exc):
+        return True
+    if "not authorized" in msg or "permission" in msg:
+        return True
+    return False
 
 
 class AkshareFinancialSync:
@@ -549,6 +559,8 @@ class AkshareFinancialSync:
         self, full_code: str, start_date: str, end_date: str, ts: Any,
     ) -> list[dict]:
         """Tushare: 优先 ``fund_daily``(场内基金/ETF 专用); 无数据时回退股票 ``daily``。"""
+        if getattr(self, "_tushare_etf_skip", False):
+            return []
         if not ts or not getattr(ts, "available", True):
             return []
         code = self._tushare_ts_code(full_code)
@@ -576,16 +588,22 @@ class AkshareFinancialSync:
                 ts_code=code, start_date=start_date, end_date=end_date,
             )
         except Exception as ex:  # noqa: BLE001
+            if _tushare_etf_likely_no_access(ex):
+                self._tushare_etf_skip = True
             logger.debug("ETF %s tushare fund_daily: %s", full_code, ex)
             df = None
         rec = _from_df(df)
         if rec:
             return rec
+        if getattr(self, "_tushare_etf_skip", False):
+            return []
         try:
             df2 = ts.query_daily(
                 ts_code=code, start_date=start_date, end_date=end_date,
             )
         except Exception as ex:  # noqa: BLE001
+            if _tushare_etf_likely_no_access(ex):
+                self._tushare_etf_skip = True
             logger.debug("ETF %s tushare daily(回退): %s", full_code, ex)
             return []
         return _from_df(df2)
@@ -729,57 +747,47 @@ class AkshareFinancialSync:
         max_map: dict[str, str],
         min_map: dict[str, str],
         resume: bool,
+        *,
+        interior_context: tuple[dict[str, set[date]], list[date]] | None = None,
     ) -> list[tuple[str, str]]:
         """在 ``resume`` 下, 只返回**缺失**日期区间, 避免 ``[地板, 今日]`` 整段与库内重叠 → 全变 UPDATE.
 
-        无库行: ``[(floor, end)]`` 全量. 有库行:
+        无库行: ``[(floor, end)]`` 全量. 有库行 (可能仅为**中间一段**):
 
-        - 库内最早日 **晚于** 有效地板: 先向下补 ``(地板, 最早交易日-1 自然日)``.
-        - 库内末日 **早于** 本次 ``end_date``: 再续 ``(末交易日+1, end)`` (与旧续传一致).
+        - 历史头: 库内最早日 **晚于** 有效地板时, ``(地板, 最早交易日-1)``.
+        - 向今日: 库内末日 **早于** ``end_date`` 时, ``(末交易日+1, end)`` —— 含**长期未更后的近期补数**.
 
-        两区间不重叠, 多落在 ``INSERT``; 已有日不会再被同轮请求. 无缺口则 ``[]``."""
-        if not resume:
-            return [(floor_start, end_date)]
+        当 ``interior_context`` 非空时, 再追加 **MIN~MAX 内**相对 XSHG 历的缺日区段 (与 ``kline_bulk_sync`` 一致);
+        否则与旧版相同 (不在此函数内逐日扫 ``MIN..MAX`` 中缝)。"""
+        from src.data import kline_bulk_sync as kbs
+
         last = max_map.get(full_code)
-        if not last:
-            return [(floor_start, end_date)]
-        end_s = (end_date[:8] if len(end_date) >= 8 else end_date).ljust(8, "0")
-        fl_s = (floor_start[:8] if len(floor_start) >= 8 else floor_start).ljust(8, "0")
-        try:
-            floor_d = datetime.strptime(fl_s, "%Y%m%d").date()
-            end_d = datetime.strptime(end_s, "%Y%m%d").date()
-            last_d = datetime.strptime(last[:8], "%Y%m%d").date()
-        except ValueError:
-            return [(floor_start, end_date)]
-        first = min_map.get(full_code) or last
-        segments: list[tuple[str, str]] = []
-        try:
-            first_d = datetime.strptime(first[:8], "%Y%m%d").date()
-        except ValueError:
-            first_d = floor_d
-        if first_d > floor_d:
-            back_end_d = first_d - timedelta(days=1)
-            if back_end_d >= floor_d:
-                segments.append((fl_s, back_end_d.strftime("%Y%m%d")))
-        nxt_d = last_d + timedelta(days=1)
-        if nxt_d <= end_d:
-            nxt_s = nxt_d.strftime("%Y%m%d")
-            eff = nxt_s if nxt_s >= fl_s else fl_s
-            if eff <= end_s:
-                segments.append((eff, end_s))
-        return segments
+        first = (min_map.get(full_code) or last) if last else None
+        base = kbs.daily_kline_work_segments(
+            floor_start, end_date, last, first, resume,
+        )
+        if interior_context is None or not resume:
+            return base
+        return kbs.merge_etf_resume_with_interior_gaps(
+            list(base), full_code, first, last, resume, interior_context,
+        )
 
     def sync_etf_daily(
         self,
         start_date: str = "20160101",
         *,
         resume: bool = True,
-        kline_source: str = "eastmoney",
+        kline_source: str = "auto",
         sina_only: bool = False,
         stall_no_rows_sec: float = 60.0,
         use_download_progress: bool = True,
     ) -> int:
         """为 ``etf_info`` 中的每只 ETF 采集日线, 新行 INSERT 到 ``etf_daily`` (主键已存在则跳过, 不覆盖, 段级 commit).
+
+        **续传语义 (resume=True)**: 库内**可能只有中间一段** K 线 —— 仍会为该标的同时生成
+        (1) **向今日** ``MAX(trade_date)+1 .. 今日`` (长期未采时等于「补近期」);
+        (2) **向历史** ``地板 .. MIN(trade_date)-1``。
+        区段调度上 **(1) 优先于 (2)**，避免只补多年前、近期长时间不落库。
 
         多数据源: 对 **队首段** 全链路透传(级联+新浪/东财 page/tushare/baostock/yfinance) 直至首段
         产数并锁定 ``主源``; **后续各段** 只走该主源, 本段无数据时对该段再全链路透传. ``sina_only`` 为 True
@@ -789,10 +797,12 @@ class AkshareFinancialSync:
             start_date: 全量/新标的 的起始日期 YYYYMMDD (地板).
             resume: 为 True 时 (默认), 有效地板为
                 ``max(start_date, etf_info.establish_date)`` (含与库内 ``MIN`` 纠偏);
-                对每只标的**按缺口**拉取: 向下仅 ``(地板..MIN-1)``、向后续 ``(MAX+1..今日)``,
-                不整段 ``[地板, 今日]`` 重下 (避免与已有日重叠, 以新增为主非纯 UPDATE).
-            kline_source: ``eastmoney`` / ``tencent`` / ``auto`` (东财不可达时腾讯, 由 kline 模块探测),
-                在 ``sina_only`` 时忽略.
+                对每只标的**按缺口**拉取: 向今 ``(MAX+1..今日)`` 与 向史 ``(地板..MIN-1)`` 分段请求;
+                不整段 ``[地板, 今日]`` 重下 (避免与已有日重叠, 以新增为主非纯 UPDATE). 当
+                ``DATACOLLECT_KLINE_FILL_INTERIOR_GAPS``(默认开) 时, 会额外按 XSHG 历补
+                **MIN~MAX 内**缺日(与 ``kline_bulk_sync`` 一致); 关环境变量后行为同旧版.
+            kline_source: ``qmt`` / ``eastmoney`` / ``tencent`` / ``auto``
+                (``auto``=xtdata 优先, 再东财/腾讯, 由 kline 模块探测), 在 ``sina_only`` 时忽略.
             sina_only: 仅走新浪日 K, 用于东财+腾讯均不顺时的兜底.
             stall_no_rows_sec: 在仍有待拉标的时, 若此时间内 **无任何新 K 线** 落库, 则抛出
                 :class:`EtfDailyStallError` (0 表示关闭).
@@ -818,13 +828,13 @@ class AkshareFinancialSync:
 
         if not sina_only:
             kbs.reset_em_cache()
-            if kline_source in ("tencent", "auto"):
+            if kline_source in ("tencent", "auto", "qmt"):
                 kbs.reset_qq_session()
             em_rate = max(1.5, float(_CFG.eastmoney_rate) * 8)
             em_burst = max(4, int(_CFG.eastmoney_burst))
             kbs._get_em_limiter(rate=em_rate, burst=em_burst)
-            if kline_source not in ("eastmoney", "tencent", "auto"):
-                raise ValueError("kline_source 须为 eastmoney / tencent / auto")
+            if kline_source not in ("eastmoney", "tencent", "auto", "qmt"):
+                raise ValueError("kline_source 须为 eastmoney / tencent / auto / qmt")
             kbs._active_source = kline_source
 
         with get_session(readonly=True) as session:
@@ -838,6 +848,7 @@ class AkshareFinancialSync:
 
         max_map = self._etf_max_trade_date_map() if resume else {}
         min_map = self._etf_min_trade_date_map() if resume else {}
+        interior_ctx = kbs.build_etf_interior_context() if resume else None
         n_skip_current = 0
         if resume:
             for c in etf_codes:
@@ -848,10 +859,12 @@ class AkshareFinancialSync:
                 )
                 if not self._etf_work_segments(
                     c, pcf, end_date, max_map, min_map, True,
+                    interior_context=interior_ctx,
                 ):
                     n_skip_current += 1
             logger.info(
-                "ETF 日线续传: 库中已有 K 线 %d 只, 其中已追至最新跳过 %d 只",
+                "ETF 日线续传: 库中已有 K 线 %d 只, 其中已追至最新跳过 %d 只 "
+                "(有缺口时: 同标内先向今、再向史; 全队列再按区段末日起降序, 先补到今日).",
                 len(max_map),
                 n_skip_current,
             )
@@ -863,8 +876,12 @@ class AkshareFinancialSync:
             )
             for seg_start, seg_end in self._etf_work_segments(
                 full_code, pcf, end_date, max_map, min_map, resume,
+                interior_context=interior_ctx,
             ):
                 work.append((full_code, seg_start, seg_end))
+        if work and resume:
+            # (seg_end, seg_start) 降序: 全市场范围内优先拉「更靠近/直至今日」的区段, 再拉远古缺口
+            work.sort(key=lambda t: (t[2], t[1]), reverse=True)
         n_work = len(work)
         if n_work == 0 and etf_codes:
             logger.warning(
@@ -949,12 +966,19 @@ class AkshareFinancialSync:
         except Exception as e:  # noqa: BLE001
             logger.debug("tushare 未启用: %s", e)
 
+        # 每轮 sync 重置; 某次 tushare 报无接口/无权限后本进程内跳过后续 tushare, 改走东财/新浪/腾讯等
+        self._tushare_etf_skip = False
+
         p_start = _ymd8_to_date(start_date)
         p_end = _ymd8_to_date(end_date)
         ucodes = list(dict.fromkeys(c for c, _, _ in work))
         if use_download_progress and ucodes:
             EtfDownloadProgressDAO.init_progress(
-                ucodes, ETF_SYNC_TYPE_DAILY, p_start, p_end,
+                ucodes,
+                ETF_SYNC_TYPE_DAILY,
+                p_start,
+                p_end,
+                max_retries=_CFG.etf_download_max_retries,
             )
 
         def _maybe_finalize_etf_row(code: str) -> None:
@@ -995,31 +1019,7 @@ class AkshareFinancialSync:
             )
             if r:
                 return r, src
-            # 无东财/腾讯 K 后: 新浪 → Tushare(fund_daily 场内基金专用) → 东财 page 直拉 → …
-            fb: list[tuple[str, Any]] = [
-                (
-                    "sina",
-                    lambda: self._etf_daily_records_from_sina(
-                        full_code, seg_s, seg_e,
-                    ),
-                ),
-            ]
-            if ts_col is not None:
-                fb.append((
-                    "tushare",
-                    lambda: self._etf_daily_records_from_tushare(
-                        full_code, seg_s, seg_e, ts_col,
-                    ),
-                ))
-            fb.append(
-                (
-                    "akshare_fund_etf_hist_em",
-                    lambda: self._etf_daily_records_from_akshare_em(
-                        full_code, seg_s, seg_e,
-                    ),
-                ),
-            )
-
+            # 无东财/腾讯 K 后: 新浪 → 东财 page(ak fund_etf_hist_em) → baostock → yfinance → Tushare(置末, 无权限时动态跳过)
             def _bs1() -> list[dict]:
                 bc2 = _ensure_baostock()
                 if bc2 is None:
@@ -1032,13 +1032,34 @@ class AkshareFinancialSync:
                         or []
                     )
 
-            fb.append(("baostock", _bs1))
-            fb.append((
-                "yfinance",
-                lambda: self._etf_daily_records_from_yfinance(
-                    full_code, seg_s, seg_e,
+            fb: list[tuple[str, Any]] = [
+                (
+                    "sina",
+                    lambda: self._etf_daily_records_from_sina(
+                        full_code, seg_s, seg_e,
+                    ),
                 ),
-            ))
+                (
+                    "akshare_fund_etf_hist_em",
+                    lambda: self._etf_daily_records_from_akshare_em(
+                        full_code, seg_s, seg_e,
+                    ),
+                ),
+                ("baostock", _bs1),
+                (
+                    "yfinance",
+                    lambda: self._etf_daily_records_from_yfinance(
+                        full_code, seg_s, seg_e,
+                    ),
+                ),
+            ]
+            if ts_col is not None:
+                fb.append((
+                    "tushare",
+                    lambda: self._etf_daily_records_from_tushare(
+                        full_code, seg_s, seg_e, ts_col,
+                    ),
+                ))
             for name, fn in fb:
                 try:
                     rec = fn() or []
@@ -1064,7 +1085,7 @@ class AkshareFinancialSync:
                         full_code, seg_s, seg_e,
                     ) or []
                 if tag == "tushare":
-                    if ts_col is None:
+                    if ts_col is None or getattr(self, "_tushare_etf_skip", False):
                         return []
                     return self._etf_daily_records_from_tushare(
                         full_code, seg_s, seg_e, ts_col,
@@ -1728,10 +1749,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--kline-source",
-        choices=["eastmoney", "tencent", "auto"],
+        choices=["qmt", "eastmoney", "tencent", "auto"],
         default=None,
-        help="未指定则 env DATACOLLECT_ETF_DAILY_KLINE_SOURCE: "
-        "eastmoney|tencent|auto",
+        help="未指定则 env DATACOLLECT_ETF_DAILY_KLINE_SOURCE: qmt|eastmoney|tencent|auto (auto=MiniQMT 优先)",
     )
     parser.add_argument(
         "--sina-only-etf",

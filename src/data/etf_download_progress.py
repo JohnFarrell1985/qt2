@@ -16,6 +16,8 @@ logger = get_logger(__name__)
 
 # 与 kline/同步器约定, 现仅 etf 日线
 ETF_SYNC_TYPE_DAILY = "etf_daily"
+# 与 :meth:`EtfDownloadProgressDAO.init_progress` 默认及 ``mark_failed`` 哨兵一致
+ETF_DAILY_DEFAULT_MAX_RETRIES = 5
 
 
 class EtfDownloadProgressDAO:
@@ -27,7 +29,7 @@ class EtfDownloadProgressDAO:
         sync_type: str,
         start_date=None,
         end_date=None,
-        max_retries: int = 3,
+        max_retries: int = ETF_DAILY_DEFAULT_MAX_RETRIES,
     ) -> int:
         if not codes:
             return 0
@@ -156,7 +158,7 @@ class EtfDownloadProgressDAO:
             record.error_message = (error_message or "")[:500] if error_message else None
             record.updated_at = datetime.now()
 
-            if record.retry_count >= (record.max_retries or 3):
+            if record.retry_count >= (record.max_retries or ETF_DAILY_DEFAULT_MAX_RETRIES):
                 record.status = "failed"
             else:
                 record.status = "pending"

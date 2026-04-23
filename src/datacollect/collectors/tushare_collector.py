@@ -86,7 +86,12 @@ class TushareCollector(BaseCollector):
             return result
         except Exception as e:
             elapsed = (time.monotonic() - t0) * 1000
-            logger.warning("tushare.%s 调用失败 (%.0fms): %s", api_name, elapsed, e)
+            msg = str(e)
+            # 无接口权限等可预期情况降噪声, 便于 ETF 多源链快速切到新浪/东财/腾讯
+            if "没有接口" in msg or "权限" in msg or "not authorized" in msg.lower():
+                logger.debug("tushare.%s 无权限或未开通 (%.0fms): %s", api_name, elapsed, e)
+            else:
+                logger.warning("tushare.%s 调用失败 (%.0fms): %s", api_name, elapsed, e)
             raise
 
     # ----------------------------------------------------------------
