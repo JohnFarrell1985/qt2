@@ -42,6 +42,7 @@ desktop.ini
 
 # Logs
 *.log
+logs/
 
 # Docker data volumes
 pgdata/

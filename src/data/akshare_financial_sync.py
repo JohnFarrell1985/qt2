@@ -43,6 +43,7 @@ from tenacity import (
 
 from src.common.config import settings
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import (
     ETFDaily,
@@ -262,9 +263,9 @@ class AkshareFinancialSync:
             return 0
 
         total = 0
-        with get_session() as session:
-            for batch_start in range(0, len(records), 500):
-                batch = records[batch_start:batch_start + 500]
+        for batch_start in range(0, len(records), DEFAULT_TABLE_UPSERT_FLUSH):
+            batch = records[batch_start:batch_start + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
                 stmt = insert(ETFInfo).values(batch)
                 ex = stmt.excluded
                 stmt = stmt.on_conflict_do_update(
@@ -278,7 +279,7 @@ class AkshareFinancialSync:
                     },
                 )
                 session.execute(stmt)
-                total += len(batch)
+            total += len(batch)
 
         logger.info("ETF 列表同步完成, 共 %d 条", total)
         return total
@@ -401,7 +402,7 @@ class AkshareFinancialSync:
             })
             done += 1
 
-            if len(batch) >= 40:
+            if len(batch) >= DEFAULT_TABLE_UPSERT_FLUSH:
                 self._upsert_etf_info_batch(batch)
                 batch.clear()
             if idx % 200 == 0:
@@ -1329,18 +1330,8 @@ class AkshareFinancialSync:
             if not records:
                 continue
 
-            with get_session() as session:
-                for rec in records:
-                    stmt = insert(StockFinancialReport).values(**rec)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["code", "report_type", "report_period"],
-                        set_={
-                            k: v for k, v in rec.items()
-                            if k not in ("code", "report_type", "report_period", "id")
-                        },
-                    )
-                    session.execute(stmt)
-                total += len(records)
+            self._batch_upsert_reports(records)
+            total += len(records)
 
             if (i + 1) % 50 == 0:
                 logger.info("财务报表进度: %d/%d (累计 %d 条)", i + 1, len(codes), total)
@@ -1432,18 +1423,8 @@ class AkshareFinancialSync:
             if not records:
                 continue
 
-            with get_session() as session:
-                for rec in records:
-                    stmt = insert(StockFinancialIndicator).values(**rec)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["code", "report_date"],
-                        set_={
-                            k: v for k, v in rec.items()
-                            if k not in ("code", "report_date", "id")
-                        },
-                    )
-                    session.execute(stmt)
-                total += len(records)
+            self._batch_upsert_indicators(records)
+            total += len(records)
 
             if (i + 1) % 50 == 0:
                 logger.info("财务指标进度: %d/%d (累计 %d 条)", i + 1, len(codes), total)
@@ -1667,7 +1648,10 @@ class AkshareFinancialSync:
         return total
 
     @staticmethod
-    def _batch_upsert_reports(records: list[dict], batch_size: int = 1000) -> None:
+    def _batch_upsert_reports(
+        records: list[dict], batch_size: int | None = None,
+    ) -> None:
+        bs = batch_size if batch_size is not None else DEFAULT_TABLE_UPSERT_FLUSH
         all_keys: set[str] = set()
         for rec in records:
             all_keys.update(rec.keys())
@@ -1677,18 +1661,22 @@ class AkshareFinancialSync:
                 rec.setdefault(k, None)
 
         update_keys = [k for k in all_keys if k not in ("code", "report_type", "report_period", "id")]
-        with get_session() as session:
-            for i in range(0, len(records), batch_size):
-                batch = records[i: i + batch_size]
+        for i in range(0, len(records), bs):
+            batch = records[i: i + bs]
+            with get_session() as session:
                 stmt = insert(StockFinancialReport).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code", "report_type", "report_period"],
                     set_={k: stmt.excluded[k] for k in update_keys},
                 )
                 session.execute(stmt)
+            log_upsert_commit("akshare_financial.report", len(batch))
 
     @staticmethod
-    def _batch_upsert_indicators(records: list[dict], batch_size: int = 1000) -> None:
+    def _batch_upsert_indicators(
+        records: list[dict], batch_size: int | None = None,
+    ) -> None:
+        bs = batch_size if batch_size is not None else DEFAULT_TABLE_UPSERT_FLUSH
         all_keys: set[str] = set()
         for rec in records:
             all_keys.update(rec.keys())
@@ -1698,15 +1686,16 @@ class AkshareFinancialSync:
                 rec.setdefault(k, None)
 
         update_keys = [k for k in all_keys if k not in ("code", "report_date", "id")]
-        with get_session() as session:
-            for i in range(0, len(records), batch_size):
-                batch = records[i: i + batch_size]
+        for i in range(0, len(records), bs):
+            batch = records[i: i + bs]
+            with get_session() as session:
                 stmt = insert(StockFinancialIndicator).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code", "report_date"],
                     set_={k: stmt.excluded[k] for k in update_keys},
                 )
                 session.execute(stmt)
+            log_upsert_commit("akshare_financial.indicator", len(batch))
 
     # ------------------------------------------------------------------
     # 辅助方法

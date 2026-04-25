@@ -640,6 +640,31 @@ class StockDownloadProgress(Base):
     )
 
 
+class AltDatacollectProgress(Base):
+    """另类日频/区间采集进度 — 与 ``stock_download_progress``/``etf_download_progress`` 同思路:
+    按 (种类, 范围键, 源 id) 记录已成功拉取, 避免多源级联中同一源对同一日/段重复请求。
+    - ``scope_key`` 对按日表为 ``YYYYMMDD``; 对区间型调研可为 ``YYYYMMDD_YYYYMMDD``。
+    """
+
+    __tablename__ = "alt_datacollect_progress"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    category = Column(
+        String(40), nullable=False,
+        comment="hsgt_market|lhb|mf|survey|index_weight|sector_stock|sector_data",
+    )
+    scope_key = Column(String(64), nullable=False, comment="日/区间/指数快照键, 如 YYYYMMDD 或 000300.SH_20260422_l5 或 ind_map_20260422")
+    source_id = Column(String(64), nullable=False, comment="级联源名, 如 tushare_hsgt / tushare_top_list")
+    status = Column(String(16), nullable=False, default="ok", comment="ok: 有有效行; empty: 已尝试无行(可选手动清理后重试)")
+    row_count = Column(Integer, comment="本段写入/命中行数")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("category", "scope_key", "source_id", name="uq_alt_dcp_cat_scope_src"),
+        Index("idx_alt_dcp_cat_scope", "category", "scope_key"),
+    )
+
+
 class EtfDownloadProgress(Base):
     """ETF 数据下载进度表 (与 ``stock_download_progress`` 字段对齐, 供 ``etf_daily`` 断点续下)."""
 

@@ -16,6 +16,7 @@ from typing import List, Optional
 from sqlalchemy.dialects.postgresql import insert
 
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import StockDaily, StockMinute, Stock, MarketIndex
 from src.data.qmt_client import QMTClient
@@ -106,17 +107,16 @@ class MarketDataSync:
         )
 
         total = 0
-        with get_session() as session:
-            for qmt_code, df in self.engine.get_local_kline_batched(
-                stock_list, period="1d",
-                start_time=start_date, end_time=end_date,
-                dividend_type="front",
-            ):
-                code = qmt_code.split(".")[0]
-                records = _kline_df_to_daily_records(code, df)
-                if records:
-                    _bulk_upsert_daily(session, records)
-                    total += len(records)
+        for qmt_code, df in self.engine.get_local_kline_batched(
+            stock_list, period="1d",
+            start_time=start_date, end_time=end_date,
+            dividend_type="front",
+        ):
+            code = qmt_code.split(".")[0]
+            records = _kline_df_to_daily_records(code, df)
+            if records:
+                _bulk_upsert_daily(records)
+                total += len(records)
 
         logger.info(
             f"已同步 {total} 条日线数据 "
@@ -157,17 +157,16 @@ class MarketDataSync:
         )
 
         total = 0
-        with get_session() as session:
-            for qmt_code, df in self.engine.get_local_kline_batched(
-                stock_list, period=period,
-                start_time=start_date, end_time=end_date,
-                dividend_type="front",
-            ):
-                code = qmt_code.split(".")[0]
-                records = _kline_df_to_minute_records(code, df, period)
-                if records:
-                    _bulk_upsert_minute(session, records)
-                    total += len(records)
+        for qmt_code, df in self.engine.get_local_kline_batched(
+            stock_list, period=period,
+            start_time=start_date, end_time=end_date,
+            dividend_type="front",
+        ):
+            code = qmt_code.split(".")[0]
+            records = _kline_df_to_minute_records(code, df, period)
+            if records:
+                _bulk_upsert_minute(records)
+                total += len(records)
 
         logger.info(
             f"已同步 {total} 条 {period} 分钟线 "
@@ -203,18 +202,17 @@ class MarketDataSync:
         )
 
         total = 0
-        with get_session() as session:
-            for qmt_code, df in self.engine.get_local_kline_batched(
-                index_codes, period="1d",
-                start_time=start_date, end_time=end_date,
-                dividend_type="none",
-            ):
-                idx_code = qmt_code.split(".")[0]
-                idx_name = name_map.get(qmt_code, "")
-                records = _kline_df_to_index_records(idx_code, idx_name, df)
-                if records:
-                    _bulk_upsert_index(session, records)
-                    total += len(records)
+        for qmt_code, df in self.engine.get_local_kline_batched(
+            index_codes, period="1d",
+            start_time=start_date, end_time=end_date,
+            dividend_type="none",
+        ):
+            idx_code = qmt_code.split(".")[0]
+            idx_name = name_map.get(qmt_code, "")
+            records = _kline_df_to_index_records(idx_code, idx_name, df)
+            if records:
+                _bulk_upsert_index(records)
+                total += len(records)
 
         logger.info(f"已同步 {total} 条指数日线数据")
         return total
@@ -317,47 +315,59 @@ def _safe_float(row, col):
     return None
 
 
-def _bulk_upsert_daily(session, records: List[dict], batch_size: int = 1000):
+def _bulk_upsert_daily(
+    records: List[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     for i in range(0, len(records), batch_size):
         batch = records[i: i + batch_size]
-        stmt = insert(StockDaily).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["code", "trade_date"],
-            set_={
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "amount": stmt.excluded.amount,
-                "pre_close": stmt.excluded.pre_close,
-            },
-        )
-        session.execute(stmt)
+        with get_session() as session:
+            stmt = insert(StockDaily).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["code", "trade_date"],
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "amount": stmt.excluded.amount,
+                    "pre_close": stmt.excluded.pre_close,
+                },
+            )
+            session.execute(stmt)
+        log_upsert_commit("qmt.stock_daily", len(batch))
 
 
-def _bulk_upsert_minute(session, records: List[dict], batch_size: int = 1000):
+def _bulk_upsert_minute(
+    records: List[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     for i in range(0, len(records), batch_size):
         batch = records[i: i + batch_size]
-        stmt = insert(StockMinute).values(batch)
-        stmt = stmt.on_conflict_do_nothing(constraint="uq_minute")
-        session.execute(stmt)
+        with get_session() as session:
+            stmt = insert(StockMinute).values(batch)
+            stmt = stmt.on_conflict_do_nothing(constraint="uq_minute")
+            session.execute(stmt)
+        log_upsert_commit("qmt.stock_minute", len(batch))
 
 
-def _bulk_upsert_index(session, records: List[dict], batch_size: int = 1000):
+def _bulk_upsert_index(
+    records: List[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     for i in range(0, len(records), batch_size):
         batch = records[i: i + batch_size]
-        stmt = insert(MarketIndex).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["index_code", "trade_date"],
-            set_={
-                "index_name": stmt.excluded.index_name,
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "amount": stmt.excluded.amount,
-            },
-        )
-        session.execute(stmt)
+        with get_session() as session:
+            stmt = insert(MarketIndex).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["index_code", "trade_date"],
+                set_={
+                    "index_name": stmt.excluded.index_name,
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "amount": stmt.excluded.amount,
+                },
+            )
+            session.execute(stmt)
+        log_upsert_commit("qmt.market_index", len(batch))

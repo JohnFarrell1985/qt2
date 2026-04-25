@@ -18,6 +18,8 @@ akshare 始终延迟导入, CI 环境无需安装。
 from __future__ import annotations
 
 import math
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, func, not_, or_, text
@@ -25,6 +27,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.common.config import settings
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import Stock, StockDaily, MarketIndex
 
@@ -211,9 +214,9 @@ class AkshareDataSync:
             return 0
 
         count = 0
-        with get_session() as session:
-            for i in range(0, len(records), 500):
-                batch = records[i: i + 500]
+        for i in range(0, len(records), DEFAULT_TABLE_UPSERT_FLUSH):
+            batch = records[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
                 stmt = insert(Stock).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code"],
@@ -223,7 +226,8 @@ class AkshareDataSync:
                     },
                 )
                 session.execute(stmt)
-                count += len(batch)
+            count += len(batch)
+            log_upsert_commit("akshare.stock_list", len(batch))
 
         logger.info("A 股股票列表同步完成, 共 %d 只", count)
         return count
@@ -239,9 +243,35 @@ class AkshareDataSync:
         - 深证: ``stock_info_sz_name_code`` (A股列表, 含 ``所属行业``)
         - 北证: ``stock_info_bj_name_code``
 
-        冲突键为 ``code``; 使用 ``COALESCE`` 避免用 NULL 覆盖已有 ``industry``。
+        主键/唯一键为 ``stocks.code``; 写入用 ``ON CONFLICT (code) DO UPDATE`` 做幂等合并 (与「是否全量重拉」无关).
+
+        **短路 (默认开)**: ``DATACOLLECT_EXCHANGE_INFO_SKIP_IF_NO_GAP`` 为真(默认)时, 若库中已有 6 位代码且
+        其 ``list_date`` 均已非空, **不访问**上交所/深所/北交所接口, 直接 ``return 0``。
+        ``sync_stocks_full`` 中 ``stock_list`` 在前, 新股入库后通常仍缺 ``list_date`` 会继续全量拉。
+        若需**强制**与交易所全量对账(仅 industry 等变更、list_date 已齐也会跳过), 设
+        ``DATACOLLECT_EXCHANGE_INFO_SKIP_IF_NO_GAP=false``.
         """
         import pandas as pd
+
+        if settings.datacollect.exchange_info_skip_if_no_list_date_gap:
+            with get_session(readonly=True) as session:
+                code6 = func.length(func.trim(Stock.code)) == 6
+                n_total = int(
+                    session.query(func.count(Stock.code)).filter(code6).scalar() or 0,
+                )
+                n_gaps = int(
+                    session.query(func.count(Stock.code))
+                    .filter(code6, Stock.list_date.is_(None))
+                    .scalar()
+                    or 0,
+                )
+            if n_total > 0 and n_gaps == 0:
+                logger.info(
+                    "交易所基础表: 6 位代码 %d 只均已含 list_date, 跳过全量拉取与 upsert "
+                    "(设 DATACOLLECT_EXCHANGE_INFO_SKIP_IF_NO_GAP=false 可强制重跑)",
+                    n_total,
+                )
+                return 0
 
         logger.info("从沪深北交易所基础表补全 stocks 上市日期/行业...")
 
@@ -354,9 +384,9 @@ class AkshareDataSync:
 
         records = list(rows_out.values())
         count = 0
-        with get_session() as session:
-            for i in range(0, len(records), 500):
-                batch = records[i: i + 500]
+        for i in range(0, len(records), DEFAULT_TABLE_UPSERT_FLUSH):
+            batch = records[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
                 stmt = insert(Stock).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code"],
@@ -375,7 +405,8 @@ class AkshareDataSync:
                     },
                 )
                 session.execute(stmt)
-                count += len(batch)
+            count += len(batch)
+            log_upsert_commit("akshare.exchange_info", len(batch))
 
         logger.info("交易所基础信息补全完成, 共 %d 只", count)
         return count
@@ -384,7 +415,10 @@ class AkshareDataSync:
     # A09c: 补全 stocks 估值/地域 (东财全市场快照)
     # ----------------------------------------------------------------
 
-    def enrich_stocks_from_spot(self) -> int:
+    def enrich_stocks_from_spot(
+        self,
+        stall_check: Callable[[], bool] | None = None,
+    ) -> int:
         """从 ``stock_zh_a_spot_em`` 补全 ``stocks`` 表中估值、市值等字段.
 
         与 ``sync_stock_list`` 的备用数据源一致, 单次调用由 akshare 内部分页拉全市场.
@@ -393,17 +427,15 @@ class AkshareDataSync:
 
         使用 ``COALESCE`` 避免用 NULL 覆盖已有列 (如交易所补全的 industry)。
 
+        Args:
+            stall_check: 若可调用且返回 True (如 ``parallel_qmt`` 本类 120s 无落盘), 放弃东财重试,
+                返回 0 以便 ``sync_stocks_full`` 继续 **新浪 / QMT** 等下一数据源。
+
         Returns:
             成功参与 upsert 的股票数量
         """
         import pandas as pd
         import requests
-        from tenacity import (
-            retry,
-            retry_if_exception,
-            stop_after_attempt,
-            wait_exponential,
-        )
 
         logger.info("从 stock_zh_a_spot_em 补全 stocks 估值/市值 (带网络重试)...")
 
@@ -422,28 +454,36 @@ class AkshareDataSync:
                 return True
             return False
 
-        @retry(
-            reraise=True,
-            stop=stop_after_attempt(10),
-            wait=wait_exponential(multiplier=1, min=3, max=120),
-            retry=retry_if_exception(_is_transient_em),
-            before_sleep=lambda rs: logger.warning(
-                "stock_zh_a_spot_em 重试 %s/10: %s",
-                rs.attempt_number,
-                rs.outcome.exception() if rs.outcome else "",
-            ),
-        )
-        def _fetch_spot():
-            return self._call_ak("stock_zh_a_spot_em")
-
-        try:
-            df = _fetch_spot()
-        except Exception as e:
-            logger.error(
-                "stock_zh_a_spot_em 多次重试仍失败: %s — 请检查网络/代理后执行 "
-                "`uv run python -m src.data.akshare_sync enrich`",
-                e,
-            )
+        max_attempts = 10
+        df = None
+        last_exc: BaseException | None = None
+        for attempt in range(1, max_attempts + 1):
+            if stall_check and stall_check():
+                logger.warning(
+                    "stock_zh_a_spot_em: 编排器本类滞停, 放弃东财 (继续 sync_stocks_full 内后续数据源)",
+                )
+                return 0
+            try:
+                df = self._call_ak("stock_zh_a_spot_em")
+                break
+            except Exception as e:  # noqa: BLE001
+                last_exc = e
+                if not _is_transient_em(e) or attempt >= max_attempts:
+                    break
+                wait_s = min(120.0, 3.0 * (2.0 ** (attempt - 1)))
+                logger.warning(
+                    "stock_zh_a_spot_em 重试 %s/10: %s",
+                    attempt,
+                    e,
+                )
+                time.sleep(wait_s)
+        if df is None:
+            if last_exc is not None:
+                logger.error(
+                    "stock_zh_a_spot_em 多次重试仍失败: %s — 请检查网络/代理; "
+                    "sync_stocks_full 可继续新浪/其它源",
+                    last_exc,
+                )
             return 0
 
         if df is None or df.empty:
@@ -537,9 +577,15 @@ class AkshareDataSync:
             return 0
 
         count = 0
-        with get_session() as session:
-            for i in range(0, len(records), 500):
-                batch = records[i: i + 500]
+        for i in range(0, len(records), DEFAULT_TABLE_UPSERT_FLUSH):
+            if stall_check and stall_check():
+                logger.warning(
+                    "stock_zh_a_spot_em: 批间滞停, 已落盘约 %d 行, 余量由 sync_stocks_full 后续子步骤补",
+                    count,
+                )
+                return count
+            batch = records[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
                 stmt = insert(Stock).values(batch)
                 ex = stmt.excluded
                 stmt = stmt.on_conflict_do_update(
@@ -557,7 +603,8 @@ class AkshareDataSync:
                     },
                 )
                 session.execute(stmt)
-                count += len(batch)
+            count += len(batch)
+            log_upsert_commit("akshare.spot_em", len(batch))
 
         logger.info("stocks 扩展字段补全完成, 共 %d 只", count)
         return count
@@ -663,9 +710,9 @@ class AkshareDataSync:
             return 0
 
         count = 0
-        with get_session() as session:
-            for i in range(0, len(records), 500):
-                batch = records[i: i + 500]
+        for i in range(0, len(records), DEFAULT_TABLE_UPSERT_FLUSH):
+            batch = records[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
                 stmt = insert(Stock).values(batch)
                 ex = stmt.excluded
                 stmt = stmt.on_conflict_do_update(
@@ -680,7 +727,8 @@ class AkshareDataSync:
                     },
                 )
                 session.execute(stmt)
-                count += len(batch)
+            count += len(batch)
+            log_upsert_commit("akshare.sina_hs_a", len(batch))
 
         logger.info("新浪 hs_a 估值补全完成, 共 %d 只", count)
         return count
@@ -813,6 +861,7 @@ class AkshareDataSync:
                     },
                 )
                 sess.execute(stmt)
+                log_upsert_commit("akshare.cninfo_profile", len(chunk))
             updated += len(rows)
             rows.clear()
 
@@ -931,30 +980,41 @@ class AkshareDataSync:
 
         logger.info("QMT 合并: 沪深A股成分 %d 只", len(main_codes))
 
-        with get_session() as session:
-            for full_code in main_codes:
-                try:
-                    detail = client.get_instrument_detail(full_code)
-                    if not detail:
-                        continue
-                    code = full_code.split(".")[0]
-                    ex = full_code.split(".")[-1] if "." in full_code else ""
-                    nm = (detail.get("InstrumentName") or "").strip()
-                    if len(nm) > 50:
-                        nm = nm[:50]
-                    row = {
-                        "code": code,
-                        "name": nm or code,
-                        "exchange": ex or None,
-                        "list_date": _parse_open_date(detail.get("OpenDate")),
-                        "updated_at": datetime.now(),
-                    }
-                    _merge_upsert(session, row)
-                    total += 1
-                except Exception as e:
-                    failed += 1
-                    if failed <= 5:
-                        logger.debug("QMT %s detail 失败: %s", full_code, e)
+        pending: list[dict] = []
+        for full_code in main_codes:
+            try:
+                detail = client.get_instrument_detail(full_code)
+                if not detail:
+                    continue
+                code = full_code.split(".")[0]
+                ex = full_code.split(".")[-1] if "." in full_code else ""
+                nm = (detail.get("InstrumentName") or "").strip()
+                if len(nm) > 50:
+                    nm = nm[:50]
+                row = {
+                    "code": code,
+                    "name": nm or code,
+                    "exchange": ex or None,
+                    "list_date": _parse_open_date(detail.get("OpenDate")),
+                    "updated_at": datetime.now(),
+                }
+                pending.append(row)
+                if len(pending) >= DEFAULT_TABLE_UPSERT_FLUSH:
+                    with get_session() as session:
+                        for r in pending:
+                            _merge_upsert(session, r)
+                    total += len(pending)
+                    pending.clear()
+            except Exception as e:
+                failed += 1
+                if failed <= 5:
+                    logger.debug("QMT %s detail 失败: %s", full_code, e)
+
+        if pending:
+            with get_session() as session:
+                for r in pending:
+                    _merge_upsert(session, r)
+            total += len(pending)
 
         main_n = total
         bj_n = self._enrich_bj_list_date_from_qmt(client)
@@ -990,27 +1050,50 @@ class AkshareDataSync:
 
         logger.info("QMT 北交所补漏 list_date: %d 只", len(codes))
         n = 0
-        with get_session() as session:
-            for code in codes:
-                full = f"{code}.BJ"
-                try:
-                    detail = client.get_instrument_detail(full)
-                    if not detail:
-                        continue
-                    ld = _parse_open_date(detail.get("OpenDate"))
-                    if ld is None:
-                        continue
-                    nm = (detail.get("InstrumentName") or "").strip()
-                    if len(nm) > 50:
-                        nm = nm[:50]
-                    row = {
-                        "code": code,
-                        "name": nm or code,
-                        "exchange": "BJ",
-                        "list_date": ld,
-                        "updated_at": datetime.now(),
-                    }
-                    stmt = insert(Stock).values(**row)
+        pending_bj: list[dict] = []
+        for code in codes:
+            full = f"{code}.BJ"
+            try:
+                detail = client.get_instrument_detail(full)
+                if not detail:
+                    continue
+                ld = _parse_open_date(detail.get("OpenDate"))
+                if ld is None:
+                    continue
+                nm = (detail.get("InstrumentName") or "").strip()
+                if len(nm) > 50:
+                    nm = nm[:50]
+                row = {
+                    "code": code,
+                    "name": nm or code,
+                    "exchange": "BJ",
+                    "list_date": ld,
+                    "updated_at": datetime.now(),
+                }
+                pending_bj.append(row)
+                if len(pending_bj) >= DEFAULT_TABLE_UPSERT_FLUSH:
+                    with get_session() as session:
+                        for rw in pending_bj:
+                            stmt = insert(Stock).values(**rw)
+                            ex = stmt.excluded
+                            stmt = stmt.on_conflict_do_update(
+                                index_elements=["code"],
+                                set_={
+                                    "name": func.coalesce(ex.name, Stock.name),
+                                    "exchange": func.coalesce(ex.exchange, Stock.exchange),
+                                    "list_date": func.coalesce(ex.list_date, Stock.list_date),
+                                    "updated_at": ex.updated_at,
+                                },
+                            )
+                            session.execute(stmt)
+                    n += len(pending_bj)
+                    pending_bj.clear()
+            except Exception:
+                continue
+        if pending_bj:
+            with get_session() as session:
+                for rw in pending_bj:
+                    stmt = insert(Stock).values(**rw)
                     ex = stmt.excluded
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["code"],
@@ -1022,20 +1105,24 @@ class AkshareDataSync:
                         },
                     )
                     session.execute(stmt)
-                    n += 1
-                except Exception:
-                    continue
+            n += len(pending_bj)
         return n
 
     def try_enrich_from_qmt(self) -> int:
         """兼容旧调用: 与 :meth:`enrich_stocks_from_qmt` 相同 (合并模式, 非整表覆盖)。"""
         return self.enrich_stocks_from_qmt()
 
-    def sync_stocks_full(self, use_qmt: bool = False) -> dict[str, int]:
+    def sync_stocks_full(
+        self,
+        use_qmt: bool = False,
+        *,
+        stall_check: Callable[[], bool] | None = None,
+    ) -> dict[str, int]:
         """补全 ``stocks`` 推荐流程: akshare 列表 → 交易所表 → 东财估值 → **QMT 合并兜底**。
 
         Args:
             use_qmt: 已废弃; QMT 合并默认执行。传 True 时仅打一行说明。
+            stall_check: 若可调用且返回 True(如 parallel_qmt 本类 120s 无落盘), 不再执行后续子步骤, 返回已完成的 results。
         """
         db_tail = settings.database.url
         if "@" in db_tail:
@@ -1045,17 +1132,45 @@ class AkshareDataSync:
             logger.info("sync_stocks_full: --use-qmt 已默认内置 QMT 合并, 无需再指定")
 
         results: dict[str, int] = {}
+
+        def _stall() -> bool:
+            if stall_check and stall_check():
+                logger.warning(
+                    "sync_stocks_full: 编排器判定本类滞停(约无批量落盘), 跳过后续子步骤, 已写入: %s",
+                    list(results.keys()),
+                )
+                return True
+            return False
+
         results["stock_list"] = self.sync_stock_list()
+        if _stall():
+            return results
         results["exchange_info"] = self.enrich_stocks_from_exchange_info()
-        results["spot_enrich"] = self.enrich_stocks_from_spot()
+        if _stall():
+            return results
+        results["spot_enrich"] = self.enrich_stocks_from_spot(stall_check=stall_check)
+        if _stall():
+            return results
         results["spot_sina"] = self.enrich_stocks_from_spot_sina()
+        if _stall():
+            return results
         results["qmt_merge"] = self.enrich_stocks_from_qmt()
+        if _stall():
+            return results
         results["roe_from_financial"] = (
             self.enrich_stocks_roe_from_financial_indicator()
         )
+        if _stall():
+            return results
         results["sector_board"] = self.enrich_stocks_sector_board_defaults()
+        if _stall():
+            return results
         results["exchange_920"] = self.fix_stocks_exchange_bj_920()
+        if _stall():
+            return results
         results["cninfo_profile"] = self.enrich_stocks_from_cninfo_profile()
+        if _stall():
+            return results
         logger.info("sync_stocks_full 完成: %s", results)
         return results
 
@@ -1114,9 +1229,7 @@ class AkshareDataSync:
                     logger.warning("获取 %s 日线失败: %s", code, e)
 
             if batch_records:
-                with get_session() as session:
-                    inserted = _bulk_upsert_daily(session, batch_records)
-                    total_inserted += inserted
+                total_inserted += _bulk_upsert_daily(batch_records)
 
             logger.info(
                 "批次 %d/%d 完成, 本批入库 %d 条",
@@ -1207,9 +1320,7 @@ class AkshareDataSync:
 
                 records = self._parse_index_df(index_code, index_name, df)
                 if records:
-                    with get_session() as session:
-                        inserted = _bulk_upsert_index(session, records)
-                        total_inserted += inserted
+                    total_inserted += _bulk_upsert_index(records)
 
                 logger.info(
                     "指数 %s (%s) 同步 %d 条",
@@ -1297,52 +1408,60 @@ def _safe_int(row, col: str) -> int | None:
     return None
 
 
-def _bulk_upsert_daily(session, records: list[dict], batch_size: int = 1000) -> int:
+def _bulk_upsert_daily(
+    records: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> int:
     count = 0
     for i in range(0, len(records), batch_size):
         batch = records[i: i + batch_size]
-        stmt = insert(StockDaily).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["code", "trade_date"],
-            set_={
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "amount": stmt.excluded.amount,
-                "amplitude": stmt.excluded.amplitude,
-                "change_pct": stmt.excluded.change_pct,
-                "change": stmt.excluded.change,
-                "turnover_rate": stmt.excluded.turnover_rate,
-            },
-        )
-        session.execute(stmt)
+        with get_session() as session:
+            stmt = insert(StockDaily).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["code", "trade_date"],
+                set_={
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "amount": stmt.excluded.amount,
+                    "amplitude": stmt.excluded.amplitude,
+                    "change_pct": stmt.excluded.change_pct,
+                    "change": stmt.excluded.change,
+                    "turnover_rate": stmt.excluded.turnover_rate,
+                },
+            )
+            session.execute(stmt)
         count += len(batch)
+        log_upsert_commit("akshare.stock_daily", len(batch))
     return count
 
 
-def _bulk_upsert_index(session, records: list[dict], batch_size: int = 1000) -> int:
+def _bulk_upsert_index(
+    records: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> int:
     count = 0
     for i in range(0, len(records), batch_size):
         batch = records[i: i + batch_size]
-        stmt = insert(MarketIndex).values(batch)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["index_code", "trade_date"],
-            set_={
-                "index_name": stmt.excluded.index_name,
-                "open": stmt.excluded.open,
-                "high": stmt.excluded.high,
-                "low": stmt.excluded.low,
-                "close": stmt.excluded.close,
-                "volume": stmt.excluded.volume,
-                "amount": stmt.excluded.amount,
-                "change": stmt.excluded.change,
-                "change_pct": stmt.excluded.change_pct,
-            },
-        )
-        session.execute(stmt)
+        with get_session() as session:
+            stmt = insert(MarketIndex).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["index_code", "trade_date"],
+                set_={
+                    "index_name": stmt.excluded.index_name,
+                    "open": stmt.excluded.open,
+                    "high": stmt.excluded.high,
+                    "low": stmt.excluded.low,
+                    "close": stmt.excluded.close,
+                    "volume": stmt.excluded.volume,
+                    "amount": stmt.excluded.amount,
+                    "change": stmt.excluded.change,
+                    "change_pct": stmt.excluded.change_pct,
+                },
+            )
+            session.execute(stmt)
         count += len(batch)
+        log_upsert_commit("akshare.market_index", len(batch))
     return count
 
 

@@ -10,6 +10,7 @@ from sqlalchemy import inspect as sa_inspect, text
 from sqlalchemy.dialects.postgresql import insert
 
 from src.common.db import get_session, get_engine
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +25,7 @@ class BulkWriter:
         - "auto": COPY if table empty, else UPSERT
     """
 
-    def __init__(self, batch_size: int = 5000):
+    def __init__(self, batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH):
         self._batch_size = batch_size
 
     def write(
@@ -185,6 +186,7 @@ class BulkWriter:
                     stmt = stmt.on_conflict_do_nothing(index_elements=conflict_columns)
                 session.execute(stmt)
             total_written += len(batch)
+            log_upsert_commit(f"bulk_writer.{getattr(model, '__tablename__', model)}", len(batch))
 
         logger.info(
             "upsert %d records into %s (%d batches)",

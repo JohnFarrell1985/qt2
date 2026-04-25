@@ -38,6 +38,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.common.config import settings
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import ETFDaily, ETFInfo, MarketIndex, StockDaily, Stock
 
@@ -1011,7 +1012,9 @@ def _qq_fetch_index(code: str, start_date: str, end_date: str) -> list[dict]:
 # 批量 upsert
 # ==================================================================
 
-def _bulk_upsert_stock_daily(records: list[dict], batch_size: int = 2000) -> None:
+def _bulk_upsert_stock_daily(
+    records: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     if not records:
         return
     with get_session() as session:
@@ -1034,9 +1037,12 @@ def _bulk_upsert_stock_daily(records: list[dict], batch_size: int = 2000) -> Non
                 },
             )
             session.execute(stmt)
+            log_upsert_commit("kline.stock_daily", len(batch))
 
 
-def _bulk_upsert_etf_daily(records: list[dict], batch_size: int = 2000) -> None:
+def _bulk_upsert_etf_daily(
+    records: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     if not records:
         return
     with get_session() as session:
@@ -1055,9 +1061,12 @@ def _bulk_upsert_etf_daily(records: list[dict], batch_size: int = 2000) -> None:
                 },
             )
             session.execute(stmt)
+            log_upsert_commit("kline.etf_daily", len(batch))
 
 
-def _bulk_upsert_index_daily(records: list[dict], batch_size: int = 2000) -> None:
+def _bulk_upsert_index_daily(
+    records: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+) -> None:
     if not records:
         return
     with get_session() as session:
@@ -1079,6 +1088,7 @@ def _bulk_upsert_index_daily(records: list[dict], batch_size: int = 2000) -> Non
                 },
             )
             session.execute(stmt)
+            log_upsert_commit("kline.market_index", len(batch))
 
 
 # ==================================================================
@@ -1262,11 +1272,27 @@ def _cell_to_date(v: Any) -> date:
     raise TypeError(f"expected date, got {type(v)}")
 
 
+_EXCHANGE_CALENDARS_WARNED: bool = False
+
+
 def _xshg_trading_session_dates(d0: date, d1: date) -> list[date]:
-    """沪深京市历 (``XSHG``) 在 ``[d0,d1]`` 闭区间内的交易日列表, 升序。"""
+    """沪深京市历 (``XSHG``) 在 ``[d0,d1]`` 闭区间内的交易日列表, 升序.
+
+    优先 ``exchange_calendars``; 未安装时见 :func:`_xshg_trading_session_dates_fallback`.
+    """
     if d0 > d1:
         return []
-    import exchange_calendars as ec
+    try:
+        import exchange_calendars as ec
+    except ImportError:
+        global _EXCHANGE_CALENDARS_WARNED
+        if not _EXCHANGE_CALENDARS_WARNED:
+            _EXCHANGE_CALENDARS_WARNED = True
+            logger.warning(
+                "未安装 exchange_calendars, 将用库内 ``trading_date`` 或工作日近似; "
+                "请在项目根执行 ``uv sync`` 以与 pyproject 对齐",
+            )
+        return _xshg_trading_session_dates_fallback(d0, d1)
 
     cal = ec.get_calendar("XSHG")
     sess = cal.sessions_in_range(
@@ -1274,6 +1300,40 @@ def _xshg_trading_session_dates(d0: date, d1: date) -> list[date]:
         pd.Timestamp(d1),
     )
     return [ts.date() for ts in sess]
+
+
+def _xshg_trading_session_dates_fallback(d0: date, d1: date) -> list[date]:
+    """无 exchange_calendars 时: 先 ``trading_date``(SH、非节假日线), 再 Mon–Fri 近似。"""
+    q = text(
+        """
+        SELECT DISTINCT trade_date FROM trading_date
+        WHERE market = 'SH' AND trade_date >= :a AND trade_date <= :b
+          AND (is_holiday IS NULL OR is_holiday = false)
+        ORDER BY trade_date
+        """
+    )
+    with get_session(readonly=True) as session:
+        rows = session.execute(q, {"a": d0, "b": d1}).fetchall()
+    if rows:
+        out = [r[0] for r in rows if r[0] is not None]
+        if out:
+            logger.info(
+                "XSHG 交易日(回退, 使用库内 SH 历): %d 天, %s ~ %s",
+                len(out), out[0], out[-1],
+            )
+            return out
+
+    d = d0
+    out_wd: list[date] = []
+    while d <= d1:
+        if d.weekday() < 5:
+            out_wd.append(d)
+        d += timedelta(days=1)
+    logger.warning(
+        "``trading_date`` 无覆盖区间且未装 exchange_calendars, 使用工作日近似 %d 天 (不含长假, 续传/补缺可能偏差)",
+        len(out_wd),
+    )
+    return out_wd
 
 
 def _load_table_code_trade_dates(

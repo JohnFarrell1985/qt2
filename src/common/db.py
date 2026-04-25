@@ -30,6 +30,19 @@ def _ensure_factor_meta_columns(conn) -> None:
     """))
 
 
+def _ensure_alt_dcp_scope_key_width(conn) -> None:
+    """``alt_datacollect_progress.scope_key`` 自 32 扩为 64 (指数/映射键)."""
+    try:
+        conn.execute(
+            text(
+                "ALTER TABLE public.alt_datacollect_progress "
+                "ALTER COLUMN scope_key TYPE VARCHAR(64);",
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class Base(DeclarativeBase):
     """ORM 模型基类 — SQLAlchemy 2.x DeclarativeBase"""
     pass
@@ -108,10 +121,16 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_database():
-    """建表, 带启动重试 (容器场景下 DB 可能还未就绪)"""
+    """建表 + 幂等补列 (``create_all`` 不 ALTER 旧表), 带启动重试.
+
+    注册全量 ``Base`` 模型后 ``create_all``, 再执行 :func:`_ensure_factor_meta_columns`、
+    :func:`_ensure_alt_dcp_scope_key_width` 等与 ORM 对齐的增量 SQL.
+    """
     import src.data.models  # noqa: F401 — 确保 ORM 模型注册到 Base.metadata
     import src.datacollect.models  # noqa: F401
     import src.sentiment.models  # noqa: F401
+    import src.dataclean.models  # noqa: F401
+    import src.distill.models  # noqa: F401
 
     max_retries = _max_startup_retries()
     backoff_base = _startup_backoff_base()
@@ -122,7 +141,11 @@ def init_database():
                 conn.execute(text("SELECT 1"))
                 Base.metadata.create_all(bind=conn)
                 _ensure_factor_meta_columns(conn)
-            logger.info("数据库初始化完成")
+                _ensure_alt_dcp_scope_key_width(conn)
+            logger.info(
+                "数据库初始化完成 (create_all + factor_meta/alt_dcp 幂等补列); "
+                "旧库 factor_meta 约束见 scripts/repair_factor_meta_schema.py",
+            )
             return
         except Exception as e:
             wait = backoff_base ** attempt

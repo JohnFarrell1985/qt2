@@ -7,6 +7,7 @@
 - 财务因子: 通过 get_financial_data 从 Pershareindex / Balance / Income / CashFlow / Capital 获取
 - 技术/动量/情绪因子: 通过 K 线数据自行计算 (后续扩展)
 """
+from collections.abc import Callable
 from datetime import date
 from typing import Any, List, Dict, Optional
 
@@ -15,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import FactorMeta, FactorValue
 from src.data.qmt_client import QMTClient
@@ -89,36 +91,41 @@ class FactorDataManager:
 
     def init_factor_meta(self) -> int:
         """初始化因子元信息表: 新行插入, 按 (factor_name, version) 冲突则更新元数据/中文说明."""
-        count = 0
-        with get_session() as session:
-            for category, factors in FACTOR_CATALOG.items():
-                for f in factors:
-                    row = {
-                        "factor_name": f["name"],
-                        "version": 1,
-                        "category": category,
-                        "description": f.get("desc", ""),
-                        "data_source": f.get("data_source") or "qmt",
-                        "qmt_field": f.get("qmt_field", ""),
-                        "factor_kind": f.get("factor_kind"),
-                        "update_freq": f.get("update_freq"),
-                        "storage_hint": f.get("storage_hint"),
-                    }
-                    stmt = insert(FactorMeta).values(**row)
-                    stmt = stmt.on_conflict_do_update(
-                        constraint="uq_factor_name_version",
-                        set_={
-                            "category": row["category"],
-                            "description": row["description"],
-                            "data_source": row["data_source"],
-                            "qmt_field": row["qmt_field"],
-                            "factor_kind": row["factor_kind"],
-                            "update_freq": row["update_freq"],
-                            "storage_hint": row["storage_hint"],
-                        },
-                    )
-                    session.execute(stmt)
-                    count += 1
+        rows_out: list[dict] = []
+        for category, factors in FACTOR_CATALOG.items():
+            for f in factors:
+                row = {
+                    "factor_name": f["name"],
+                    "version": 1,
+                    "category": category,
+                    "description": f.get("desc", ""),
+                    "data_source": f.get("data_source") or "qmt",
+                    "qmt_field": f.get("qmt_field", ""),
+                    "factor_kind": f.get("factor_kind"),
+                    "update_freq": f.get("update_freq"),
+                    "storage_hint": f.get("storage_hint"),
+                }
+                rows_out.append(row)
+
+        for i in range(0, len(rows_out), DEFAULT_TABLE_UPSERT_FLUSH):
+            batch = rows_out[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
+                stmt = insert(FactorMeta).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_factor_name_version",
+                    set_={
+                        "category": stmt.excluded.category,
+                        "description": stmt.excluded.description,
+                        "data_source": stmt.excluded.data_source,
+                        "qmt_field": stmt.excluded.qmt_field,
+                        "factor_kind": stmt.excluded.factor_kind,
+                        "update_freq": stmt.excluded.update_freq,
+                        "storage_hint": stmt.excluded.storage_hint,
+                    },
+                )
+                session.execute(stmt)
+            log_upsert_commit("qmt.factor_meta", len(batch))
+        count = len(rows_out)
         logger.info(f"已初始化 {count} 个因子元信息")
         return count
 
@@ -133,11 +140,14 @@ class FactorDataManager:
         stock_list: List[str],
         start_time: str = "",
         end_time: str = "",
+        stall_check: Callable[[], bool] | None = None,
     ) -> int:
         """从QMT同步因子数据到数据库
 
         流程: download_financial_data2 → get_financial_data → 解析入库
         """
+        if stall_check and stall_check():
+            return 0
         meta_map = self.get_factor_meta()
         if not meta_map:
             self.init_factor_meta()
@@ -158,6 +168,8 @@ class FactorDataManager:
 
         table_list = list(table_to_fields.keys())
 
+        if stall_check and stall_check():
+            return 0
         self.engine.download_financial(
             stock_list,
             table_list=table_list,
@@ -165,6 +177,8 @@ class FactorDataManager:
             end_time=end_time,
         )
 
+        if stall_check and stall_check():
+            return 0
         raw_data = self.client.get_financial_data(
             stock_list=stock_list,
             table_list=table_list,
@@ -173,45 +187,55 @@ class FactorDataManager:
             report_type="announce_time",
         )
 
-        total = 0
-        with get_session() as session:
-            for table_name, table_df in raw_data.items():
-                if table_df is None or not isinstance(table_df, pd.DataFrame) or table_df.empty:
+        to_write: list[dict] = []
+        for table_name, table_df in raw_data.items():
+            if table_df is None or not isinstance(table_df, pd.DataFrame) or table_df.empty:
+                continue
+            factor_defs = table_to_fields.get(table_name, [])
+            for f_def in factor_defs:
+                qmt_field = f_def["qmt_field"]
+                field_col = qmt_field.split(".", 1)[1] if "." in qmt_field else qmt_field
+                factor_name = f_def["name"]
+                if factor_name not in meta_map:
                     continue
-                factor_defs = table_to_fields.get(table_name, [])
-                for f_def in factor_defs:
-                    qmt_field = f_def["qmt_field"]
-                    field_col = qmt_field.split(".", 1)[1] if "." in qmt_field else qmt_field
-                    factor_name = f_def["name"]
-                    if factor_name not in meta_map:
+                factor_id = meta_map[factor_name]
+
+                if field_col not in table_df.columns:
+                    logger.debug(f"字段 {field_col} 不在 {table_name} 的列中, 跳过")
+                    continue
+
+                for idx, val in table_df[field_col].items():
+                    if pd.isna(val):
                         continue
-                    factor_id = meta_map[factor_name]
-
-                    if field_col not in table_df.columns:
-                        logger.debug(f"字段 {field_col} 不在 {table_name} 的列中, 跳过")
+                    try:
+                        trade_date = pd.Timestamp(idx).date()
+                    except Exception:
                         continue
 
-                    for idx, val in table_df[field_col].items():
-                        if pd.isna(val):
-                            continue
-                        try:
-                            trade_date = pd.Timestamp(idx).date()
-                        except Exception:
-                            continue
+                    code = str(idx).split(".")[0] if "." in str(idx) else str(idx)
+                    to_write.append({
+                        "trade_date": trade_date,
+                        "code": code,
+                        "factor_id": factor_id,
+                        "value": float(val),
+                    })
 
-                        code = str(idx).split(".")[0] if "." in str(idx) else str(idx)
-
-                        stmt = insert(FactorValue).values(
-                            trade_date=trade_date,
-                            code=code,
-                            factor_id=factor_id,
-                            value=float(val),
-                        ).on_conflict_do_update(
-                            constraint="uq_factor_value",
-                            set_={"value": float(val)},
-                        )
-                        session.execute(stmt)
-                        total += 1
+        n_written = 0
+        for i in range(0, len(to_write), DEFAULT_TABLE_UPSERT_FLUSH):
+            if stall_check and stall_check():
+                logger.warning("sync_factors: 落盘前滞停, 已落 %d 行", n_written)
+                return n_written
+            batch = to_write[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+            with get_session() as session:
+                stmt = insert(FactorValue).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_factor_value",
+                    set_={"value": stmt.excluded.value},
+                )
+                session.execute(stmt)
+            log_upsert_commit("qmt.factor_value", len(batch))
+            n_written += len(batch)
+        total = n_written
         logger.info(f"已同步 {total} 条因子数据")
         return total
 

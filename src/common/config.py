@@ -368,6 +368,8 @@ class DatacollectConfig(BaseSettings):
     akshare_burst: int = Field(default=3, alias="DATACOLLECT_AKSHARE_BURST")
     baostock_rate: float = Field(default=5.0, alias="DATACOLLECT_BAOSTOCK_RATE")
     baostock_burst: int = Field(default=10, alias="DATACOLLECT_BAOSTOCK_BURST")
+    # 总开关: false 时忽略 TUSHARE_TOKEN, 全库不走 Tushare(另类级联/采集器均跳过)
+    tushare_enabled: bool = Field(default=False, alias="TUSHARE_ENABLED")
     tushare_token: str = Field(default="", alias="TUSHARE_TOKEN")
     tushare_rate: float = Field(default=0.8, alias="DATACOLLECT_TUSHARE_RATE")
     tushare_burst: int = Field(default=5, alias="DATACOLLECT_TUSHARE_BURST")
@@ -380,6 +382,25 @@ class DatacollectConfig(BaseSettings):
     max_retries: int = Field(default=5, alias="DATACOLLECT_MAX_RETRIES")
     retry_backoff_base: float = Field(default=2.0, alias="DATACOLLECT_RETRY_BACKOFF")
     request_timeout: int = Field(default=30, alias="DATACOLLECT_REQUEST_TIMEOUT")
+    # 另类多源级联 (``alt_source_cascade.run_source_stack``): 每个数据源单段内累计等待上限(秒)
+    source_cascade_per_source_timeout_sec: float = Field(
+        default=120.0, alias="DATACOLLECT_SOURCE_PER_SOURCE_TIMEOUT_SEC",
+    )
+    # 同一整段续传任务内: 某级联源连续「无有效行」达此次数后, 本任务内不再调用该源 (避免对历史缺权限源逐日空转)
+    cascade_strike_disable_after: int = Field(
+        default=5,
+        alias="DATACOLLECT_CASCADE_STRIKE_DISABLE",
+    )
+    # 个股资金流: 东财/同花顺全市场「快照」类接口参与级联的距今日自然日窗口; 超出则仅有 Tushare(若有) 等有历史按日全市场口径
+    mf_snapshot_fallback_days: int = Field(
+        default=30,
+        alias="DATACOLLECT_MF_SNAPSHOT_FALLBACK_DAYS",
+    )
+    # 机构调研: ``stock_jgdy_tj_em`` 按单锚点日拉全表再筛到区间内; 多锚点=多级联源(约 5 个)
+    survey_tj_anchors: int = Field(
+        default=5,
+        alias="DATACOLLECT_SURVEY_TJ_ANCHORS",
+    )
     proxy_url: str = Field(default="", alias="DATACOLLECT_PROXY_URL")
     # 与 ``probe_qmt_etf_sector_size`` 只数对比, 仅打日志参考; 不限制 ETF 是否先拉 MiniQMT
     qmt_etf_min_sector_size: int = Field(
@@ -399,6 +420,11 @@ class DatacollectConfig(BaseSettings):
     kline_fill_interior_gaps: bool = Field(
         default=True,
         alias="DATACOLLECT_KLINE_FILL_INTERIOR_GAPS",
+    )
+    # ``enrich_stocks_from_exchange_info``: 若 6 位 A 股代码在库内 list_date 均已非空, 则跳过全量拉取(新股 list_date 空仍会跑)
+    exchange_info_skip_if_no_list_date_gap: bool = Field(
+        default=True,
+        alias="DATACOLLECT_EXCHANGE_INFO_SKIP_IF_NO_GAP",
     )
     archive_days: int = Field(default=90, alias="DATACOLLECT_ARCHIVE_DAYS")
     impersonate: str = Field(default="chrome", alias="DATACOLLECT_IMPERSONATE")

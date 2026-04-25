@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from src.common.config import settings
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import StockRealtime
 from src.datacollect.rate_limiter import TokenBucketLimiter
@@ -187,13 +188,16 @@ class RealtimeSnapshotCollector:
     # DB
     # ------------------------------------------------------------------
     @staticmethod
-    def _bulk_insert(rows: list[dict], batch_size: int = 2000) -> int:
+    def _bulk_insert(
+        rows: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+    ) -> int:
         count = 0
-        with get_session() as session:
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i: i + batch_size]
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i: i + batch_size]
+            with get_session() as session:
                 session.bulk_insert_mappings(StockRealtime, batch)
                 count += len(batch)
+            log_upsert_commit("realtime.stock_realtime", len(batch))
         return count
 
 

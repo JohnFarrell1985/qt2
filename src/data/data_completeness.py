@@ -13,7 +13,9 @@ from datetime import datetime
 from sqlalchemy import text
 
 from src.common.db import get_engine, get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
+from src.data.parallel_qmt_orchestrator import DEFAULT_COLLECT_FLOOR_YMD
 
 logger = get_logger(__name__)
 
@@ -67,13 +69,18 @@ def _check_trading_date(conn, report: CompletenessReport):
 
 def _check_sector_data(conn, report: CompletenessReport):
     r = conn.execute(text("""
-        SELECT COUNT(*) as rows, COUNT(DISTINCT trade_date) as days,
+        SELECT COUNT(*) AS rows,
+               COUNT(DISTINCT trade_date) FILTER (
+                   WHERE COALESCE(sector_name, '') NOT LIKE '流·%%'
+               ) AS k_days,
                MIN(trade_date)::text, MAX(trade_date)::text
         FROM sector_data
     """)).fetchone()
     s = TableStatus("sector_data", r[0], f"{r[2]} ~ {r[3]}")
     if r[1] <= 5:
-        s.issue = f"板块数据仅 {r[1]} 个交易日, 需补历史数据"
+        s.issue = (
+            f"板块 K 线覆盖仅 {r[1]} 个交易日(不含东财资金快照行), 需补历史数据"
+        )
         s.priority = 2
     report.statuses.append(s)
 
@@ -199,14 +206,15 @@ def backfill_trading_date() -> int:
                 continue
 
         if rows:
-            with get_session() as session:
-                for i in range(0, len(rows), 1000):
-                    batch = rows[i:i + 1000]
+            for i in range(0, len(rows), DEFAULT_TABLE_UPSERT_FLUSH):
+                batch = rows[i: i + DEFAULT_TABLE_UPSERT_FLUSH]
+                with get_session() as session:
                     stmt = insert(TradingDate).values(batch)
                     stmt = stmt.on_conflict_do_nothing(
                         constraint="uq_trading_date",
                     )
                     session.execute(stmt)
+                log_upsert_commit("backfill.trading_date", len(batch))
             total += len(rows)
             logger.info("交易日历 %s: %d 条", db_market, len(rows))
         break  # Sina 返回的是通用日历, 不区分交易所
@@ -215,13 +223,29 @@ def backfill_trading_date() -> int:
     return total
 
 
-def backfill_sector_data(start_date: str = "20250101") -> int:
-    """补完板块行情历史数据。"""
+def backfill_sector_data(
+    start_date: str = DEFAULT_COLLECT_FLOOR_YMD,
+    *,
+    resume: bool = True,
+    fill_interior: bool | None = None,
+    include_fund_flow: bool = True,
+    force_fund_snapshot: bool = False,
+) -> int:
+    """补完板块行情历史数据(续传与 ``SectorMarketSync.sync_sector_data`` 一致)。"""
     from src.data.sector_market_data import SectorMarketSync
 
-    logger.info("开始补完板块数据 (%s ~ 今天)...", start_date)
+    logger.info(
+        "开始补完板块数据 (floor=%s, resume=%s, fund=%s, force_fund=%s)...",
+        start_date, resume, include_fund_flow, force_fund_snapshot,
+    )
     sync = SectorMarketSync()
-    return sync.sync_sector_data(start_date=start_date)
+    return sync.sync_sector_data(
+        start_date=start_date,
+        resume=resume,
+        fill_interior=fill_interior,
+        include_fund_flow=include_fund_flow,
+        force_fund_snapshot=force_fund_snapshot,
+    )
 
 
 def backfill_convertible_bond() -> int:

@@ -68,6 +68,27 @@ class QMTClient:
                 continue
         logger.warning("xtdata 未能连接到任何 QMT 服务端, 部分 API 可能不可用")
 
+    def probe_xtdata_connection(self) -> tuple[bool, str]:
+        """轻量探测: 当前 Python 能否加载 ``xtquant`` 且能取到 SH 样例交易日历 (MiniQMT / 终端)。"""
+        try:
+            _ = self.xtdata
+        except ImportError as e:
+            return False, f"xtquant 不可 import: {e!s}"
+        try:
+            cal = self.get_trading_calendar("SH", "20200102", "20200115")
+            n = len(cal) if cal is not None else 0
+            if n == 0:
+                return (
+                    True,
+                    "xtdata 已加载但样例历为空(请确认 MiniQMT 已登录并下载基础/日历数据)",
+                )
+            return True, f"xtdata 与终端对接正常, 样例 SH 历 {n} 条"
+        except Exception as e:  # noqa: BLE001
+            return (
+                False,
+                f"xtdata 已加载但取历失败(检查 MiniQMT 是否运行、端口 58610/58600): {e!s}",
+            )
+
     # ================================================================
     # 1. 行情接口
     # ================================================================

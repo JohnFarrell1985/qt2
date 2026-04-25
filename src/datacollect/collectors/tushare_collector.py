@@ -25,7 +25,8 @@ class TushareCollector(BaseCollector):
     Tushare Pro 提供最全面的 A 股金融数据, 包括日线行情、财务指标、
     指数数据等, 需要注册并获取 Token 后方可使用。
 
-    若 TUSHARE_TOKEN 未配置, 采集器标记为不可用。
+    需 ``TUSHARE_ENABLED=true`` 且配置 ``TUSHARE_TOKEN`` 才视为可用; 未启用或未配置
+    token 时与未安装 tushare 一样跳过。
     """
 
     SOURCE = "tushare"
@@ -38,11 +39,11 @@ class TushareCollector(BaseCollector):
                 burst=_CFG.tushare_burst,
             )
         super().__init__(limiter)
-        self._token = _CFG.tushare_token
+        self._token = _CFG.tushare_token if _CFG.tushare_enabled else ""
 
     @property
     def available(self) -> bool:
-        """Token 已配置时才视为可用。"""
+        """未启用时 ``_token`` 已置空, 与无 Token 等价。"""
         return bool(self._token)
 
     def _get_pro(self) -> Any:

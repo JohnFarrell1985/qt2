@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.common.config import settings
 from src.common.db import get_session
+from src.common.db_batch import DEFAULT_TABLE_UPSERT_FLUSH, log_upsert_commit
 from src.common.logger import get_logger
 from src.data.models import ConvertibleBond, CBDaily
 from src.datacollect.rate_limiter import TokenBucketLimiter
@@ -189,10 +190,12 @@ class CBDataSync:
             return [r[0] for r in results]
 
     @staticmethod
-    def _bulk_upsert_cb(rows: list[dict], batch_size: int = 500) -> None:
-        with get_session() as session:
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i: i + batch_size]
+    def _bulk_upsert_cb(
+        rows: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+    ) -> None:
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i: i + batch_size]
+            with get_session() as session:
                 stmt = insert(ConvertibleBond).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code"],
@@ -205,12 +208,15 @@ class CBDataSync:
                     },
                 )
                 session.execute(stmt)
+            log_upsert_commit("akshare.convertible_bond", len(batch))
 
     @staticmethod
-    def _bulk_upsert_cb_daily(rows: list[dict], batch_size: int = 1000) -> None:
-        with get_session() as session:
-            for i in range(0, len(rows), batch_size):
-                batch = rows[i: i + batch_size]
+    def _bulk_upsert_cb_daily(
+        rows: list[dict], batch_size: int = DEFAULT_TABLE_UPSERT_FLUSH,
+    ) -> None:
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i: i + batch_size]
+            with get_session() as session:
                 stmt = insert(CBDaily).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     constraint="idx_cbd_code_date",
@@ -223,6 +229,7 @@ class CBDataSync:
                     },
                 )
                 session.execute(stmt)
+            log_upsert_commit("akshare.cb_daily", len(batch))
 
 
 # ====================================================================
