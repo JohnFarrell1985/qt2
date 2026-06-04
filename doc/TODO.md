@@ -29,6 +29,7 @@
 | 说明 | 文档 |
 |------|------|
 | 日K 多线程补全（多标的）、分线程反爬/请求隔离 | [TODO-daily-kline-threadpool.md](TODO-daily-kline-threadpool.md) |
+| 8×A100 GPU 节点落地（训练/推理/资源配额） | [TODO-A100.md](TODO-A100.md) |
 
 ---
 
