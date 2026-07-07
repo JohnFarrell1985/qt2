@@ -139,7 +139,6 @@ def run_strategy(
     start_date: date = date(2025, 1, 1),
     end_date: date = date(2025, 12, 31),
     config: StrategyConfig = None,
-    prompt: str = "",
 ) -> StrategyResult:
     """
     执行策略回测
@@ -149,7 +148,6 @@ def run_strategy(
         start_date: 回测起始日期
         end_date: 回测结束日期
         config: 策略配置
-        prompt: 传给选股器的提示词
 
     Returns:
         StrategyResult
@@ -178,7 +176,7 @@ def run_strategy(
             break
 
         # T日: 收盘后选股
-        pick_result = picker.pick(pick_date, prompt)
+        pick_result = picker.pick(pick_date)
         if not pick_result.codes:
             equity_curve.append({"date": pick_date.isoformat(), "capital": round(capital, 2)})
             continue
@@ -338,8 +336,6 @@ def run_continuous(
     start_date: date = date(2025, 1, 1),
     end_date: date = date(2025, 12, 31),
     config: StrategyConfig = None,
-    prompt: str = "",
-    prompt_template: str = "",
 ) -> StrategyResult:
     """
     连续持仓策略回测
@@ -354,10 +350,7 @@ def run_continuous(
         start_date: 回测起始
         end_date: 回测结束
         config: 策略配置
-        prompt: 固定提示词 (不做日期替换)
-        prompt_template: 提示词模板名 (从 prompts/ 加载, 每天替换 {TRADE_DATE})
     """
-    from .stock_picker import load_prompt
 
     if config is None:
         config = StrategyConfig()
@@ -390,12 +383,7 @@ def run_continuous(
             break
 
         # ---- 1. 选股 (T日收盘后) ----
-        if prompt_template:
-            day_prompt = load_prompt(prompt_template, trade_date=pick_date)
-        else:
-            day_prompt = prompt
-
-        pick_result = picker.pick(pick_date, day_prompt)
+        pick_result = picker.pick(pick_date)
         new_codes = set(pick_result.codes[:config.max_holdings])
         total_pick_days += 1
 

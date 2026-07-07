@@ -9,7 +9,7 @@ from src.data.universe_provider import (
     CompositeUniverseProvider,
     UniverseProvider,
 )
-from src.strategy.trading_rules import AssetType
+from src.common.asset_types import AssetType
 
 
 class TestAStockUniverseProvider:
@@ -41,16 +41,16 @@ class TestAStockUniverseProvider:
 
 
 class TestETFUniverseProvider:
-    @patch("src.strategy.instrument_pool.InstrumentPoolManager")
-    def test_get_codes(self, MockIPM):
-        mock_mgr = MagicMock()
-        mock_mgr.get_pool_codes.return_value = ["510300.SH", "159919.SZ"]
-        MockIPM.return_value = mock_mgr
+    @patch("src.data.universe_provider.get_session")
+    def test_get_codes(self, mock_gs):
+        mock_session = MagicMock()
+        mock_gs.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_gs.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.fetchall.return_value = [("510300.SH",), ("159919.SZ",)]
 
         provider = ETFUniverseProvider()
         codes = provider.get_codes(date(2025, 6, 1))
         assert "510300.SH" in codes
-        mock_mgr.get_pool_codes.assert_called_once_with("ETF基金")
 
     def test_get_asset_type(self):
         provider = ETFUniverseProvider.__new__(ETFUniverseProvider)

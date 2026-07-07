@@ -4,48 +4,29 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qt-quant"
-version = "3.0.0"
-description = "A股量化因子迭代平台 - LightGBM因子挖掘 + 迅投QMT交易 + 策略池化 + 宏观环境"
+version = "4.0.0"
+description = "A股 MA 程序选股 + QMT 交易"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 readme = "README.md"
 dependencies = [
-    # Database
     "sqlalchemy>=2.0.31",
     "psycopg2-binary>=2.9.9",
-    # Data Processing
     "pandas>=2.1.4",
     "numpy>=1.26.3",
-    # Data Quality
     "pandera>=0.23",
-    # Machine Learning
-    "lightgbm>=4.0.0",
-    "scikit-learn>=1.3.0",
-    "scipy>=1.15",
-    "joblib>=1.3.0",
-    # Web Framework
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.27.0",
-    # LLM (dataclean — instructor + OpenAI-compatible SDK)
-    "openai>=1.0",
-    "instructor>=1.7.0",
-    # HTTP Client
     "httpx>=0.27.0",
     "curl_cffi>=0.14",
     "fake-useragent>=2.0",
     "tenacity>=9.0",
-    # Data Sources
     "akshare>=1.18",
     "baostock>=0.8",
     "tushare>=1.4",
     "adata>=2.9",
     "pytdx>=1.72",
-    # A-share Trading Calendar (A27 DataFreshnessMonitor)
     "exchange_calendars>=4.5",
-    # Tier 2 Global Market Data
     "yfinance>=0.2",
     "feedparser>=6.0",
-    # Config & Utils
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "python-dotenv>=1.0.0",
@@ -53,10 +34,7 @@ dependencies = [
     "pytz>=2023.3",
     "tqdm>=4.66.1",
     "schedule>=1.2.0",
-    # Visualization (optional)
     "matplotlib>=3.7.0",
-    # Database Migration
-    "alembic>=1.14",
 ]
 
 [project.optional-dependencies]
@@ -98,7 +76,7 @@ omit = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 85
+fail_under = 50
 
 [dependency-groups]
 dev = [

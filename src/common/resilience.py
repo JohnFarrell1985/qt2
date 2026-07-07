@@ -129,17 +129,15 @@ class CircuitOpenError(Exception):
 
 class DegradationLevel(str, Enum):
     NORMAL = "normal"
-    DEGRADED_LLM = "degraded_llm"
     DEGRADED_DATA = "degraded_data"
     DEGRADED_TRADE = "degraded_trade"
     EMERGENCY = "emergency"
 
 
 _SERVICE_AVAILABILITY: dict[DegradationLevel, set[str]] = {
-    DegradationLevel.NORMAL: {"llm", "data", "trade", "backtest", "api"},
-    DegradationLevel.DEGRADED_LLM: {"data", "trade", "backtest", "api"},
-    DegradationLevel.DEGRADED_DATA: {"llm", "trade", "api"},
-    DegradationLevel.DEGRADED_TRADE: {"llm", "data", "backtest", "api"},
+    DegradationLevel.NORMAL: {"data", "trade", "backtest", "api"},
+    DegradationLevel.DEGRADED_DATA: {"trade", "api"},
+    DegradationLevel.DEGRADED_TRADE: {"data", "backtest", "api"},
     DegradationLevel.EMERGENCY: set(),
 }
 

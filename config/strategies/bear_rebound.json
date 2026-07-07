@@ -1,0 +1,37 @@
+{
+  "id": "bear_rebound",
+  "label": "熊市反弹",
+  "description": "弱势/震荡阶段：20~60 日均线多头上行（不要求间距持续扩大），回调至 MA20 附近 ±5% 缩量",
+  "ma_filter": {
+    "compute_periods": [5, 10, 15, 20, 30, 40, 50, 60],
+    "filter_periods": [20, 30, 40, 50, 60],
+    "require_bullish_order": true,
+    "require_rising": true,
+    "require_spreading": false,
+    "prior_surge_lookback_days": 15,
+    "prior_surge_min_pct": 4.0,
+    "universe": "all_a",
+    "exclude_st": true,
+    "min_avg_amount_20d": 0,
+    "max_candidates": 200,
+    "anchor_ma_period": 20,
+    "ma5_proximity_pct": 5.0,
+    "require_volume_pullback": true,
+    "require_ma5_proximity": true,
+    "require_low_above_ma5": false,
+    "volume_shrink_ratio": 1.0,
+    "max_gain_lookback_days": 10,
+    "max_gain_total_pct": 35.0
+  },
+  "rank": {
+    "enabled": true,
+    "tier_a_min": 70,
+    "tier_b_min": 55,
+    "export_top_n": 20,
+    "weight_ma5_dist": 0.35,
+    "weight_vol_shrink": 0.25,
+    "weight_gain_10d": 0.15,
+    "weight_surge_recency": 0.15,
+    "weight_liquidity": 0.10
+  }
+}

@@ -91,13 +91,13 @@ class BulkWriter:
         "convertible_bond", "cb_daily", "etf_info", "etf_daily",
         "factor_meta", "factor_values",
         "stock_financial_report", "stock_financial_indicator",
-        "ml_model_log", "ml_prediction",
         "trade_order", "trade_position", "trade_daily_report",
-        "data_sync_log", "strategy", "instrument_pool",
-        "strategy_allocation", "macro_state_log", "sector_data",
+        "sector_data",
         "stock_download_progress", "etf_download_progress", "stock_realtime",
-        "watchlist_stock", "watchlist_intel", "global_market_snapshot",
-        "sentiment_daily", "sentiment_ingest_log",
+        "watchlist_stock", "watchlist_intel",
+        "hsgt_market_daily", "stock_moneyflow_daily", "stock_lhb_daily",
+        "institution_survey", "alt_datacollect_progress",
+        "stock_universe",
         "collect_log", "collect_dead_letter",
     })
 

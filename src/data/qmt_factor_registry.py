@@ -179,21 +179,8 @@ def iter_qmt_table_fields() -> Iterator[Dict[str, Any]]:
 
 
 def iter_qlib_alpha158_meta(windows: List[int] | None = None) -> Iterator[Dict[str, Any]]:
-    """Qlib 风格名: 与项目 ``Alpha158Calculator`` 输出列名一致 (价量, 非财报)."""
-    from src.factor.alpha158 import Alpha158Calculator
-
-    calc = Alpha158Calculator(windows=windows)
-    for n in calc.factor_names:
-        yield {
-            "name": f"qlib_a158_{n}"[:100],
-            "qmt_field": "",
-            "desc": describe_qlib_alpha158_column(n),
-            "category": "qlib_alpha158",
-            "data_source": "calculated",
-            "factor_kind": "price_volume",
-            "update_freq": "daily",
-            "storage_hint": "not_stored",
-        }
+    """Qlib Alpha158 元数据 — 因子模块已移除, 保留空迭代器兼容旧脚本."""
+    return iter(())
 
 
 def merge_with_legacy(

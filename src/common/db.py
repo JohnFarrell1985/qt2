@@ -120,6 +120,18 @@ def get_db() -> Generator[Session, None, None]:
         yield session
 
 
+def _drop_legacy_tables(conn) -> None:
+    """v4 精简后废弃的表, 幂等 DROP (create_all 不会删旧表)."""
+    legacy = (
+        "ml_model_log", "ml_prediction",
+        "strategy", "instrument_pool", "strategy_allocation", "macro_state_log",
+        "global_market_snapshot", "data_sync_log",
+        "sentiment_daily", "sentiment_ingest_log",
+    )
+    for name in legacy:
+        conn.execute(text(f'DROP TABLE IF EXISTS public."{name}" CASCADE'))
+
+
 def init_database():
     """建表 + 幂等补列 (``create_all`` 不 ALTER 旧表), 带启动重试.
 
@@ -127,10 +139,8 @@ def init_database():
     :func:`_ensure_alt_dcp_scope_key_width` 等与 ORM 对齐的增量 SQL.
     """
     import src.data.models  # noqa: F401 — 确保 ORM 模型注册到 Base.metadata
+    import src.data.universe_manager  # noqa: F401 — StockUniverse 表
     import src.datacollect.models  # noqa: F401
-    import src.sentiment.models  # noqa: F401
-    import src.dataclean.models  # noqa: F401
-    import src.distill.models  # noqa: F401
 
     max_retries = _max_startup_retries()
     backoff_base = _startup_backoff_base()
@@ -139,11 +149,12 @@ def init_database():
             engine = get_engine()
             with engine.begin() as conn:
                 conn.execute(text("SELECT 1"))
+                _drop_legacy_tables(conn)
                 Base.metadata.create_all(bind=conn)
                 _ensure_factor_meta_columns(conn)
                 _ensure_alt_dcp_scope_key_width(conn)
             logger.info(
-                "数据库初始化完成 (create_all + factor_meta/alt_dcp 幂等补列); "
+                "数据库初始化完成 (drop legacy + create_all + factor_meta/alt_dcp 幂等补列); "
                 "旧库 factor_meta 约束见 scripts/repair_factor_meta_schema.py",
             )
             return

@@ -113,19 +113,11 @@ class TestDegradationManager:
 
     def test_set_level(self):
         dm = DegradationManager()
-        dm.set_level(DegradationLevel.DEGRADED_LLM, reason="LLM provider down")
-        assert dm.level == DegradationLevel.DEGRADED_LLM
+        dm.set_level(DegradationLevel.DEGRADED_DATA, reason="data source down")
+        assert dm.level == DegradationLevel.DEGRADED_DATA
 
     def test_is_available_normal(self):
         dm = DegradationManager()
-        assert dm.is_available("llm") is True
-        assert dm.is_available("data") is True
-        assert dm.is_available("trade") is True
-
-    def test_is_available_degraded_llm(self):
-        dm = DegradationManager()
-        dm.set_level(DegradationLevel.DEGRADED_LLM)
-        assert dm.is_available("llm") is False
         assert dm.is_available("data") is True
         assert dm.is_available("trade") is True
 
@@ -133,7 +125,7 @@ class TestDegradationManager:
         dm = DegradationManager()
         dm.set_level(DegradationLevel.DEGRADED_DATA)
         assert dm.is_available("data") is False
-        assert dm.is_available("llm") is True
+        assert dm.is_available("trade") is True
 
     def test_is_available_degraded_trade(self):
         dm = DegradationManager()
@@ -144,7 +136,6 @@ class TestDegradationManager:
     def test_is_available_emergency(self):
         dm = DegradationManager()
         dm.set_level(DegradationLevel.EMERGENCY)
-        assert dm.is_available("llm") is False
         assert dm.is_available("data") is False
         assert dm.is_available("trade") is False
 
@@ -152,9 +143,9 @@ class TestDegradationManager:
         dm = DegradationManager()
         events = []
         dm.on_change(lambda old, new, reason: events.append((old, new, reason)))
-        dm.set_level(DegradationLevel.DEGRADED_LLM, "test")
+        dm.set_level(DegradationLevel.DEGRADED_DATA, "test")
         assert len(events) == 1
-        assert events[0] == (DegradationLevel.NORMAL, DegradationLevel.DEGRADED_LLM, "test")
+        assert events[0] == (DegradationLevel.NORMAL, DegradationLevel.DEGRADED_DATA, "test")
 
     def test_no_callback_on_same_level(self):
         dm = DegradationManager()

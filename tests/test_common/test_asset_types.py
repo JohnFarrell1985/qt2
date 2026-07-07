@@ -36,13 +36,3 @@ class TestAssetTypeEnum:
 
     def test_etf_cross_border(self):
         assert _classify_etf("513100.SH") == AssetType.ETF_CROSS_BORDER
-
-
-class TestReExport:
-    """Ensure backward compatibility — trading_rules re-exports these symbols."""
-
-    def test_import_from_trading_rules(self):
-        from src.strategy.trading_rules import AssetType as AT2
-        from src.strategy.trading_rules import infer_asset_type as iat2
-        assert AT2 is AssetType
-        assert iat2 is infer_asset_type

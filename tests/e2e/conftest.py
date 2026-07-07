@@ -19,16 +19,12 @@ from unittest.mock import patch
 from src.common.config import settings
 from src.common.db import Base
 import src.data.models  # noqa: F401 — 注册 data ORM 模型
-import src.sentiment.models  # noqa: F401 — 注册 sentiment ORM 模型
+import src.datacollect.models  # noqa: F401
 
 from tests.e2e.fixtures.seed_market_data import (
     create_stocks, create_trading_dates, create_stock_daily,
 )
 from tests.e2e.fixtures.seed_factor_data import create_factor_meta, create_factor_values
-from tests.e2e.fixtures.seed_strategy_data import (
-    create_strategies, create_instrument_pools,
-    create_strategy_allocations, create_macro_state_log,
-)
 from tests.e2e.fixtures.seed_financial_data import (
     create_financial_reports, create_financial_indicators,
 )
@@ -39,10 +35,6 @@ from tests.e2e.fixtures.seed_trade_data import (
     create_trade_orders, create_trade_positions, create_trade_daily_reports,
 )
 from tests.e2e.fixtures.seed_cb_data import create_convertible_bonds, create_cb_daily
-from tests.e2e.fixtures.seed_ml_data import (
-    create_ml_model_logs, create_ml_predictions, create_data_sync_logs,
-    create_sentiment_daily, create_sentiment_ingest_logs,
-)
 
 E2E_SCHEMA = "e2e_test"
 QMT_SCHEMA = "qmt_e2e_test"
@@ -111,11 +103,6 @@ def seeded_db(db_engine, session_factory):
         factor_meta = create_factor_meta(session)
         factor_values = create_factor_values(session, stocks, dates, daily)
 
-        strategies = create_strategies(session)
-        pools = create_instrument_pools(session, stocks)
-        allocations = create_strategy_allocations(session, strategies, pools)
-        macro_logs = create_macro_state_log(session)
-
         fin_reports = create_financial_reports(session, stocks)
         fin_indicators = create_financial_indicators(session, stocks)
 
@@ -130,13 +117,6 @@ def seeded_db(db_engine, session_factory):
         cb_bonds = create_convertible_bonds(session)
         cb_daily = create_cb_daily(session, cb_bonds, dates)
 
-        ml_logs = create_ml_model_logs(session)
-        ml_preds = create_ml_predictions(session, ml_logs)
-        sync_logs = create_data_sync_logs(session)
-
-        sentiment_rows = create_sentiment_daily(session)
-        ingest_logs = create_sentiment_ingest_logs(session)
-
         session.commit()
         yield {
             "stocks": stocks,
@@ -144,10 +124,6 @@ def seeded_db(db_engine, session_factory):
             "daily": daily,
             "factor_meta": factor_meta,
             "factor_values": factor_values,
-            "strategies": strategies,
-            "pools": pools,
-            "allocations": allocations,
-            "macro_logs": macro_logs,
             "fin_reports": fin_reports,
             "fin_indicators": fin_indicators,
             "market_indices": market_indices,
@@ -158,11 +134,6 @@ def seeded_db(db_engine, session_factory):
             "trade_reports": trade_reports,
             "cb_bonds": cb_bonds,
             "cb_daily": cb_daily,
-            "ml_logs": ml_logs,
-            "ml_preds": ml_preds,
-            "sync_logs": sync_logs,
-            "sentiment_rows": sentiment_rows,
-            "ingest_logs": ingest_logs,
         }
     finally:
         session.close()
@@ -170,34 +141,12 @@ def seeded_db(db_engine, session_factory):
 
 @pytest.fixture
 def db_session(session_factory, seeded_db):
-    """API E2E 测试用 DB session (需显式请求或通过 client fixture 间接使用)"""
+    """E2E 测试用 DB session."""
     session = session_factory()
     session.execute(text(f"SET search_path TO {E2E_SCHEMA}, public"))
     yield session
     session.rollback()
     session.close()
-
-
-@pytest.fixture
-def client(session_factory, seeded_db, db_engine):
-    """FastAPI TestClient — 注入测试 DB session, mock 外部依赖
-
-    关键策略: 替换 src.common.db 的模块级 _engine 和 _SessionLocal,
-    这样即使代码通过 ``from src.common.db import get_session`` 直接引用,
-    get_session → get_session_factory → _SessionLocal 仍指向 e2e 引擎。
-    engine-level "connect" 事件自动设置 search_path, 无需额外 patch。
-    """
-    import src.common.db as db_module
-
-    with patch.object(db_module, "_engine", db_engine), \
-         patch.object(db_module, "_SessionLocal", session_factory), \
-         patch("src.api.main.init_database"), \
-         patch("src.api.main.start_scheduler"), \
-         patch("src.api.main.stop_scheduler"):
-        from fastapi.testclient import TestClient
-        from src.api.main import app
-        with TestClient(app) as c:
-            yield c
 
 
 # ================================================================

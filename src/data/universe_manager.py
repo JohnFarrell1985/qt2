@@ -73,14 +73,48 @@ class UniverseManager:
                   AND status NOT IN :excluded
                 ORDER BY code
             """)
-            rows = session.execute(sql, {
-                "td": trade_date,
-                "excluded": tuple(excluded_statuses),
-            }).fetchall()
+            try:
+                rows = session.execute(sql, {
+                    "td": trade_date,
+                    "excluded": tuple(excluded_statuses),
+                }).fetchall()
+            except Exception as e:
+                logger.warning("[Universe] stock_universe 查询失败 (%s), 回退 stock_daily", e)
+                return self._fallback_from_daily(trade_date, exclude_st)
 
         codes = [r[0] for r in rows]
+        if not codes:
+            codes = self._fallback_from_daily(trade_date, exclude_st)
         logger.debug(f"[Universe] {trade_date}: {len(codes)} 只可交易标的")
         return codes
+
+    def _fallback_from_daily(self, trade_date: date, exclude_st: bool) -> list[str]:
+        """stock_universe 无数据时, 取指定交易日有行情的股票."""
+        st_clause = "AND (s.name IS NULL OR s.name NOT LIKE '%ST%')" if exclude_st else ""
+        with get_session() as session:
+            sql = text(f"""
+                SELECT DISTINCT d.code
+                FROM stock_daily d
+                LEFT JOIN stocks s ON s.code = d.code
+                WHERE d.trade_date = :td
+                  {st_clause}
+                ORDER BY d.code
+            """)
+            rows = session.execute(sql, {"td": trade_date}).fetchall()
+            if not rows:
+                sql2 = text(f"""
+                    SELECT DISTINCT d.code
+                    FROM stock_daily d
+                    LEFT JOIN stocks s ON s.code = d.code
+                    WHERE d.trade_date = (
+                        SELECT MAX(trade_date) FROM stock_daily WHERE trade_date <= :td
+                    )
+                      {st_clause}
+                    ORDER BY d.code
+                """)
+                rows = session.execute(sql2, {"td": trade_date}).fetchall()
+        logger.info("[Universe] stock_universe 为空, 回退 stock_daily: %d 只", len(rows))
+        return [r[0] for r in rows]
 
     def get_tradable_between(
         self,

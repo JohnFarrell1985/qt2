@@ -143,11 +143,9 @@ def _check_empty_tables(conn, report: CompletenessReport):
         cnt = conn.execute(text(f'SELECT COUNT(*) FROM "{tname}"')).scalar()
         s = TableStatus(tname, cnt)
         if cnt == 0 and tname not in (
-            "ml_model_log", "ml_prediction", "trade_order",
-            "trade_position", "trade_daily_report", "strategy",
-            "strategy_allocation", "instrument_pool", "macro_state_log",
+            "trade_order", "trade_position", "trade_daily_report",
             "stock_minute", "stock_realtime", "watchlist_stock",
-            "watchlist_intel", "sentiment_daily", "sentiment_ingest_log",
+            "watchlist_intel",
             "collect_log", "collect_dead_letter",
             # Tushare/AkShare 多源, 由 ``python -m src.data.alt_data_sync`` 按需灌入
             "hsgt_market_daily", "stock_moneyflow_daily", "stock_lhb_daily",

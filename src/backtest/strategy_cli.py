@@ -23,7 +23,7 @@ import sys
 from datetime import datetime
 from typing import List
 
-from .stock_picker import MockPicker, RandomPicker, load_prompt
+from .stock_picker import MockPicker, RandomPicker
 from .strategy_runner import run_strategy, run_continuous, StrategyConfig, StrategyResult, DayTrade
 from .data_loader import get_trading_dates
 from .fees import FeeConfig
@@ -165,19 +165,6 @@ def cmd_run(args):
         print("[ERROR] 请指定 --schedule 或 --random-pool", file=sys.stderr)
         sys.exit(1)
 
-    prompt_text = ""
-    prompt_template_name = ""
-    if args.prompt:
-        if args.continuous:
-            prompt_template_name = args.prompt
-            logger.info(f"连续持仓模式: 每天用模板 {args.prompt} 替换日期")
-        else:
-            prompt_text = load_prompt(name=args.prompt, trade_date=start)
-        logger.info(f"使用提示词模板: {args.prompt}")
-    elif args.prompt_file:
-        with open(args.prompt_file, "r", encoding="utf-8") as f:
-            prompt_text = f.read()
-
     try:
         if args.continuous:
             result = run_continuous(
@@ -185,8 +172,6 @@ def cmd_run(args):
                 start_date=start,
                 end_date=end,
                 config=strategy_config,
-                prompt=prompt_text,
-                prompt_template=prompt_template_name,
             )
         else:
             result = run_strategy(
@@ -194,7 +179,6 @@ def cmd_run(args):
                 start_date=start,
                 end_date=end,
                 config=strategy_config,
-                prompt=prompt_text,
             )
     except ValueError as e:
         print(f"\n  [ERROR] {e}\n", file=sys.stderr)
@@ -283,7 +267,7 @@ def main():
         epilog="""
 示例:
   # 连续持仓模式 (选股重复则续持, 不再选中才卖出)
-  python -m backtest.strategy_cli run --schedule mock.json --continuous --prompt prompt1.txt
+  python -m backtest.strategy_cli run --schedule mock.json --continuous
 
   # 简单隔日卖出模式
   python -m backtest.strategy_cli run --schedule mock_schedule.json
@@ -314,8 +298,6 @@ def main():
     p_run.add_argument("--random-pool", help="随机选股股票池 (逗号分隔)")
     p_run.add_argument("--random-count", type=int, default=1, help="每次随机选几只 (默认1)")
     p_run.add_argument("--seed", type=int, default=42, help="随机种子")
-    p_run.add_argument("--prompt", help="提示词模板名称 (从 prompts/ 目录加载, 如 prompt1.txt)")
-    p_run.add_argument("--prompt-file", help="提示词文件完整路径 (直接读取, 不做模板替换)")
     p_run.add_argument("--start", default="2025-01-01", help="回测起始 (默认2025-01-01)")
     p_run.add_argument("--end", default="2025-12-31", help="回测结束 (默认2025-12-31)")
     p_run.add_argument("--capital", type=float, default=1_000_000, help="初始资金 (默认100万)")

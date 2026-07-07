@@ -110,10 +110,9 @@ class TestTableWhitelist:
     def test_whitelist_covers_all_orm_models(self):
         from src.data import models as data_models
         from src.datacollect import models as dc_models
-        from src.sentiment import models as sent_models
 
         writer = BulkWriter()
-        for module in (data_models, dc_models, sent_models):
+        for module in (data_models, dc_models):
             for attr_name in dir(module):
                 cls = getattr(module, attr_name)
                 if hasattr(cls, "__tablename__") and not attr_name.startswith("_"):

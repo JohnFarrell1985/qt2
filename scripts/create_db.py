@@ -2,7 +2,7 @@
 from sqlalchemy import create_engine, text
 
 engine = create_engine(
-    "postgresql://game_agents:1234+asdf@123.60.11.74:5432/postgres",
+    "postgresql://postgresql:1@localhost:5432/qt_quant",
     isolation_level="AUTOCOMMIT",
 )
 with engine.connect() as conn:

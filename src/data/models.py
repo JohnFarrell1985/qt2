@@ -399,44 +399,6 @@ class StockFinancialIndicator(Base):
     )
 
 
-# ============ ML 模型 ============
-
-class MLModelLog(Base):
-    """ML模型训练记录"""
-    __tablename__ = "ml_model_log"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    model_name = Column(String(100), nullable=False)
-    train_start = Column(Date)
-    train_end = Column(Date)
-    n_features = Column(Integer)
-    n_samples = Column(Integer)
-    ic_mean = Column(Float, comment="IC均值")
-    icir = Column(Float, comment="信息比率")
-    mse = Column(Float)
-    model_path = Column(String(500))
-    params_json = Column(Text)
-    created_at = Column(DateTime, default=datetime.now)
-
-
-class MLPrediction(Base):
-    """模型预测结果"""
-    __tablename__ = "ml_prediction"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    model_id = Column(BigInteger)
-    trade_date = Column(Date, nullable=False)
-    code = Column(String(10), nullable=False)
-    predicted_return = Column(Float)
-    rank_score = Column(Integer)
-    signal = Column(String(10), comment="buy/sell/hold")
-    created_at = Column(DateTime, default=datetime.now)
-
-    __table_args__ = (
-        Index("idx_pred_date_code", "trade_date", "code"),
-    )
-
-
 # ============ 交易记录 ============
 
 class TradeOrder(Base):
@@ -501,96 +463,6 @@ class TradeDailyReport(Base):
 
     __table_args__ = (
         Index("idx_report_date", "report_date", "account_type", unique=True),
-    )
-
-
-class DataSyncLog(Base):
-    """数据同步日志表"""
-    __tablename__ = "data_sync_log"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    sync_type = Column(String(30), nullable=False)
-    start_time = Column(DateTime, default=datetime.now)
-    end_time = Column(DateTime)
-    status = Column(String(20))
-    records_count = Column(Integer)
-    message = Column(String(500))
-
-
-# ============ 策略池 / 标的池 / 宏观环境 ============
-
-class Strategy(Base):
-    """策略定义表"""
-    __tablename__ = "strategy"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    strategy_name = Column(String(100), nullable=False, unique=True)
-    strategy_tier = Column(String(20), default="ml", comment="rule/scoring/ml")
-    strategy_class = Column(String(100), comment="策略实现类名, 对应 registry key")
-    config_json = Column(Text, comment="策略运行时参数 JSON")
-    description = Column(Text)
-    factor_names_json = Column(Text, comment="因子列表 JSON")
-    factor_weights_json = Column(Text, comment="因子权重 JSON")
-    model_params_json = Column(Text, comment="LGB模型参数 JSON")
-    model_path = Column(String(500), comment="训练好的模型文件路径")
-    backtest_sharpe = Column(Float)
-    backtest_annual_return = Column(Float)
-    backtest_max_drawdown = Column(Float)
-    ic_mean = Column(Float)
-    icir = Column(Float)
-    status = Column(String(20), default="active", comment="active/paused/archived")
-    applicable_macro = Column(String(200), comment="适用宏观环境key, 逗号分隔")
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-
-class InstrumentPool(Base):
-    """标的池表"""
-    __tablename__ = "instrument_pool"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    pool_name = Column(String(100), nullable=False, unique=True)
-    description = Column(Text)
-    codes_json = Column(Text, comment="股票代码列表 JSON")
-    filter_rules_json = Column(Text, comment="筛选规则 JSON")
-    n_stocks = Column(Integer, default=0)
-    status = Column(String(20), default="active")
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-
-class StrategyAllocation(Base):
-    """策略-标的池-宏观环境 关联表"""
-    __tablename__ = "strategy_allocation"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    strategy_id = Column(BigInteger, nullable=False)
-    pool_id = Column(BigInteger, nullable=False)
-    macro_state = Column(String(50), comment="宏观环境状态key")
-    weight = Column(Float, default=1.0, comment="该策略的资金权重")
-    is_active = Column(String(5), default="true")
-    created_at = Column(DateTime, default=datetime.now)
-
-    __table_args__ = (
-        Index("idx_alloc_strategy", "strategy_id"),
-        Index("idx_alloc_pool", "pool_id"),
-        Index("idx_alloc_macro", "macro_state"),
-    )
-
-
-class MacroStateLog(Base):
-    """宏观环境状态变更日志"""
-    __tablename__ = "macro_state_log"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    state_key = Column(String(50), nullable=False, comment="当前宏观状态key")
-    state_detail_json = Column(Text, comment="状态详细指标 JSON")
-    determined_by = Column(String(100), comment="判定方法/来源")
-    effective_date = Column(Date, nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
-
-    __table_args__ = (
-        Index("idx_macro_date", "effective_date"),
     )
 
 
@@ -761,28 +633,6 @@ class WatchlistIntel(Base):
     __table_args__ = (
         Index("idx_wintel_code_type", "code", "intel_type"),
         Index("idx_wintel_collected", "collected_at"),
-    )
-
-
-# ============ 全球市场快照 ============
-
-class GlobalMarketSnapshot(Base):
-    """全球市场快照 — 存储外围市场原始数据, 供情绪引擎合成 global_mood"""
-    __tablename__ = "global_market_snapshot"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    trade_date = Column(Date, nullable=False, comment="交易日期")
-    symbol = Column(String(30), nullable=False, comment="标的符号 (SPX/XAUUSD/USDCNY/...)")
-    asset_class = Column(String(20), nullable=False, comment="资产类别: global_index/forex/commodity/bond/vix")
-    close_price = Column(Float, comment="收盘价/最新价")
-    change_pct = Column(Float, comment="涨跌幅 (%)")
-    source = Column(String(30), nullable=False, comment="数据来源: yfinance/sina/akshare")
-    raw_data = Column(JSON().with_variant(JSONB, "postgresql"), default=dict, comment="原始完整数据")
-    collected_at = Column(DateTime, default=func.now(), comment="采集时间")
-
-    __table_args__ = (
-        Index("idx_gms_date_symbol", "trade_date", "symbol"),
-        UniqueConstraint("trade_date", "symbol", "source", name="uq_gms_date_symbol_source"),
     )
 
 

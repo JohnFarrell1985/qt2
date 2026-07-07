@@ -1,0 +1,14 @@
+# 文档索引
+
+qt-quant v4：MA 程序选股 + 回测 + QMT 交易。
+
+| 文档 | 说明 |
+|------|------|
+| [00-总体设计.md](00-总体设计.md) | 架构与数据流 |
+| [01-数据模块.md](01-数据模块.md) | QMT 行情落盘、`src/data/` |
+| [02-数据采集模块.md](02-数据采集模块.md) | 多源采集、`src/datacollect/` |
+| [03-选股模块.md](03-选股模块.md) | MA 程序选股、`src/selection/` |
+| [04-回测引擎.md](04-回测引擎.md) | `strategy_runner` + CachedPicker |
+| [05-交易模块.md](05-交易模块.md) | QMT 模拟/实盘 |
+
+快速上手见项目根目录 [README.md](../README.md)。
