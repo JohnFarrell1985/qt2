@@ -98,6 +98,28 @@ class StockMinute(Base):
     )
 
 
+class StockDividFactor(Base):
+    """股票除权除息因子 (QMT ``get_divid_factors``)"""
+    __tablename__ = "stock_divid_factor"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="6位或5位股票代码")
+    ex_date = Column(Date, nullable=False, comment="除权除息日")
+    interest = Column(Float, comment="每股股利")
+    stock_bonus = Column(Float, comment="每股红股")
+    stock_gift = Column(Float, comment="每股转增")
+    allot_num = Column(Float, comment="每股配股数")
+    allot_price = Column(Float, comment="配股价")
+    gugai = Column(Float, comment="股本变动")
+    dr = Column(Float, comment="除权因子")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("code", "ex_date", name="uq_divid_code_date"),
+        Index("idx_divid_code", "code"),
+    )
+
+
 class MarketIndex(Base):
     """大盘指数数据表"""
     __tablename__ = "market_index"

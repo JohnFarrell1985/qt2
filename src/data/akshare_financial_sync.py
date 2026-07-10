@@ -171,7 +171,7 @@ class AkshareFinancialSync:
 
         @retry(
             reraise=True,
-            stop=stop_after_attempt(6),
+            stop=stop_after_attempt(_CFG.max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=90),
             retry=retry_if_exception_type(
                 (
@@ -350,7 +350,7 @@ class AkshareFinancialSync:
 
         @retry(
             reraise=True,
-            stop=stop_after_attempt(4),
+            stop=stop_after_attempt(_CFG.max_retries),
             wait=wait_exponential(multiplier=1, min=2, max=60),
             retry=retry_if_exception_type(
                 (

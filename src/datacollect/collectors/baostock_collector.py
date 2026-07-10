@@ -187,6 +187,10 @@ class BaostockCollector(BaseCollector):
         logger.debug("baostock 基础信息查询完成 (%d 行)", len(df))
         return df
 
+    def stock_list(self):
+        """兼容 FallbackDispatcher 的 func_name=stock_list."""
+        return self.query_stock_basic()
+
     def query_profit_data(self, code: str, year: int, quarter: int):
         """查询季度盈利能力数据。
 

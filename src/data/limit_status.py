@@ -31,6 +31,32 @@ def _get_limit_threshold(code: str) -> float:
     return 10.0
 
 
+def get_prior_surge_min_pct(code: str, base_pct: float, *, use_board: bool = True) -> float:
+    """按板块涨跌幅动态计算 prior_surge 阈值 (初筛偏松: 主板约 6%, 创/科约 8%)."""
+    if not use_board:
+        return base_pct
+    limit = _get_limit_threshold(code)
+    ratio = 0.6 if limit <= 10.0 else 0.4
+    return max(base_pct, limit * ratio)
+
+
+def passes_tradability_filter(
+    row: dict,
+    *,
+    exclude_limit_up: bool = False,
+) -> bool:
+    """初筛可交易性: 硬排除停牌、一字板、跌停; 涨停默认保留."""
+    if row.get("is_suspended"):
+        return False
+    if row.get("is_one_word_limit"):
+        return False
+    if row.get("is_limit_down"):
+        return False
+    if exclude_limit_up and row.get("is_limit_up"):
+        return False
+    return True
+
+
 def calc_limit_status(
     trade_date: date,
     codes: Optional[list] = None,

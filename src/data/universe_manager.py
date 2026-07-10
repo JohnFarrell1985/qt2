@@ -16,6 +16,7 @@ from sqlalchemy import Column, String, Date, DateTime, BigInteger, Index, text
 
 from src.common.db import Base, get_session
 from src.common.logger import get_logger
+from src.data.st_filter import filter_out_st
 
 logger = get_logger(__name__)
 
@@ -85,36 +86,36 @@ class UniverseManager:
         codes = [r[0] for r in rows]
         if not codes:
             codes = self._fallback_from_daily(trade_date, exclude_st)
+        elif exclude_st:
+            codes = filter_out_st(codes)
         logger.debug(f"[Universe] {trade_date}: {len(codes)} 只可交易标的")
         return codes
 
     def _fallback_from_daily(self, trade_date: date, exclude_st: bool) -> list[str]:
         """stock_universe 无数据时, 取指定交易日有行情的股票."""
-        st_clause = "AND (s.name IS NULL OR s.name NOT LIKE '%ST%')" if exclude_st else ""
         with get_session() as session:
-            sql = text(f"""
+            sql = text("""
                 SELECT DISTINCT d.code
                 FROM stock_daily d
-                LEFT JOIN stocks s ON s.code = d.code
                 WHERE d.trade_date = :td
-                  {st_clause}
                 ORDER BY d.code
             """)
             rows = session.execute(sql, {"td": trade_date}).fetchall()
             if not rows:
-                sql2 = text(f"""
+                sql2 = text("""
                     SELECT DISTINCT d.code
                     FROM stock_daily d
-                    LEFT JOIN stocks s ON s.code = d.code
                     WHERE d.trade_date = (
                         SELECT MAX(trade_date) FROM stock_daily WHERE trade_date <= :td
                     )
-                      {st_clause}
                     ORDER BY d.code
                 """)
                 rows = session.execute(sql2, {"td": trade_date}).fetchall()
-        logger.info("[Universe] stock_universe 为空, 回退 stock_daily: %d 只", len(rows))
-        return [r[0] for r in rows]
+        codes = [r[0] for r in rows]
+        if exclude_st:
+            codes = filter_out_st(codes)
+        logger.info("[Universe] stock_universe 为空, 回退 stock_daily: %d 只", len(codes))
+        return codes
 
     def get_tradable_between(
         self,

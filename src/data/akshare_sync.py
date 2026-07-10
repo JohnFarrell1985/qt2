@@ -147,7 +147,7 @@ class AkshareDataSync:
         self.limiter = TokenBucketLimiter.for_domain(
             "akshare",
             rate=settings.datacollect.akshare_rate,
-            burst=settings.datacollect.akshare_burst,
+            burst=getattr(settings.datacollect, "akshare_burst", 3),
         )
 
     def _call_ak(
@@ -190,12 +190,13 @@ class AkshareDataSync:
                 if df is not None and not df.empty:
                     df = df.rename(columns={"代码": "code", "名称": "name"})
             except Exception as e2:
-                logger.error("备用源 stock_zh_a_spot_em 也失败: %s", e2)
-                return 0
+                logger.warning("备用源 stock_zh_a_spot_em 也失败: %s", e2)
 
         if df is None or df.empty:
-            logger.warning("akshare 所有股票列表源均返回空数据")
-            return 0
+            logger.warning("akshare 股票列表源均失败, 尝试 datacollect 多源降级...")
+            from src.data.stock_list_sync import sync_stock_list_via_fallback
+
+            return sync_stock_list_via_fallback()
 
         records: list[dict] = []
         for _, row in df.iterrows():
@@ -454,7 +455,7 @@ class AkshareDataSync:
                 return True
             return False
 
-        max_attempts = 10
+        max_attempts = settings.datacollect.max_retries
         df = None
         last_exc: BaseException | None = None
         for attempt in range(1, max_attempts + 1):
@@ -472,8 +473,9 @@ class AkshareDataSync:
                     break
                 wait_s = min(120.0, 3.0 * (2.0 ** (attempt - 1)))
                 logger.warning(
-                    "stock_zh_a_spot_em 重试 %s/10: %s",
+                    "stock_zh_a_spot_em 重试 %s/%s: %s",
                     attempt,
+                    max_attempts,
                     e,
                 )
                 time.sleep(wait_s)
@@ -645,9 +647,11 @@ class AkshareDataSync:
             n = int(re.findall(re.compile(r"\d+"), res.text)[0])
             return max(1, math.ceil(n / 80))
 
+        _mr = settings.datacollect.max_retries
+
         @retry(
             reraise=True,
-            stop=stop_after_attempt(6),
+            stop=stop_after_attempt(_mr),
             wait=wait_exponential(multiplier=1, min=2, max=90),
             retry=retry_if_exception_type(
                 (

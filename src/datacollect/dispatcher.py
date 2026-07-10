@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 _DATA_TYPE_FUNC: dict[str, dict[str, str]] = {
     "stock_list": {
         "akshare": "stock_zh_a_spot_em",
-        "baostock": "stock_list",
+        "baostock": "query_stock_basic",
         "tushare": "stock_basic",
         "adata": "stock_list",
         "eastmoney": "fetch_stock_list",

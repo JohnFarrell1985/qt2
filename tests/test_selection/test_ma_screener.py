@@ -3,7 +3,9 @@
 import pandas as pd
 
 from src.common.config import MaFilterConfig, RankConfig
+from src.data.limit_status import get_prior_surge_min_pct, passes_tradability_filter
 from src.selection.ma_screener import (
+    _score_liquidity,
     assign_tier,
     compute_mas,
     passes_ma_filter,
@@ -188,3 +190,37 @@ def test_assign_tier():
     assert assign_tier(80, rank) == "A"
     assert assign_tier(65, rank) == "B"
     assert assign_tier(50, rank) == "C"
+
+
+def test_get_prior_surge_min_pct_by_board():
+    assert get_prior_surge_min_pct("600000", 5.0) == 6.0
+    assert get_prior_surge_min_pct("300001", 5.0) == 8.0
+    assert get_prior_surge_min_pct("600000", 7.0) == 7.0
+
+
+def test_passes_tradability_filter():
+    assert not passes_tradability_filter({"is_suspended": True})
+    assert not passes_tradability_filter({"is_one_word_limit": True})
+    assert not passes_tradability_filter({"is_limit_down": True})
+    assert passes_tradability_filter({"is_limit_up": True})
+    assert not passes_tradability_filter({"is_limit_up": True}, exclude_limit_up=True)
+    assert passes_tradability_filter({})
+
+
+def test_score_liquidity_prefers_turnover():
+    assert _score_liquidity(5.0, None) > _score_liquidity(1.0, None)
+    assert _score_liquidity(None, 50_000_000) > _score_liquidity(None, 5_000_000)
+
+
+def test_limit_up_lowers_composite_score():
+    cfg = MaFilterConfig(max_gain_lookback_days=10, prior_surge_lookback_days=5)
+    rank = RankConfig()
+    snap = {
+        "ma5_dist_pct": 1.0,
+        "vol_shrink_ratio": 0.7,
+        "gain_10d_pct": 12.0,
+        "days_since_surge": 2.0,
+    }
+    base = score_snapshot(snap, rank, cfg, avg_turnover_20d=4.0, is_limit_up=False)
+    limited = score_snapshot(snap, rank, cfg, avg_turnover_20d=4.0, is_limit_up=True)
+    assert base > limited

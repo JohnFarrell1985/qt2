@@ -78,6 +78,8 @@ class CollectConfig:
     monitor_interval: float = 0.0
     # 某采集类超过该秒数无**本类**批量落盘 (见 ``db_batch`` per-category 心跳), 打 ERROR 并置 stall, 以切换数据源
     db_stall_warn_sec: float = 120.0
+    # 为真: 仅用 QMT, 不降级东财/AkShare/集思录等; 滞停后本类结束
+    qmt_only: bool = False
     # 若设目录, 在子目录 ``orch_YYYYMMDD_HHMMSS/`` 下为 main / 各类工作线程 / 监控线程 各写一 .log, 与 stdout 并行
     thread_log_dir: str | None = None
 
@@ -283,12 +285,28 @@ def run_kline(
 
 
 def run_universe(
+    cfg: CollectConfig | None = None,
     state: OrchestratorState | None = None,
     stall_sec: float = 120.0,
 ) -> CategoryResult:
-    """股票全量: akshare 为主, 内建 QMT 合并; 本类久无落盘时 ``sync_stocks_full`` 在子步骤间协作退出。"""
+    """股票全量: akshare 为主, 内建 QMT 合并; ``cfg.qmt_only`` 时仅 ``enrich_stocks_from_qmt``."""
     t0 = time.perf_counter()
+    cfg = cfg or CollectConfig()
     sc = (lambda: _stall_event_is_set(state, "universe")) if state else None
+    if cfg.qmt_only:
+        try:
+            from src.data.akshare_sync import AkshareDataSync
+
+            n = AkshareDataSync().enrich_stocks_from_qmt()
+            had = _consume_stall(state, "universe")
+            u_ok = _ok_after_stall_exhausted(had, n)
+            return CategoryResult(
+                "universe", u_ok, f"QMT-only enrich_stocks_from_qmt {n}",
+                n, "qmt", time.perf_counter() - t0,
+                None if u_ok else "QMT-only 滞停或无行数",
+            )
+        except Exception as e:  # noqa: BLE001
+            return CategoryResult("universe", False, "universe QMT-only 失败", None, "qmt", time.perf_counter() - t0, str(e))
     try:
         from src.data.akshare_sync import AkshareDataSync
 
@@ -312,11 +330,13 @@ def run_universe(
 
 
 def run_trading_calendar(
+    cfg: CollectConfig | None = None,
     state: OrchestratorState | None = None,
     stall_sec: float = 120.0,
 ) -> CategoryResult:
     """交易日历: 先 QMT 写入; 无数据/异常/本类滞停则 ``backfill_trading_date``(新浪/ak)。"""
     t0 = time.perf_counter()
+    cfg = cfg or CollectConfig()
     end = date.today().strftime("%Y%m%d")
     start = "20100101"
     n_q = 0
@@ -387,6 +407,13 @@ def run_trading_calendar(
         return CategoryResult(
             "trading_calendar", True, f"QMT 写入 {n_q} 行(含 SH/SZ 可能同日)", n_q, "qmt", time.perf_counter() - t0, None,
         )
+    if cfg.qmt_only:
+        return CategoryResult(
+            "trading_calendar", False,
+            "QMT-only: 交易日历无数据或已滞停", n_q, "qmt",
+            time.perf_counter() - t0,
+            "无降级源",
+        )
     from src.data.data_completeness import backfill_trading_date
 
     try:
@@ -416,6 +443,11 @@ def run_financial(
     end_ymd = date.today().strftime("%Y%m%d")
     codes = _stock_list_qmt_format()
     if not codes:
+        if cfg.qmt_only:
+            return CategoryResult(
+                "financial", False, "QMT-only: stocks 表为空", 0, "qmt",
+                time.perf_counter() - t0, None,
+            )
         try:
             from src.data.data_completeness import backfill_financial
 
@@ -476,6 +508,14 @@ def run_financial(
         if _consume_stall(state, "financial"):
             logger.warning("财务: QMT 已有入库, 清滞停事件(避免遗留)")
         return CategoryResult("financial", True, "QMT 财务入库", total, "qmt", time.perf_counter() - t0, None)
+    if cfg.qmt_only or qmt_aborted_stall:
+        msg = "QMT-only: 财务无数据或已滞停"
+        if qmt_aborted_stall:
+            msg = f"QMT-only: 财务滞停(约{cfg.db_stall_warn_sec:.0f}s 无落盘)"
+        return CategoryResult(
+            "financial", False, msg, total, "qmt",
+            time.perf_counter() - t0, "无降级源",
+        )
     try:
         from src.data.akshare_financial_sync import AkshareFinancialSync
         from src.data.collect_resume import (
@@ -513,11 +553,13 @@ def run_financial(
 
 
 def run_convertible(
+    cfg: CollectConfig | None = None,
     state: OrchestratorState | None = None,
     stall_sec: float = 120.0,
 ) -> CategoryResult:
     """转债基础信息: QMT ``sync_cb_info``; 无数据/失败/本类滞停则集思录 ``sync_cb_list``。"""
     t0 = time.perf_counter()
+    cfg = cfg or CollectConfig()
     n = 0
     sc = (lambda: _stall_event_is_set(state, "convertible")) if state else None
 
@@ -539,6 +581,12 @@ def run_convertible(
             logger.error("convertible: 约 %.0f 秒无本类落盘, QMT 段结束, 将试集思录", stall_sec)
     if n and n > 0:
         return CategoryResult("convertible", True, "QMT 转债信息", n, "qmt", time.perf_counter() - t0, None)
+    if cfg.qmt_only or stall_cleared:
+        return CategoryResult(
+            "convertible", False,
+            "QMT-only: 转债无数据或已滞停", n, "qmt",
+            time.perf_counter() - t0, "无降级源",
+        )
     try:
         from src.data.cb_sync import CBDataSync as AkCB
 
@@ -661,6 +709,17 @@ def run_sector_index(
                 "sector_index: 约 %.0f 秒无本类落盘(含 QMT 元数据段可能无 commit); 仍继续 Tushare/东财/新浪 级联与板块回补",
                 cfg.db_stall_warn_sec,
             )
+    if cfg.qmt_only:
+        from src.data.qmt_extra_sync import QmtExtraSync
+
+        n_w = QmtExtraSync().sync_index_weights_qmt(tuple(ics))
+        had = _consume_stall(state, "sector_index")
+        ok = _ok_after_stall_exhausted(had, n_w)
+        return CategoryResult(
+            "sector_index", ok, f"QMT-only 指数权重 {n_w}", n_w, "qmt",
+            time.perf_counter() - t0,
+            None if ok else "QMT-only 滞停或无行数",
+        )
     try:
         from src.data.alt_data_sync import AltDataSync
         from datetime import date as ddate
@@ -907,13 +966,13 @@ def dispatch_category(
             stall_sec=cfg.db_stall_warn_sec,
         )
     if name == "universe":
-        return run_universe(state=state, stall_sec=cfg.db_stall_warn_sec)
+        return run_universe(cfg=cfg, state=state, stall_sec=cfg.db_stall_warn_sec)
     if name == "trading_calendar":
-        return run_trading_calendar(state=state, stall_sec=cfg.db_stall_warn_sec)
+        return run_trading_calendar(cfg=cfg, state=state, stall_sec=cfg.db_stall_warn_sec)
     if name == "financial":
         return run_financial(cfg, state=state)
     if name == "convertible":
-        return run_convertible(state=state, stall_sec=cfg.db_stall_warn_sec)
+        return run_convertible(cfg=cfg, state=state, stall_sec=cfg.db_stall_warn_sec)
     if name == "factors":
         return run_factors(
             start_time=cfg.factor_start[:8].ljust(8, "0"),

@@ -104,9 +104,12 @@ def _em_fetch_kline(
 ) -> list[list[str]]:
     """东方财富 K线 API, 返回原始行 [date, open, close, high, low, vol, amount, amp, pct, chg, turnover].
 
-    ``quick_fail=True`` 时不在 ``SmartHttpClient`` 上多次重试, 供多源级联尽快换路。
-    若 ``_probe_em()`` 已判东财不可达, 直接空返回, 避免多线程每段都触发 curl 重试刷屏.
+    默认走 ``SmartHttpClient`` 重试 (``DATACOLLECT_MAX_RETRIES``, 默认 3 次); 仍失败则熔断东财并返回空,
+    由上层级联改试腾讯等. ``quick_fail=True`` 时单次请求且异常向上抛 (测试/特殊场景).
+    若已熔断或 ``_probe_em()`` 判不可达, 直接空返回.
     """
+    if _em_push2his_circuit_open:
+        return []
     if not _probe_em():
         return []
     limiter = _get_em_limiter()
@@ -117,7 +120,13 @@ def _em_fetch_kline(
         "beg": start_date, "end": end_date,
         "fields1": _EM_FIELDS1, "fields2": _EM_FIELDS2,
     }
-    resp = client.get(_EM_KLINE_URL, params=params, skip_retry=quick_fail)
+    try:
+        resp = client.get(_EM_KLINE_URL, params=params, skip_retry=quick_fail)
+    except Exception as e:
+        if quick_fail:
+            raise
+        _trip_em_push2his(str(e))
+        return []
     body: dict = resp.json()
     if body.get("rc") not in (0, None):
         return []
@@ -285,6 +294,20 @@ def reset_qq_session() -> None:
     _qq_session = None
 
 
+def _trip_em_push2his(reason: str) -> None:
+    """东财 push2his 在当前进程内熔断 (``SmartHttpClient`` 已重试 ``max_retries`` 次)。"""
+    global _em_push2his_circuit_open, _em_healthy
+    if _em_push2his_circuit_open:
+        return
+    _em_push2his_circuit_open = True
+    _em_healthy = False
+    logger.info(
+        "东财 push2his 重试 %d 次后放弃, 本进程内改走腾讯等备用源: %s",
+        settings.datacollect.max_retries,
+        reason,
+    )
+
+
 def _probe_em() -> bool:
     """探测 push2his.eastmoney.com 是否可用 (缓存结果)。"""
     global _em_healthy
@@ -382,6 +405,10 @@ def _qmt_code_stock_etf(code: str) -> str:
     c = (code or "").strip()
     if "." in c:
         return c
+    # 港股通: 5 位数字 (或 HK 前缀) → QMT 符号 ``00700.HK``
+    clean = c.upper().replace("HK", "").strip()
+    if clean.isdigit() and len(clean) <= 5:
+        return f"{clean.zfill(5)}.HK"
     pure = c[:6]
     if not pure:
         return c
@@ -660,15 +687,12 @@ def _sina_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
 
 
 def _web_fetch_etf_cascade(code: str, start_date: str, end_date: str) -> list[dict]:
-    """腾讯/新浪/东财, 有数据即停. 东财经探测不可达时 **不再** 每段重试, 避免刷屏与拖慢。
-
-    顺序: 先腾讯、新浪, 东财仅 ``_probe_em()`` 为真时参与。
-    """
+    """腾讯/新浪/东财, 有数据即停. 东财最多 ``max_retries`` 次后熔断, 不再每段重试刷屏。"""
     order: list[tuple[str, Any]] = [
         ("tencent", lambda: _qq_fetch_etf(code, start_date, end_date)),
         ("sina", lambda: _sina_fetch_etf(code, start_date, end_date)),
     ]
-    if _probe_em():
+    if _probe_em() and not _em_push2his_circuit_open:
         order.insert(0, ("eastmoney", lambda: _em_fetch_etf(code, start_date, end_date)))
     for label, fn in order:
         try:
@@ -681,21 +705,21 @@ def _web_fetch_etf_cascade(code: str, start_date: str, end_date: str) -> list[di
     return []
 
 
-def _web_source_stock() -> str:
-    return "eastmoney" if _probe_em() else "tencent"
-
-
 def _web_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
-    src = _web_source_stock()
-    if src == "eastmoney":
-        return _em_fetch_stock(code, start_date, end_date)
+    """东财 (``max_retries`` 次) → 腾讯; 东财熔断后仅腾讯。"""
+    if not _em_push2his_circuit_open and _probe_em():
+        rows = _em_fetch_stock(code, start_date, end_date)
+        if rows:
+            return rows
     return _qq_fetch_stock(code, start_date, end_date)
 
 
 def _web_fetch_index(code: str, start_date: str, end_date: str) -> list[dict]:
-    src = _web_source_stock()
-    if src == "eastmoney":
-        return _em_fetch_index(code, start_date, end_date)
+    """东财 (``max_retries`` 次) → 腾讯; 东财熔断后仅腾讯。"""
+    if not _em_push2his_circuit_open and _probe_em():
+        rows = _em_fetch_index(code, start_date, end_date)
+        if rows:
+            return rows
     return _qq_fetch_index(code, start_date, end_date)
 
 
@@ -725,7 +749,12 @@ def _fetch_stock_daily(code: str, start_date: str, end_date: str) -> list[dict]:
                 )
         return _web_fetch_stock(code, start_date, end_date)
     if source == "eastmoney":
-        return _em_fetch_stock(code, start_date, end_date)
+        rows = _em_fetch_stock(code, start_date, end_date)
+        if rows:
+            return rows
+        if _em_push2his_circuit_open:
+            return _qq_fetch_stock(code, start_date, end_date)
+        return []
     return _qq_fetch_stock(code, start_date, end_date)
 
 
@@ -765,8 +794,8 @@ def fetch_etf_daily_cascade(
 ) -> tuple[list[dict], str | None]:
     """MiniQMT (xtdata) / 东财 / 腾讯; ``kline_prefer=auto`` 时 **优先本地 QMT**, 再按东财/腾讯.
 
-    东财在级联中 **单次请求、不重试**; 任一段连接失败会熔断 push2his, 本进程内后续段
-    不再打东财 K 线 URL, 直接试腾讯, 避免每段在 tenacity 上耗数秒才换源.
+    东财在级联中走 ``SmartHttpClient`` 默认重试 (``max_retries``); 仍失败则熔断 push2his,
+    本进程内后续段不再打东财 K 线 URL, 直接试腾讯/新浪.
 
     返回 ``(rows, tag)`` — tag 为 ``kline_qmt`` / ``kline_eastmoney`` / ``kline_tencent`` 等; 全失败 ``[]``, ``None``。
     """
@@ -774,19 +803,9 @@ def fetch_etf_daily_cascade(
         raise ValueError("kline_prefer 须为 eastmoney / tencent / auto / qmt")
 
     def _em() -> list[dict]:
-        global _em_push2his_circuit_open
         if _em_push2his_circuit_open:
             return []
-        try:
-            return _em_fetch_etf(
-                code, start_date, end_date, quick_fail=True,
-            )
-        except Exception as e:  # noqa: BLE001
-            _em_push2his_circuit_open = True
-            logger.info(
-                "东财 push2his 本任务内不再请求(连接失败), 已熔断; 同段改试腾讯/新浪等: %s", e,
-            )
-            return []
+        return _em_fetch_etf(code, start_date, end_date)
 
     def _qq() -> list[dict]:
         return _qq_fetch_etf(code, start_date, end_date)
@@ -870,7 +889,12 @@ def _fetch_index_daily(code: str, start_date: str, end_date: str) -> list[dict]:
                 )
         return _web_fetch_index(code, start_date, end_date)
     if source == "eastmoney":
-        return _em_fetch_index(code, start_date, end_date)
+        rows = _em_fetch_index(code, start_date, end_date)
+        if rows:
+            return rows
+        if _em_push2his_circuit_open:
+            return _qq_fetch_index(code, start_date, end_date)
+        return []
     return _qq_fetch_index(code, start_date, end_date)
 
 
@@ -1295,10 +1319,15 @@ def _xshg_trading_session_dates(d0: date, d1: date) -> list[date]:
         return _xshg_trading_session_dates_fallback(d0, d1)
 
     cal = ec.get_calendar("XSHG")
-    sess = cal.sessions_in_range(
-        pd.Timestamp(d0),
-        pd.Timestamp(d1),
-    )
+    d0_ts = pd.Timestamp(d0)
+    d1_ts = pd.Timestamp(d1)
+    if d0_ts < cal.first_session:
+        d0_ts = cal.first_session
+    if d1_ts > cal.last_session:
+        d1_ts = cal.last_session
+    if d0_ts > d1_ts:
+        return []
+    sess = cal.sessions_in_range(d0_ts, d1_ts)
     return [ts.date() for ts in sess]
 
 

@@ -15,6 +15,7 @@ from sqlalchemy import text
 from src.common.config import MaFilterConfig, RankConfig, settings
 from src.common.db import get_session
 from src.common.logger import get_logger
+from src.data.limit_status import calc_limit_status, get_prior_surge_min_pct, passes_tradability_filter
 from src.data.universe_provider import AStockUniverseProvider
 
 logger = get_logger(__name__)
@@ -98,16 +99,29 @@ def _daily_change_pct(bars: pd.DataFrame, bar_index: int) -> float | None:
     return (cur / prev - 1) * 100
 
 
-def passes_prior_surge_filter(bars: pd.DataFrame, cfg: MaFilterConfig) -> bool:
-    """筛选日之前的 N 个交易日内, 是否出现过单日大涨 (默认 5 个交易日、涨幅 >5%)."""
+def _effective_prior_surge_min_pct(code: str, cfg: MaFilterConfig) -> float:
+    return get_prior_surge_min_pct(
+        code,
+        cfg.prior_surge_min_pct,
+        use_board=cfg.prior_surge_use_board_threshold,
+    )
+
+
+def passes_prior_surge_filter(
+    bars: pd.DataFrame,
+    cfg: MaFilterConfig,
+    code: str = "",
+) -> bool:
+    """筛选日之前的 N 个交易日内, 是否出现过单日大涨."""
     lookback = cfg.prior_surge_lookback_days
     if len(bars) < lookback + 2:
         return False
+    threshold = _effective_prior_surge_min_pct(code, cfg) if code else cfg.prior_surge_min_pct
     last_idx = len(bars) - 1
     for offset in range(1, lookback + 1):
         idx = last_idx - offset
         pct = _daily_change_pct(bars, idx)
-        if pct is not None and pct > cfg.prior_surge_min_pct:
+        if pct is not None and pct > threshold:
             return True
     return False
 
@@ -174,26 +188,28 @@ def passes_volume_pullback_filter(
     return True
 
 
-def _max_prior_surge_pct(bars: pd.DataFrame, cfg: MaFilterConfig) -> float | None:
+def _max_prior_surge_pct(bars: pd.DataFrame, cfg: MaFilterConfig, code: str = "") -> float | None:
     lookback = cfg.prior_surge_lookback_days
+    threshold = _effective_prior_surge_min_pct(code, cfg) if code else cfg.prior_surge_min_pct
     last_idx = len(bars) - 1
     best: float | None = None
     for offset in range(1, lookback + 1):
         pct = _daily_change_pct(bars, last_idx - offset)
-        if pct is not None and (best is None or pct > best):
+        if pct is not None and pct > threshold and (best is None or pct > best):
             best = pct
     return best
 
 
-def _days_since_surge(bars: pd.DataFrame, cfg: MaFilterConfig) -> int | None:
+def _days_since_surge(bars: pd.DataFrame, cfg: MaFilterConfig, code: str = "") -> int | None:
     """距筛选日最近的大涨发生在几个交易日前 (1=上一交易日)."""
     lookback = cfg.prior_surge_lookback_days
+    threshold = _effective_prior_surge_min_pct(code, cfg) if code else cfg.prior_surge_min_pct
     last_idx = len(bars) - 1
     nearest: int | None = None
     for offset in range(1, lookback + 1):
         idx = last_idx - offset
         pct = _daily_change_pct(bars, idx)
-        if pct is not None and pct > cfg.prior_surge_min_pct:
+        if pct is not None and pct > threshold:
             if nearest is None or offset < nearest:
                 nearest = offset
     return nearest
@@ -228,8 +244,20 @@ def _score_surge_recency(days: int | None, lookback: int) -> float:
     return 100.0 - (days - 1) * (80.0 / max(lookback - 1, 1))
 
 
-def _score_liquidity(avg_amount: float | None) -> float:
-    """20 日均成交额 (元); 5000 万≈满分, 1000 万以下趋近 0."""
+def _score_liquidity(
+    avg_turnover: float | None,
+    avg_amount: float | None = None,
+) -> float:
+    """20 日均换手率优先; 缺失时回退到成交额."""
+    if avg_turnover is not None and avg_turnover > 0:
+        if 3.0 <= avg_turnover <= 8.0:
+            return max(70.0, 100.0 - abs(avg_turnover - 5.5) * 5.0)
+        if avg_turnover < 1.5:
+            return max(0.0, 100.0 * avg_turnover / 1.5)
+        if avg_turnover > 8.0:
+            return max(40.0, 100.0 - (avg_turnover - 8.0) * 5.0)
+        return 50.0 + (avg_turnover - 1.5) * (20.0 / 1.5)
+
     if avg_amount is None or avg_amount <= 0:
         return 50.0
     wan = avg_amount / 10_000.0
@@ -238,6 +266,11 @@ def _score_liquidity(avg_amount: float | None) -> float:
     if wan <= 1000:
         return 0.0
     return 100.0 * (wan - 1000) / 4000.0
+
+
+def _score_limit_up_penalty(is_limit_up: bool) -> float:
+    """涨停收盘降权但不剔除 (初筛供人工复核)."""
+    return 60.0 if is_limit_up else 100.0
 
 
 def assign_tier(score: float, rank_cfg: RankConfig) -> str:
@@ -252,7 +285,9 @@ def score_snapshot(
     snap: dict[str, float],
     rank_cfg: RankConfig,
     cfg: MaFilterConfig,
+    avg_turnover_20d: float | None = None,
     avg_amount_20d: float | None = None,
+    is_limit_up: bool = False,
 ) -> float:
     gain_key = f"gain_{cfg.max_gain_lookback_days}d_pct"
     parts = {
@@ -263,7 +298,8 @@ def score_snapshot(
             int(snap["days_since_surge"]) if snap.get("days_since_surge") is not None else None,
             cfg.prior_surge_lookback_days,
         ),
-        "liquidity": _score_liquidity(avg_amount_20d),
+        "liquidity": _score_liquidity(avg_turnover_20d, avg_amount_20d),
+        "tradability": _score_limit_up_penalty(is_limit_up),
     }
     weights = {
         "ma5_dist": rank_cfg.weight_ma5_dist,
@@ -271,6 +307,7 @@ def score_snapshot(
         "gain_10d": rank_cfg.weight_gain_10d,
         "surge_recency": rank_cfg.weight_surge_recency,
         "liquidity": rank_cfg.weight_liquidity,
+        "tradability": rank_cfg.weight_liquidity * 0.5,
     }
     total_w = sum(weights.values()) or 1.0
     return sum(parts[k] * weights[k] for k in parts) / total_w
@@ -281,6 +318,7 @@ def screen_metrics(
     mas: dict[int, pd.Series],
     cfg: MaFilterConfig,
     periods: list[int],
+    code: str = "",
 ) -> dict[str, float]:
     anchor = cfg.anchor_ma_period
     close = bars["close"].astype(float)
@@ -303,10 +341,10 @@ def screen_metrics(
     low = bars["low"].astype(float).iloc[-1]
     if pd.notna(low) and ma_val > 0:
         snap["low_ma5_dist_pct"] = round((float(low) - ma_val) / ma_val * 100, 4)
-    ds = _days_since_surge(bars, cfg)
+    ds = _days_since_surge(bars, cfg, code)
     if ds is not None:
         snap["days_since_surge"] = float(ds)
-    surge = _max_prior_surge_pct(bars, cfg)
+    surge = _max_prior_surge_pct(bars, cfg, code)
     if surge is not None:
         snap["max_prior_surge_pct"] = round(surge, 4)
     gain = total_gain_pct(bars, cfg.max_gain_lookback_days)
@@ -320,8 +358,9 @@ def ma_snapshot(
     mas: dict[int, pd.Series],
     periods: list[int],
     cfg: MaFilterConfig,
+    code: str = "",
 ) -> dict[str, float]:
-    return screen_metrics(bars, mas, cfg, periods)
+    return screen_metrics(bars, mas, cfg, periods, code)
 
 
 def _load_universe(trade_date: date, cfg: MaFilterConfig) -> list[str]:
@@ -342,7 +381,7 @@ def _load_universe(trade_date: date, cfg: MaFilterConfig) -> list[str]:
 
 def _load_bars_from_db(code: str, trade_date: date, lookback: int) -> pd.DataFrame | None:
     sql = text("""
-        SELECT trade_date, open, high, low, close, volume, amount, change_pct
+        SELECT trade_date, open, high, low, close, volume, amount, change_pct, turnover_rate
         FROM stock_daily
         WHERE code = :code AND trade_date <= :td
         ORDER BY trade_date DESC
@@ -354,9 +393,9 @@ def _load_bars_from_db(code: str, trade_date: date, lookback: int) -> pd.DataFra
         return None
     df = pd.DataFrame(
         rows,
-        columns=["trade_date", "open", "high", "low", "close", "volume", "amount", "change_pct"],
+        columns=["trade_date", "open", "high", "low", "close", "volume", "amount", "change_pct", "turnover_rate"],
     ).sort_values("trade_date")
-    for col in ("open", "high", "low", "close", "volume", "amount", "change_pct"):
+    for col in ("open", "high", "low", "close", "volume", "amount", "change_pct", "turnover_rate"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
@@ -384,6 +423,21 @@ def _load_bars_from_qmt(code: str, count: int) -> pd.DataFrame | None:
         return None
 
 
+def _fetch_avg_turnover_20d(code: str, trade_date: date) -> float | None:
+    sql = text("""
+        SELECT AVG(turnover_rate) FROM (
+            SELECT turnover_rate FROM stock_daily
+            WHERE code = :code AND trade_date <= :td AND turnover_rate IS NOT NULL
+            ORDER BY trade_date DESC LIMIT 20
+        ) t
+    """)
+    with get_session() as session:
+        row = session.execute(sql, {"code": code, "td": trade_date}).scalar()
+    if row is None:
+        return None
+    return float(row)
+
+
 def _fetch_avg_amount_20d(code: str, trade_date: date) -> float | None:
     sql = text("""
         SELECT AVG(amount) FROM (
@@ -399,13 +453,49 @@ def _fetch_avg_amount_20d(code: str, trade_date: date) -> float | None:
     return float(row)
 
 
-def _passes_liquidity(code: str, trade_date: date, min_avg_amount: float) -> bool:
-    if min_avg_amount <= 0:
+def _passes_liquidity(code: str, trade_date: date, cfg: MaFilterConfig) -> bool:
+    """初筛偏松: 20 日均换手率 **或** 成交额任一达标即可; 双缺失则宽进."""
+    need_turnover = cfg.min_avg_turnover_20d > 0
+    need_amount = cfg.min_avg_amount_20d > 0
+    if not need_turnover and not need_amount:
         return True
-    avg = _fetch_avg_amount_20d(code, trade_date)
-    if avg is None:
+
+    avg_to = _fetch_avg_turnover_20d(code, trade_date) if need_turnover else None
+    avg_amt = _fetch_avg_amount_20d(code, trade_date) if need_amount or need_turnover else None
+
+    turnover_ok = (
+        need_turnover
+        and avg_to is not None
+        and avg_to >= cfg.min_avg_turnover_20d
+    )
+    amount_ok = (
+        need_amount
+        and avg_amt is not None
+        and avg_amt >= cfg.min_avg_amount_20d
+    )
+
+    if need_turnover and need_amount:
+        if turnover_ok or amount_ok:
+            return True
+        if avg_to is None and avg_amt is None:
+            return True
+        return False
+
+    if need_turnover:
+        if avg_to is None:
+            return True
+        return avg_to >= cfg.min_avg_turnover_20d
+
+    if avg_amt is None:
         return True
-    return avg >= min_avg_amount
+    return avg_amt >= cfg.min_avg_amount_20d
+
+
+def _load_limit_status_map(trade_date: date) -> dict[str, dict]:
+    df = calc_limit_status(trade_date)
+    if df.empty:
+        return {}
+    return df.set_index("code").to_dict("index")
 
 
 def screen_universe(
@@ -423,6 +513,7 @@ def screen_universe(
     )
 
     universe = _load_universe(trade_date, cfg)
+    limit_map = _load_limit_status_map(trade_date)
     logger.info("MA 初筛: 日期=%s,  universe=%d 只", trade_date, len(universe))
 
     candidates: list[str] = []
@@ -436,26 +527,48 @@ def screen_universe(
         if bars is None or len(bars) < max_period + 1:
             continue
 
-        if not _passes_liquidity(code, trade_date, cfg.min_avg_amount_20d):
+        limit_row = limit_map.get(code)
+        if limit_row is not None and not passes_tradability_filter(
+            limit_row,
+            exclude_limit_up=cfg.exclude_limit_up,
+        ):
             continue
 
         closes = bars["close"].astype(float)
         mas = compute_mas(closes, cfg.compute_periods)
         if not passes_ma_filter(mas, cfg):
             continue
-        if not passes_prior_surge_filter(bars, cfg):
+        if not passes_prior_surge_filter(bars, cfg, code):
             continue
         if not passes_max_total_gain_filter(bars, cfg):
             continue
         if not passes_volume_pullback_filter(bars, mas, cfg):
             continue
 
-        snap = ma_snapshot(bars, mas, cfg.compute_periods, cfg)
+        if not _passes_liquidity(code, trade_date, cfg):
+            continue
+
+        snap = ma_snapshot(bars, mas, cfg.compute_periods, cfg, code)
         if rank_cfg.enabled:
+            avg_to = _fetch_avg_turnover_20d(code, trade_date)
             avg_amt = _fetch_avg_amount_20d(code, trade_date)
-            composite = score_snapshot(snap, rank_cfg, cfg, avg_amt)
+            is_limit_up = bool(limit_row and limit_row.get("is_limit_up"))
+            composite = score_snapshot(
+                snap,
+                rank_cfg,
+                cfg,
+                avg_turnover_20d=avg_to,
+                avg_amount_20d=avg_amt,
+                is_limit_up=is_limit_up,
+            )
             snap["composite_score"] = round(composite, 2)
             snap["tier"] = assign_tier(composite, rank_cfg)
+            if avg_to is not None:
+                snap["avg_turnover_20d"] = round(avg_to, 4)
+            if avg_amt is not None:
+                snap["avg_amount_20d"] = round(avg_amt, 0)
+            if is_limit_up:
+                snap["is_limit_up"] = 1.0
         scored_rows.append((code, snap))
 
     if rank_cfg.enabled:

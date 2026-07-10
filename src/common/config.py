@@ -56,6 +56,13 @@ class DownloadConfig(BaseSettings):
     retry_delay: float = Field(default=5.0, alias="DL_RETRY_DELAY")
     download_timeout: int = Field(default=600, alias="DL_TIMEOUT")
     default_start_1d: str = Field(default="20160101", alias="DL_START_1D")
+    default_start_1w: str = Field(default="20160101", alias="DL_START_1W")
+    default_start_5m: str = Field(default="20230101", alias="DL_START_5M")
+    default_start_15m: str = Field(default="20230101", alias="DL_START_15M")
+    default_start_30m: str = Field(default="20230101", alias="DL_START_30M")
+    default_start_1h: str = Field(default="20230101", alias="DL_START_1H")
+    default_start_1m: str = Field(default="20250101", alias="DL_START_1M")
+    default_start_tick: str = Field(default="", alias="DL_START_TICK")
 
 
 class SchedulerConfig(BaseSettings):
@@ -119,15 +126,38 @@ class TradingRulesConfig(BaseSettings):
 class DatacollectConfig(BaseSettings):
     model_config = _SHARED_CFG
     akshare_rate: float = Field(default=0.15, alias="DATACOLLECT_AKSHARE_RATE")
+    akshare_burst: float = Field(default=3.0, alias="DATACOLLECT_AKSHARE_BURST")
     baostock_rate: float = Field(default=5.0, alias="DATACOLLECT_BAOSTOCK_RATE")
+    baostock_burst: float = Field(default=10.0, alias="DATACOLLECT_BAOSTOCK_BURST")
+    eastmoney_rate: float = Field(default=0.1, alias="DATACOLLECT_EASTMONEY_RATE")
+    eastmoney_burst: float = Field(default=2.0, alias="DATACOLLECT_EASTMONEY_BURST")
+    adata_rate: float = Field(default=0.5, alias="DATACOLLECT_ADATA_RATE")
+    adata_burst: float = Field(default=5.0, alias="DATACOLLECT_ADATA_BURST")
+    tushare_rate: float = Field(default=0.8, alias="DATACOLLECT_TUSHARE_RATE")
+    tushare_burst: float = Field(default=5.0, alias="DATACOLLECT_TUSHARE_BURST")
+    rsshub_base_url: str = Field(default="https://rsshub.app", alias="DATACOLLECT_RSSHUB_BASE_URL")
+    exchange_info_skip_if_no_list_date_gap: bool = Field(
+        default=True,
+        alias="DATACOLLECT_EXCHANGE_INFO_SKIP_IF_NO_GAP",
+    )
     tushare_enabled: bool = Field(default=False, alias="TUSHARE_ENABLED")
     tushare_token: str = Field(default="", alias="TUSHARE_TOKEN")
-    max_retries: int = Field(default=5, alias="DATACOLLECT_MAX_RETRIES")
+    max_retries: int = Field(default=3, alias="DATACOLLECT_MAX_RETRIES")
+    retry_backoff_base: float = Field(default=10.0, alias="DATACOLLECT_BACKOFF_BASE")
     request_timeout: int = Field(default=30, alias="DATACOLLECT_REQUEST_TIMEOUT")
+    impersonate: str = Field(default="chrome124", alias="DATACOLLECT_TLS_IMPERSONATE")
+    proxy_url: str = Field(default="", alias="DATACOLLECT_PROXY_URL")
     global_concurrency: int = Field(default=50, alias="DATACOLLECT_GLOBAL_CONCURRENCY")
     write_buffer_size: int = Field(default=200, alias="DATACOLLECT_WRITE_BUFFER_SIZE")
     write_batch_size: int = Field(default=5000, alias="DATACOLLECT_WRITE_BATCH_SIZE")
     kline_non_etf_default_days_back: int = Field(default=365, alias="DATACOLLECT_KLINE_STOCK_DAYS_BACK")
+    etf_daily_start_date: str = Field(default="20160101", alias="DATACOLLECT_ETF_DAILY_START_DATE")
+    etf_daily_kline_source: str = Field(default="auto", alias="DATACOLLECT_ETF_DAILY_KLINE_SOURCE")
+    etf_daily_stall_sec: float = Field(default=120.0, alias="DATACOLLECT_ETF_DAILY_STALL_SEC")
+    etf_daily_resume: bool = Field(default=True, alias="DATACOLLECT_ETF_DAILY_RESUME")
+    etf_daily_sina_only: bool = Field(default=False, alias="DATACOLLECT_ETF_DAILY_SINA_ONLY")
+    etf_daily_use_progress: bool = Field(default=True, alias="DATACOLLECT_ETF_DAILY_USE_PROGRESS")
+    etf_download_max_retries: int = Field(default=5, alias="DATACOLLECT_ETF_DOWNLOAD_MAX_RETRIES")
 
 
 class MaFilterConfig(BaseSettings):
@@ -153,7 +183,22 @@ class MaFilterConfig(BaseSettings):
     universe: str = Field(default="all_a", alias="SELECTION_UNIVERSE")
     universe_file: str = Field(default="", alias="SELECTION_UNIVERSE_FILE")
     exclude_st: bool = Field(default=True, alias="SELECTION_EXCLUDE_ST")
+    min_avg_turnover_20d: float = Field(
+        default=0.0,
+        alias="SELECTION_MIN_AVG_TURNOVER_20D",
+        description="20 日均换手率(%)硬筛下限; 0 表示不启用",
+    )
     min_avg_amount_20d: float = Field(default=0.0, alias="SELECTION_MIN_AVG_AMOUNT_20D")
+    exclude_limit_up: bool = Field(
+        default=False,
+        alias="SELECTION_EXCLUDE_LIMIT_UP",
+        description="硬筛是否排除筛选日涨停收盘 (初筛默认保留供人工复核)",
+    )
+    prior_surge_use_board_threshold: bool = Field(
+        default=True,
+        alias="SELECTION_PRIOR_SURGE_USE_BOARD",
+        description="prior_surge 阈值按板块涨跌幅动态调整",
+    )
     max_candidates: int = Field(default=200, alias="SELECTION_MAX_CANDIDATES")
     anchor_ma_period: int = Field(default=5, alias="SELECTION_ANCHOR_MA_PERIOD")
     ma5_proximity_pct: float = Field(

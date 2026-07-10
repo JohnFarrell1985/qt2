@@ -3,7 +3,7 @@
     "context7": {
       "url": "https://mcp.context7.com/mcp",
       "headers": {
-        "CONTEXT7_API_KEY": "YOUR_CONTEXT7_API_KEY"
+        "CONTEXT7_API_KEY": "${env:CONTEXT7_API_KEY}"
       }
     },
     "postgres": {
@@ -12,14 +12,78 @@
         "-y",
         "@sarmadparvez/postgresql-mcp",
         "postgresql://user:password@localhost:5432/qt_quant?mode=readonly"
-      ]
+      ],
+      "env": {
+        "PATH": "${userHome}\\.local\\node\\node-v22.17.0-win-x64;${env:PATH}"
+      }
     },
     "sequential-thinking": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-sequential-thinking"
-      ]
+      ],
+      "env": {
+        "PATH": "${userHome}\\.local\\node\\node-v22.17.0-win-x64;${env:PATH}"
+      }
+    },
+    "mem0": {
+      "url": "https://mcp.mem0.ai/mcp/",
+      "headers": {
+        "Authorization": "Token ${env:MEM0_API_KEY}"
+      }
+    },
+    "github": {
+      "command": "mcp-server-github",
+      "args": [],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "PATH": "${userHome}\\.local\\node\\node-v22.17.0-win-x64;${env:PATH}"
+      }
+    },
+    "duckduckgo": {
+      "command": "duckduckgo-mcp-server",
+      "args": [],
+      "env": {
+        "PATH": "${userHome}\\.local\\node\\node-v22.17.0-win-x64;${env:PATH}"
+      }
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "env": {
+        "PATH": "${userHome}\\.local\\bin;${env:PATH}"
+      }
+    },
+    "china-stock": {
+      "command": "uvx",
+      "args": [
+        "china-a-stock-mcp"
+      ],
+      "env": {
+        "CSM_TUSHARE_TOKEN": "${env:TUSHARE_TOKEN}",
+        "CSM_CACHE_DIR": "${userHome}\\.cache\\china-stock-mcp",
+        "CSM_LOG_LEVEL": "INFO",
+        "PATH": "${userHome}\\.local\\bin;${env:PATH}"
+      }
+    },
+    "ashare": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "ashare-mcp",
+        "ashare-mcp"
+      ],
+      "env": {
+        "TUSHARE_TOKEN": "${env:TUSHARE_TOKEN}",
+        "LOG_LEVEL": "INFO",
+        "PATH": "${userHome}\\.local\\bin;${env:PATH}"
+      }
+    },
+    "qmt-mcp": {
+      "url": "http://127.0.0.1:8000/sse"
     }
   }
 }

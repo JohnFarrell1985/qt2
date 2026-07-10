@@ -34,11 +34,15 @@ def build_screen_report(
     ma_snapshots: dict[str, dict],
 ) -> dict[str, Any]:
     meta = get_strategy_meta()
+    export_n = settings.selection.rank.export_top_n
+    shortlist = candidates[:export_n] if export_n > 0 else list(candidates)
     return {
         "trade_date": trade_date.isoformat(),
         "strategy": meta.get("id", settings.selection.active_strategy),
         "strategy_label": meta.get("label", ""),
         "ma_candidates": len(candidates),
+        "export_top_n": export_n,
+        "export_shortlist": shortlist,
         "candidates": candidates,
         "ma_snapshots": ma_snapshots,
     }
@@ -52,13 +56,21 @@ def save_report(report: dict[str, Any], path: Path, csv_also: bool = False) -> N
     if csv_also:
         csv_path = path.with_suffix(".csv")
         snaps = report.get("ma_snapshots") or {}
+        export_codes = report.get("export_shortlist") or report.get("candidates") or []
         with csv_path.open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["code", "composite_score", "tier", "close", "ma5_dist_pct"],
+                fieldnames=[
+                    "code",
+                    "composite_score",
+                    "tier",
+                    "close",
+                    "ma5_dist_pct",
+                    "avg_turnover_20d",
+                ],
             )
             writer.writeheader()
-            for code in report.get("candidates", []):
+            for code in export_codes:
                 snap = snaps.get(code, {})
                 writer.writerow(
                     {
@@ -67,6 +79,7 @@ def save_report(report: dict[str, Any], path: Path, csv_also: bool = False) -> N
                         "tier": snap.get("tier", ""),
                         "close": snap.get("close", ""),
                         "ma5_dist_pct": snap.get("ma5_dist_pct", ""),
+                        "avg_turnover_20d": snap.get("avg_turnover_20d", ""),
                     }
                 )
         logger.info("CSV 已保存: %s", csv_path)

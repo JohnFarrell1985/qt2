@@ -12,7 +12,10 @@
     "prior_surge_min_pct": 4.0,
     "universe": "all_a",
     "exclude_st": true,
+    "min_avg_turnover_20d": 0,
     "min_avg_amount_20d": 0,
+    "exclude_limit_up": false,
+    "prior_surge_use_board_threshold": false,
     "max_candidates": 200,
     "anchor_ma_period": 20,
     "ma5_proximity_pct": 5.0,
@@ -21,13 +24,13 @@
     "require_low_above_ma5": false,
     "volume_shrink_ratio": 1.0,
     "max_gain_lookback_days": 10,
-    "max_gain_total_pct": 35.0
+    "max_gain_total_pct": 32.0
   },
   "rank": {
     "enabled": true,
-    "tier_a_min": 70,
-    "tier_b_min": 55,
-    "export_top_n": 20,
+    "tier_a_min": 65,
+    "tier_b_min": 48,
+    "export_top_n": 50,
     "weight_ma5_dist": 0.35,
     "weight_vol_shrink": 0.25,
     "weight_gain_10d": 0.15,

@@ -156,7 +156,7 @@
     }
   },
   "fallback_chains": {
-    "stock_list":    ["xtquant", "baostock", "akshare", "adata", "tushare"],
+    "stock_list":    ["baostock", "eastmoney", "akshare", "adata", "tushare"],
     "daily_kline":   ["xtquant", "baostock", "akshare", "adata", "tushare", "pytdx"],
     "minute_kline":  ["xtquant", "pytdx", "baostock"],
     "index_daily":   ["xtquant", "baostock", "akshare", "tushare", "eastmoney"],
