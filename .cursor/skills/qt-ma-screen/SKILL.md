@@ -33,7 +33,7 @@ Preset：`config/strategies/{bull_launch,bear_rebound}.json`
 
 1. Universe（`all_a` PIT / `universe_file`）
 2. ST 排除（`exclude_st`）
-3. K 线（DB → QMT fallback）
+3. K 线（仅 PostgreSQL `stock_daily`，无 QMT 回退）
 4. 可交易性（停牌/一字/跌停硬排除；涨停默认扣分不排除）
 5. MA 发散 → 前期放量 → 最大涨幅 → 缩量回踩锚线 → 流动性
 6. 综合评分 tier A/B/C，上限 `max_candidates`（200）

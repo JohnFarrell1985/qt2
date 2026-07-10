@@ -227,10 +227,75 @@ class MaFilterConfig(BaseSettings):
         alias="SELECTION_MAX_GAIN_TOTAL_PCT",
         description="近 N 个交易日累计涨幅上限 (%)",
     )
+    max_gain_1m_lookback_days: int = Field(
+        default=22,
+        alias="SELECTION_MAX_GAIN_1M_LOOKBACK_DAYS",
+        description="近一月(交易日)涨幅统计窗口",
+    )
+    max_gain_1m_pct: float = Field(
+        default=30.0,
+        alias="SELECTION_MAX_GAIN_1M_PCT",
+        description="近一月(交易日)累计涨幅上限 (%)",
+    )
+    require_close_above_ma5: bool = Field(
+        default=False,
+        alias="SELECTION_REQUIRE_CLOSE_ABOVE_MA5",
+        description="收盘价须在锚点均线(默认5日)上方",
+    )
     volume_shrink_ratio: float = Field(
         default=1.0,
         alias="SELECTION_VOLUME_SHRINK_RATIO",
         description="筛选日成交量 / 上一交易日成交量须低于该比例 (1.0 即严格缩量)",
+    )
+    require_ma5_ma10_cross: bool = Field(
+        default=False,
+        alias="SELECTION_REQUIRE_MA5_MA10_CROSS",
+        description="要求 MA5 上穿 MA10 或即将上穿",
+    )
+    ma5_ma10_imminent_pct: float = Field(
+        default=1.5,
+        alias="SELECTION_MA5_MA10_IMMINENT_PCT",
+        description="即将上穿: MA5 低于 MA10 但差距不超过该比例(%)",
+    )
+    ma5_ma10_fresh_cross_days: int = Field(
+        default=1,
+        alias="SELECTION_MA5_MA10_FRESH_CROSS_DAYS",
+        description="金叉以来 MA5 在 MA10 上方最多 N 个交易日(含金叉当日)",
+    )
+    ma5_ma10_allow_imminent: bool = Field(
+        default=True,
+        alias="SELECTION_MA5_MA10_ALLOW_IMMINENT",
+        description="允许 MA5 在 MA10 下方收敛上行、即将金叉",
+    )
+    ma5_ma10_imminent_lookback: int = Field(
+        default=5,
+        alias="SELECTION_MA5_MA10_IMMINENT_LOOKBACK",
+        description="即将金叉: 近 N 日不得曾 MA5 在 MA10 上方(排除死叉回落)",
+    )
+    ma5_ma10_imminent_only: bool = Field(
+        default=False,
+        alias="SELECTION_MA5_MA10_IMMINENT_ONLY",
+        description="仅选尚未金叉、斜率预测即将上穿的标的",
+    )
+    ma5_ma10_max_days_to_cross: float = Field(
+        default=1.0,
+        alias="SELECTION_MA5_MA10_MAX_DAYS_TO_CROSS",
+        description="斜率预测金叉须在 N 个交易日内",
+    )
+    ma5_ma10_slope_lookback: int = Field(
+        default=1,
+        alias="SELECTION_MA5_MA10_SLOPE_LOOKBACK",
+        description="计算均线斜率的回溯交易日数",
+    )
+    ma5_ma10_require_next_day: bool = Field(
+        default=True,
+        alias="SELECTION_MA5_MA10_REQUIRE_NEXT_DAY",
+        description="要求斜率预测下一交易日即金叉",
+    )
+    ma5_ma10_touch_pct: float = Field(
+        default=0.3,
+        alias="SELECTION_MA5_MA10_TOUCH_PCT",
+        description="MA5 与 MA10 正好相交: 差距不超过该比例(%)",
     )
 
     @field_validator("compute_periods", "filter_periods", mode="before")
@@ -254,6 +319,11 @@ class RankConfig(BaseSettings):
     weight_gain_10d: float = Field(default=0.20, alias="SELECTION_WEIGHT_GAIN_10D")
     weight_surge_recency: float = Field(default=0.15, alias="SELECTION_WEIGHT_SURGE_RECENCY")
     weight_liquidity: float = Field(default=0.10, alias="SELECTION_WEIGHT_LIQUIDITY")
+    weight_ma5_ma10_cross: float = Field(
+        default=0.0,
+        alias="SELECTION_WEIGHT_MA5_MA10_CROSS",
+        description="MA5/MA10 金叉新鲜度或即将上穿紧密度权重",
+    )
 
 
 class SelectionConfig(BaseSettings):

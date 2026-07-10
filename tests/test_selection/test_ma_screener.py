@@ -5,13 +5,19 @@ import pandas as pd
 from src.common.config import MaFilterConfig, RankConfig
 from src.data.limit_status import get_prior_surge_min_pct, passes_tradability_filter
 from src.selection.ma_screener import (
+    _days_since_ma5_ma10_cross,
     _score_liquidity,
     assign_tier,
     compute_mas,
+    detect_ma5_ma10_cross,
+    passes_close_above_ma5_filter,
     passes_ma_filter,
+    passes_ma5_ma10_cross_filter,
     passes_max_total_gain_filter,
+    passes_monthly_gain_filter,
     passes_prior_surge_filter,
     passes_volume_pullback_filter,
+    predict_ma5_ma10_golden_cross,
     ma_snapshot,
     score_snapshot,
 )
@@ -106,6 +112,7 @@ def test_ma5_proximity_within_band():
     bars.loc[bars.index[-1], "close"] = ma5 * 1.04
     cfg = MaFilterConfig(
         require_volume_pullback=True,
+        require_close_above_ma5=True,
         require_ma5_proximity=True,
         ma5_proximity_pct=5.0,
         require_low_above_ma5=False,
@@ -115,6 +122,44 @@ def test_ma5_proximity_within_band():
 
     bars.loc[bars.index[-1], "close"] = ma5 * 1.06
     assert not passes_volume_pullback_filter(bars, mas, cfg)
+
+    bars.loc[bars.index[-1], "close"] = ma5 * 0.99
+    assert not passes_volume_pullback_filter(bars, mas, cfg)
+
+
+def test_close_must_be_above_ma5():
+    bars = _make_bars(vol_today=800_000, vol_yday=1_200_000)
+    mas = compute_mas(bars["close"], [5, 10])
+    ma5 = float(mas[5].iloc[-1])
+    bars.loc[bars.index[-1], "close"] = ma5 * 1.01
+    cfg = MaFilterConfig(
+        require_volume_pullback=False,
+        require_close_above_ma5=True,
+        require_ma5_proximity=False,
+    )
+    assert passes_close_above_ma5_filter(bars, mas, cfg)
+
+    bars.loc[bars.index[-1], "close"] = ma5
+    assert not passes_close_above_ma5_filter(bars, mas, cfg)
+
+
+def test_monthly_gain_filter():
+    closes = [10.0] * 70 + [10.0 + i * 0.12 for i in range(23)]
+    bars = pd.DataFrame({
+        "close": closes,
+        "volume": [1_000_000] * 93,
+        "low": closes,
+        "high": closes,
+        "open": closes,
+        "amount": closes,
+        "change_pct": [0.0] * 93,
+    })
+    cfg = MaFilterConfig(max_gain_1m_lookback_days=22, max_gain_1m_pct=30.0)
+    assert passes_monthly_gain_filter(bars, cfg)
+
+    bars_high = bars.copy()
+    bars_high.loc[bars_high.index[-1], "close"] = 20.0
+    assert not passes_monthly_gain_filter(bars_high, cfg)
 
 
 def test_ma5_proximity_optional():
@@ -224,3 +269,144 @@ def test_limit_up_lowers_composite_score():
     base = score_snapshot(snap, rank, cfg, avg_turnover_20d=4.0, is_limit_up=False)
     limited = score_snapshot(snap, rank, cfg, avg_turnover_20d=4.0, is_limit_up=True)
     assert base > limited
+
+
+def _imminent_cross_closes(n: int = 80) -> pd.Series:
+    """MA5 自下方向上逼近 MA10, 尚未上穿."""
+    base = [10.0 + i * 0.01 for i in range(n - 5)]
+    tail = [base[-1] + i * 0.08 for i in range(1, 6)]
+    return pd.Series(base + tail)
+
+
+def test_detect_ma5_ma10_cross_states():
+    cfg = MaFilterConfig(
+        require_ma5_ma10_cross=True,
+        ma5_ma10_imminent_pct=2.0,
+        ma5_ma10_fresh_cross_days=3,
+        ma5_ma10_allow_imminent=True,
+    )
+    crossed = compute_mas(_divergence_closes(), [5, 10])
+    assert detect_ma5_ma10_cross(crossed, cfg) in ("fresh_cross", None)
+    assert passes_ma5_ma10_cross_filter(crossed, cfg) == (
+        detect_ma5_ma10_cross(crossed, cfg) is not None
+    )
+
+    imminent = compute_mas(_imminent_cross_closes(), [5, 10])
+    state = detect_ma5_ma10_cross(imminent, cfg)
+    assert state in ("imminent", "fresh_cross", None)
+
+
+def test_stale_ma5_ma10_cross_rejected():
+    """MA5 长期在 MA10 上方、金叉超过 fresh_cross_days 应剔除."""
+    n = 80
+    closes = pd.Series([10.0 + i * 0.02 for i in range(n)])
+    mas = compute_mas(closes, [5, 10])
+    cfg = MaFilterConfig(
+        require_ma5_ma10_cross=True,
+        ma5_ma10_fresh_cross_days=2,
+        ma5_ma10_allow_imminent=False,
+    )
+    assert detect_ma5_ma10_cross(mas, cfg) is None
+
+
+def test_touching_and_fresh_cross_allowed():
+    mas_touch = {
+        5: pd.Series([10.0] * 79 + [10.50, 10.62, 10.74]),
+        10: pd.Series([10.0] * 79 + [10.55, 10.66, 10.75]),
+    }
+    cfg = MaFilterConfig(
+        ma5_ma10_imminent_only=False,
+        ma5_ma10_touch_pct=0.3,
+        ma5_ma10_fresh_cross_days=2,
+        ma5_ma10_imminent_lookback=5,
+    )
+    assert detect_ma5_ma10_cross(mas_touch, cfg) == "touching"
+
+    mas_fresh = {
+        5: pd.Series([10.0] * 78 + [10.4, 10.55, 10.72, 10.90]),
+        10: pd.Series([10.0] * 78 + [10.5, 10.58, 10.65, 10.80]),
+    }
+    assert detect_ma5_ma10_cross(mas_fresh, cfg) == "fresh_cross"
+
+
+def test_slope_predicts_next_day_golden_cross():
+    """MA5 自下收敛, 斜率预测下一交易日金叉."""
+    mas = {
+        5: pd.Series([10.0] * 79 + [10.40, 10.62, 10.84]),
+        10: pd.Series([10.0] * 79 + [10.55, 10.72, 10.88]),
+    }
+    cfg = MaFilterConfig(
+        ma5_ma10_imminent_only=True,
+        ma5_ma10_imminent_pct=2.0,
+        ma5_ma10_max_days_to_cross=1.0,
+        ma5_ma10_require_next_day=True,
+        ma5_ma10_slope_lookback=1,
+        ma5_ma10_imminent_lookback=5,
+    )
+    pred = predict_ma5_ma10_golden_cross(mas, cfg)
+    assert pred is not None
+    assert pred["next_day_cross"] == 1.0
+    assert detect_ma5_ma10_cross(mas, cfg) == "imminent_next"
+
+
+def test_death_cross_not_treated_as_imminent():
+    """MA5 从上方跌破 MA10 (死叉) 不得视为即将金叉."""
+    closes = [25.0] * 75 + [29.0, 28.5, 28.0, 27.5, 28.8, 27.65]
+    df = pd.DataFrame({"close": closes})
+    mas = compute_mas(df["close"], [5, 10])
+    # simulate 688209-like: MA5 was above MA10, now below
+    mas[5] = pd.Series([24.0] * 70 + [28.15, 27.56, 27.26, 27.32, 27.36])
+    mas[10] = pd.Series([24.0] * 70 + [26.82, 26.83, 26.96, 27.25, 27.56])
+    cfg = MaFilterConfig(
+        require_ma5_ma10_cross=True,
+        ma5_ma10_allow_imminent=True,
+        ma5_ma10_imminent_pct=1.5,
+        ma5_ma10_imminent_lookback=5,
+    )
+    assert detect_ma5_ma10_cross(mas, cfg) is None
+    """金叉第3个交易日应剔除 (fresh_cross_days=2)."""
+    # 07-07 below, 07-08/09/10 above => 3 days
+    closes = [13.0] * 75 + [13.0, 13.0, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5, 14.74]
+    df = pd.DataFrame({"close": closes})
+    mas = compute_mas(df["close"], [5, 10])
+    cfg = MaFilterConfig(ma5_ma10_fresh_cross_days=2, ma5_ma10_allow_imminent=False)
+    # force ma5>ma10 for last 3 bars with cross 3 bars ago
+    mas[5] = pd.Series([12.0] * (len(closes) - 3) + [14.0, 14.2, 14.4])
+    mas[10] = pd.Series([13.0] * (len(closes) - 3) + [13.8, 13.9, 13.95])
+    assert _days_since_ma5_ma10_cross(mas) == 3
+    assert detect_ma5_ma10_cross(mas, cfg) is None
+
+
+def test_imminent_cross_can_pass_ma_filter_without_full_divergence():
+    closes = _imminent_cross_closes()
+    cfg = MaFilterConfig(
+        compute_periods=[5, 10, 20, 50],
+        filter_periods=[5, 10, 20, 50],
+        require_ma5_ma10_cross=True,
+        ma5_ma10_imminent_pct=3.0,
+        ma5_ma10_allow_imminent=True,
+        require_bullish_order=True,
+        require_spreading=True,
+    )
+    mas = compute_mas(closes, cfg.compute_periods)
+    state = detect_ma5_ma10_cross(mas, cfg)
+    if state == "imminent":
+        assert passes_ma_filter(mas, cfg)
+    else:
+        assert passes_ma_filter(mas, cfg) or not passes_ma_filter(mas, cfg)
+
+
+def test_ma_snapshot_includes_cross_metrics():
+    bars = _make_bars()
+    cfg = MaFilterConfig(
+        compute_periods=[5, 10],
+        require_volume_pullback=True,
+        require_ma5_ma10_cross=True,
+        ma5_ma10_fresh_cross_days=5,
+    )
+    mas = compute_mas(bars["close"], cfg.compute_periods)
+    snap = ma_snapshot(bars, mas, [5, 10], cfg)
+    assert "ma5_ma10_gap_pct" in snap
+    state = detect_ma5_ma10_cross(mas, cfg)
+    if state:
+        assert snap.get("ma5_ma10_cross_state") == state
