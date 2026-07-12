@@ -101,6 +101,8 @@ def fetch_inst_holders_multi_source(codes: List[str]) -> Tuple[Dict[str, Dict[st
             hit = partial.get(code, _na())
             if hit.get("inst_holder_count") is not None:
                 out[code] = hit
+        if all(out[c].get("inst_holder_count") is not None for c in codes):
+            break
     return out, sources_done
 
 
@@ -225,6 +227,12 @@ class InstHolderFetchService:
                     "error": None,
                 }
             logger.info("机构家数异步完成: %d 只, 源=%s", len(codes), sources_done)
+            username, kind = key.split("|", 1)
+            try:
+                from src.webui.selection_service import get_selection_service
+                get_selection_service().merge_inst_holders(username, kind, merged)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("回写选股记录机构家数失败: %s", e)
         except Exception as e:  # noqa: BLE001
             logger.exception("机构家数异步失败: %s", e)
             with self._lock:

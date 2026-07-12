@@ -23,9 +23,10 @@ from sqlalchemy import text
 
 from src.common.logger import get_logger
 from src.webui.auth import AuthError, AuthManager, default_store
+from src.webui.data_sync import get_data_sync_service
 from src.webui.paper_engine import PaperAccount, _today_str
 from src.webui.quotes import DayBarProvider, QuoteProvider
-from src.webui.selection_service import SelectionService
+from src.webui.selection_service import get_selection_service
 from src.selection.strategy import strategy_catalog
 
 logger = get_logger(__name__)
@@ -65,7 +66,20 @@ def _get_account(username: str) -> PaperAccount:
 
 
 _auth = AuthManager(_store, on_register=lambda u: _get_account(u))
-_selection = SelectionService()
+
+
+def _settle_all_accounts() -> Dict[str, dict]:
+    """同步完成后: 所有已加载账户推进到最新交易日并撮合。"""
+    with _accounts_lock:
+        items = list(_accounts.items())
+    out: Dict[str, dict] = {}
+    for name, acct in items:
+        try:
+            out[name] = acct.settle_to_latest()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("账户 %s 结算失败: %s", name, e)
+            out[name] = {"error": str(e)}
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +139,12 @@ class PickItem(BaseModel):
 class PicksReq(BaseModel):
     kind: str = "stock"
     items: list[PickItem] = []
+
+
+class SyncKlineReq(BaseModel):
+    days_back: int = 15
+    concurrency: int = 4
+    source: str = "qmt"
 
 
 def create_app() -> FastAPI:
@@ -254,7 +274,7 @@ def create_app() -> FastAPI:
             d = date.fromisoformat(d_str)
         except ValueError:
             raise HTTPException(400, detail=f"日期无效: {d_str}")
-        res = _selection.start(username, kind, req.strategy_id, d, req.params or {})
+        res = get_selection_service().start(username, kind, req.strategy_id, d, req.params or {})
         if not res.get("ok"):
             raise HTTPException(409, detail=res.get("detail", "任务启动失败"))
         return {"ok": True, "kind": kind, "date": d_str}
@@ -262,12 +282,33 @@ def create_app() -> FastAPI:
     @app.get("/api/select/status")
     def select_status(kind: str = "stock", x_auth_token: Optional[str] = Header(None)):
         username = _require_user(x_auth_token)
-        return _selection.status(username, kind)
+        return get_selection_service().status(username, kind)
 
     @app.get("/api/select/result")
     def select_result(kind: str = "stock", x_auth_token: Optional[str] = Header(None)):
         username = _require_user(x_auth_token)
-        return {"kind": kind, "items": _selection.result(username, kind)}
+        if kind not in ("stock", "etf"):
+            kind = "stock"
+        return get_selection_service().current(username, kind)
+
+    @app.get("/api/select/history")
+    def select_history(kind: str = "stock", x_auth_token: Optional[str] = Header(None)):
+        username = _require_user(x_auth_token)
+        if kind not in ("stock", "etf"):
+            kind = "stock"
+        from src.webui import selection_history as sh
+
+        return {"kind": kind, "runs": sh.list_runs(username, kind)}
+
+    @app.get("/api/select/history/{run_id}")
+    def select_history_run(run_id: int, x_auth_token: Optional[str] = Header(None)):
+        username = _require_user(x_auth_token)
+        from src.webui import selection_history as sh
+
+        run = sh.get_run(username, run_id)
+        if not run:
+            raise HTTPException(404, detail="选股记录不存在")
+        return run
 
     @app.get("/api/select/inst-holders/status")
     def inst_holders_status(kind: str = "stock", x_auth_token: Optional[str] = Header(None)):
@@ -337,6 +378,34 @@ def create_app() -> FastAPI:
     @app.get("/api/calendar")
     def calendar(start: str, end: str):
         return {"days": _bars.trading_days(start, end)}
+
+    # ------------------------------------------------------------------
+    # 日 K 同步 + 挂单结算 (需登录)
+    # ------------------------------------------------------------------
+    @app.post("/api/sync/kline")
+    def sync_kline(req: SyncKlineReq, x_auth_token: Optional[str] = Header(None)):
+        _require_user(x_auth_token)
+        svc = get_data_sync_service()
+        res = svc.start(
+            _settle_all_accounts,
+            days_back=max(1, min(req.days_back, 365)),
+            concurrency=max(1, min(req.concurrency, 16)),
+            source=req.source if req.source in ("auto", "qmt", "eastmoney", "tencent") else "qmt",
+        )
+        if not res.get("ok"):
+            raise HTTPException(409, detail=res.get("detail", "同步启动失败"))
+        return {"ok": True}
+
+    @app.get("/api/sync/status")
+    def sync_status(x_auth_token: Optional[str] = Header(None)):
+        username = _require_user(x_auth_token)
+        st = get_data_sync_service().status()
+        if not st.get("running") and st.get("settled"):
+            mine = (st.get("settled") or {}).get(username)
+            if mine:
+                st = dict(st)
+                st["user_settled"] = mine
+        return st
 
     @app.get("/api/day_range")
     def day_range(code: str, date: str | None = None,

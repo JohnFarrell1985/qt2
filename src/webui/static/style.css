@@ -48,10 +48,19 @@ input { font-family: inherit; }
 .asset-cell.main b { font-size: 22px; }
 .asset-cell .pnl { color: #ffe08a; }
 .reset-btn {
-  margin-left: 8px; color: #fff; border: 1px solid rgba(255,255,255,.5);
+  margin-left: 0; color: #fff; border: 1px solid rgba(255,255,255,.5);
   border-radius: 6px; padding: 5px 12px; font-size: 12px;
 }
-#capitalBtn { margin-left: auto; }
+.top-actions {
+  margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.sync-btn {
+  background: #fff; color: var(--accent); border: none; border-radius: 6px;
+  padding: 6px 14px; font-size: 13px; font-weight: 700;
+}
+.sync-btn:disabled { opacity: .55; }
+.sync-btn:active:not(:disabled) { opacity: .88; }
+.sync-status-inline { font-size: 11px; opacity: .85; max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .reset-btn:active { background: rgba(255,255,255,.2); }
 
 /* ============ 布局 ============ */
@@ -223,10 +232,38 @@ input { font-family: inherit; }
 .auth-submit:disabled { opacity: .6; }
 .auth-tip { text-align: center; color: var(--muted); font-size: 12px; margin: 2px 0 0; }
 
+/* ============ 统一确认 / 输入弹层 ============ */
+.dlg-mask {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(0,0,0,.4);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.dlg-mask.show { display: flex; }
+.dlg-card {
+  width: 340px; max-width: 92vw; background: #fff; border-radius: 14px;
+  padding: 22px 20px 18px; box-shadow: 0 16px 50px rgba(0,0,0,.25);
+}
+.dlg-title { font-size: 17px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
+.dlg-msg { font-size: 14px; line-height: 1.55; color: var(--text); margin: 0 0 14px; white-space: pre-wrap; }
+.dlg-input {
+  display: none; width: 100%; border: 1px solid var(--line); border-radius: 8px;
+  padding: 11px 12px; font-size: 16px; outline: none; margin-bottom: 16px;
+}
+.dlg-input.show { display: block; }
+.dlg-input:focus { border-color: var(--accent); }
+.dlg-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.dlg-btn {
+  min-width: 88px; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600;
+}
+.dlg-btn.cancel { background: #f0f1f3; color: var(--text); border: 1px solid var(--line); }
+.dlg-btn.cancel:active { background: #e8eaed; }
+.dlg-btn.ok { background: var(--accent); color: #fff; }
+.dlg-btn.ok:active { opacity: .88; }
+
 /* ============ 交易日回放条 ============ */
 .date-bar {
   position: sticky; top: 0; z-index: 15;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   background: #fff7f6; border-bottom: 1px solid #f2d9d6;
   padding: 7px 16px; font-size: 13px;
 }
@@ -342,7 +379,34 @@ body.view-select .select-panel { display: block; grid-column: 1 / -1; }
 .param-actions button { padding: 7px 12px; border-radius: 6px; font-size: 12px; border: 1px solid var(--line); color: var(--text); }
 .param-actions .p-save { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-.sel-bar { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px; }
+.sel-kind-tabs { display: flex; gap: 8px; margin: 12px 0 0; }
+.sel-kind-tab {
+  padding: 7px 14px; border-radius: 999px; font-size: 13px; border: 1px solid var(--line);
+  background: #fff; color: var(--muted);
+}
+.sel-kind-tab.active { background: #fff5f4; border-color: var(--buy); color: var(--buy); font-weight: 600; }
+
+.sel-body-wrap { display: grid; grid-template-columns: 220px 1fr; gap: 14px; margin-top: 12px; align-items: start; }
+.sel-history {
+  background: #fafbfc; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  max-height: 420px; display: flex; flex-direction: column;
+}
+.sel-history-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+.sel-history-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+.sel-history-list li {
+  padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.35;
+  border: 1px solid transparent; margin-bottom: 4px;
+}
+.sel-history-list li:hover { background: #fff; border-color: var(--line); }
+.sel-history-list li.active { background: #fff; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sel-history-list li.empty { cursor: default; color: var(--muted); text-align: center; padding: 16px 8px; }
+.sel-history-list .h-date { display: block; font-weight: 600; color: var(--text); }
+.sel-history-list .h-strat { color: var(--muted); }
+.sel-history-list .h-cnt { color: var(--muted); margin-left: 4px; }
+.sel-history-list .h-cur { display: inline-block; margin-top: 2px; font-size: 10px; color: var(--buy); background: #fff0ee; padding: 1px 6px; border-radius: 4px; }
+.sel-main { min-width: 0; }
+
+.sel-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; }
 .sel-all { font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 5px; }
 .sel-meta { font-size: 12px; color: var(--muted); }
 .sel-place { margin-left: auto; padding: 9px 16px; border-radius: 8px; background: var(--buy); color: #fff; font-weight: 700; font-size: 14px; }
@@ -365,15 +429,21 @@ body.view-select .select-panel { display: block; grid-column: 1 / -1; }
   .asset-cell.main b { font-size: 18px; }
   .asset-cell:nth-child(n+4) { display: none; }  /* 手机资产条精简 */
   .reset-btn { padding: 4px 8px; font-size: 11px; margin-left: 6px; }
-  #capitalBtn { margin-left: auto; }
+  #capitalBtn { margin-left: 0; }
 
   /* 视图切换由底部导航控制 */
   .list-panel { display: none; }
   .list-panel .tabs { display: none; }
   body.view-trade #view-trade { display: block; }
   body.view-trade .list-panel { display: none; }
-  body:not(.view-trade) .trade-panel { display: none; }
-  body:not(.view-trade) .list-panel { display: block; }
+  body:not(.view-trade):not(.view-select) .trade-panel { display: none; }
+  body:not(.view-trade):not(.view-select) .list-panel { display: block; }
+  body.view-select .select-panel { display: block; grid-column: 1 / -1; }
+  body.view-select .trade-panel,
+  body.view-select .list-panel { display: none !important; }
+
+  .sel-body-wrap { grid-template-columns: 1fr; }
+  .sel-history { max-height: 180px; }
 
   .bottom-nav {
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;

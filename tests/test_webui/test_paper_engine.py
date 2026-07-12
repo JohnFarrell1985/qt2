@@ -56,6 +56,17 @@ class FakeBars:
         return [d for d in self.days if start <= d <= end]
 
 
+class FrontierBars(FakeBars):
+    """跟盘测试: ``latest_trading_day`` 固定为 frontier, days 可含更晚日期供 step 用。"""
+
+    def __init__(self, frontier: str):
+        super().__init__()
+        self._frontier = frontier
+
+    def latest_trading_day(self):
+        return self._frontier
+
+
 @pytest.fixture
 def store():
     return MemoryStore()
@@ -346,3 +357,72 @@ class TestDeleteTrade:
         # bob 删除 alice 的 trade_id 无效
         assert b.delete_trade(tid) is False
         assert len(a.snapshot(refresh=False)["trades"]) == 1
+
+
+class TestLiveDeferral:
+
+    @pytest.fixture
+    def live_bars(self):
+        fb = FrontierBars("2026-07-10")
+        fb.add("688795.SH", "2026-07-10", o=690, h=720, low=680, c=701, pre=680, name="摩尔线程")
+        fb.add("600519.SH", "2026-07-11", o=1700, h=1750, low=1680, c=1720)  # 下一交易日 (日历)
+        return fb
+
+    @pytest.fixture
+    def live_bars_with_fill(self, live_bars):
+        live_bars.add("688795.SH", "2026-07-11", o=700, h=710, low=695, c=705, pre=701)
+        return live_bars
+
+    def test_manual_buy_pending_at_frontier(self, store, quotes, live_bars):
+        """跟盘日 (模拟日=最新日) 任意时刻下单均次日生效, 非仅周末。"""
+        acct = PaperAccount(
+            name="live", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=live_bars, store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 100, price=701.01, price_type="limit")
+        assert o["status"] == "pending"
+        assert o["effective_date"] == "2026-07-11"
+        assert "预约" in o["note"]
+
+    def test_replay_day_fills_same_day_in_range(self, store, quotes):
+        """历史回放日可在当日线价区间内即时成交。"""
+        fb = FakeBars()
+        fb.add("688795.SH", "2026-07-10", o=690, h=720, low=680, c=701, pre=680)
+        fb.add("688795.SH", "2026-07-11", o=700, h=720, low=690, c=710)  # 库内最新日 7/11
+        acct = PaperAccount(
+            name="replay", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=fb, store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 100, price=701.01, price_type="limit")
+        assert o["status"] == "filled"
+        assert o.get("effective_date") is None
+
+    def test_deferred_buy_fills_when_next_low_below_bid(self, store, quotes, live_bars_with_fill):
+        acct = PaperAccount(
+            name="live2", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=live_bars_with_fill, store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 100, price=701.01, price_type="limit")
+        assert o["status"] == "pending"
+        acct.set_trade_date("2026-07-11")
+        filled = [x for x in acct.state["orders"] if x["order_id"] == o["order_id"]][0]
+        assert filled["status"] == "filled"
+        assert filled["filled_price"] == 701.01
+
+    def test_deferred_waits_for_kline_when_bar_missing(self, store, quotes):
+        fb = FrontierBars("2026-07-10")
+        fb.add("688795.SH", "2026-07-10", o=690, h=720, low=680, c=701, pre=680)
+        fb.add("600519.SH", "2026-07-11", o=1700, h=1750, low=1680, c=1720)  # 日历有 7/11, 688795 无 K
+        acct = PaperAccount(
+            name="live3", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=fb, store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 100, price=701.01, price_type="limit")
+        acct.set_trade_date("2026-07-11")
+        pending = [x for x in acct.state["orders"] if x["order_id"] == o["order_id"]][0]
+        assert pending["status"] == "pending"
+        assert "日K线" in pending["note"]

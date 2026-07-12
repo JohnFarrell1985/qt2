@@ -65,6 +65,81 @@ function toast(msg) {
   t._t = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
+// ---------------- 统一弹层 (替代 confirm / prompt) ----------------
+let _dlgMode = null;   // 'confirm' | 'prompt'
+let _dlgResolve = null;
+
+function _closeDlg() {
+  $('#dlgMask').classList.remove('show');
+  $('#dlgInput').classList.remove('show');
+  _dlgMode = null;
+  _dlgResolve = null;
+}
+
+function _finishDlg(value) {
+  const fn = _dlgResolve;
+  _closeDlg();
+  if (fn) fn(value);
+}
+
+function uiConfirm(message, title) {
+  title = title || '确认';
+  return new Promise((resolve) => {
+    _dlgMode = 'confirm';
+    _dlgResolve = resolve;
+    $('#dlgTitle').textContent = title;
+    $('#dlgMsg').textContent = message;
+    $('#dlgInput').classList.remove('show');
+    $('#dlgCancel').style.display = '';
+    $('#dlgOk').textContent = '确定';
+    $('#dlgMask').classList.add('show');
+  });
+}
+
+function uiPrompt(message, defaultValue, title) {
+  title = title || '输入';
+  defaultValue = defaultValue != null ? String(defaultValue) : '';
+  return new Promise((resolve) => {
+    _dlgMode = 'prompt';
+    _dlgResolve = resolve;
+    $('#dlgTitle').textContent = title;
+    $('#dlgMsg').textContent = message;
+    const inp = $('#dlgInput');
+    inp.classList.add('show');
+    inp.value = defaultValue;
+    $('#dlgCancel').style.display = '';
+    $('#dlgOk').textContent = '确定';
+    $('#dlgMask').classList.add('show');
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+  });
+}
+
+function initDialog() {
+  $('#dlgOk').onclick = () => {
+    if (_dlgMode === 'prompt') _finishDlg($('#dlgInput').value);
+    else if (_dlgMode === 'confirm') _finishDlg(true);
+  };
+  $('#dlgCancel').onclick = () => {
+    if (_dlgMode === 'prompt') _finishDlg(null);
+    else if (_dlgMode === 'confirm') _finishDlg(false);
+  };
+  $('#dlgMask').addEventListener('click', (e) => {
+    if (e.target.id === 'dlgMask') {
+      if (_dlgMode === 'prompt') _finishDlg(null);
+      else if (_dlgMode === 'confirm') _finishDlg(false);
+    }
+  });
+  $('#dlgInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); $('#dlgOk').click(); }
+    else if (e.key === 'Escape') { e.preventDefault(); $('#dlgCancel').click(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!_dlgResolve || _dlgMode !== 'confirm') return;
+    if (e.key === 'Escape') { e.preventDefault(); $('#dlgCancel').click(); }
+    else if (e.key === 'Enter') { e.preventDefault(); $('#dlgOk').click(); }
+  });
+}
+
 // ---------------- 市场规则 (前端轻量副本, 用于步进/整手) ----------------
 function bare(code) {
   let s = String(code || '').trim().toUpperCase();
@@ -274,6 +349,74 @@ async function stepDay(direction) {
   } catch (e) { toast(e.message || '没有更多交易日'); }
 }
 
+// ---------------- QMT 日K 同步 + 结算 ----------------
+let SYNC_POLL = null;
+
+function syncPhaseLabel(phase) {
+  const m = { etf: 'ETF', stock: 'A股', settle: '结算', done: '完成', error: '失败' };
+  return m[phase] || phase || '';
+}
+
+function updateSyncStatus(st) {
+  const el = $('#syncStatus');
+  if (!el) return;
+  if (!st || !st.running) {
+    el.textContent = '';
+    return;
+  }
+  el.textContent = `${syncPhaseLabel(st.phase)} ${Math.round(st.elapsed || 0)}s`;
+}
+
+async function pollSyncStatus() {
+  clearTimeout(SYNC_POLL);
+  const tick = async () => {
+    let st;
+    try { st = await api('/api/sync/status'); }
+    catch (e) { SYNC_POLL = setTimeout(tick, 2000); return; }
+    updateSyncStatus(st);
+    if (st.running) {
+      SYNC_POLL = setTimeout(tick, 1500);
+      return;
+    }
+    $('#syncBtn').disabled = false;
+    if (st.error) {
+      toast('同步失败: ' + st.error);
+      return;
+    }
+    const parts = [];
+    if (st.etf_rows != null) parts.push(`ETF ${st.etf_rows}`);
+    if (st.stock_rows != null) parts.push(`股 ${st.stock_rows}`);
+    if (st.latest) parts.push('最新 ' + st.latest);
+    toast('同步完成' + (parts.length ? ' · ' + parts.join(' · ') : ''));
+    await load();
+    await loadTradeDate();
+    if (currentCode()) refreshCode(currentCode());
+  };
+  tick();
+}
+
+async function runDataSync() {
+  if ($('#syncBtn').disabled) return;
+  if (!await uiConfirm(
+    '从 QMT 同步最近 15 日 A股/ETF 日K线, 并结算挂单更新盈亏。\n需已启动 MiniQMT。',
+    '同步数据'
+  )) return;
+  $('#syncBtn').disabled = true;
+  updateSyncStatus({ running: true, phase: 'etf', elapsed: 0 });
+  try {
+    await api('/api/sync/kline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days_back: 15, concurrency: 4, source: 'qmt' }),
+    });
+    pollSyncStatus();
+  } catch (e) {
+    $('#syncBtn').disabled = false;
+    updateSyncStatus(null);
+    toast('启动同步失败: ' + e.message);
+  }
+}
+
 async function openCalendar() {
   const base = TRADE_DATE ? new Date(TRADE_DATE) : new Date();
   calYear = base.getFullYear(); calMonth = base.getMonth();
@@ -428,6 +571,7 @@ function switchMobileView(view) {
   const se = $('#selEntry');
   if (se) se.textContent = view === 'select' ? '◂ 返回交易' : '每日选股 ▸';
   if (view !== 'trade' && view !== 'select') switchTab(view);
+  if (view === 'select') loadSelectState(SEL_KIND);
 }
 function switchTab(tab) {
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -489,11 +633,17 @@ let STRATEGIES = [];
 let CUR_STRAT = null;
 let SEL_POLL = null;
 let INST_POLL = null;
-let SEL_LAST_KIND = 'stock';
+let SEL_KIND = 'stock';
+let SEL_VIEW_RUN_ID = null;
 
 function paramStoreKey(sid) {
   const u = localStorage.getItem('paper_user') || '_';
   return `paper_params_${u}_${sid}`;
+}
+
+function stratLabel(sid) {
+  const s = STRATEGIES.find(x => x.id === sid);
+  return s ? s.label : sid;
 }
 
 async function loadStrategies() {
@@ -510,10 +660,10 @@ async function loadStrategies() {
   }
 }
 
-function onStrategyChange() {
+function onStrategyChange(skipSaved) {
   CUR_STRAT = STRATEGIES.find(s => s.id === $('#stratSelect').value) || null;
   $('#stratDesc').textContent = CUR_STRAT ? (CUR_STRAT.description || '') : '';
-  renderParamForm();
+  renderParamForm(skipSaved ? {} : undefined);
 }
 
 function savedParams(sid) {
@@ -521,10 +671,10 @@ function savedParams(sid) {
   catch (e) { return {}; }
 }
 
-function renderParamForm() {
+function renderParamForm(overrideParams) {
   const box = $('#paramForm');
   if (!CUR_STRAT) { box.innerHTML = ''; return; }
-  const saved = savedParams(CUR_STRAT.id);
+  const saved = overrideParams != null ? overrideParams : savedParams(CUR_STRAT.id);
   const rows = (CUR_STRAT.params || []).map(p => {
     let val = (p.key in saved) ? saved[p.key] : p.default;
     if (Array.isArray(val)) val = val.join(',');
@@ -543,7 +693,8 @@ function renderParamForm() {
       const type = (p.type === 'list' || p.type === 'text' || p.type === 'ma_groups') ? 'text' : 'number';
       const step = p.step ? ` step="${p.step}"` : (p.type === 'int' ? ' step="1"' : '');
       const ph = p.hint ? ` placeholder="${p.hint}"` : '';
-      input = `<input data-key="${p.key}" data-type="${p.type}" type="${type}"${step}${ph} value="${val}" />`;
+      const esc = String(val).replace(/"/g, '&quot;');
+      input = `<input data-key="${p.key}" data-type="${p.type}" type="${type}"${step}${ph} value="${esc}" />`;
     }
     return `<div class="param-item">
       <label title="${p.key}">${p.label}</label>
@@ -556,6 +707,11 @@ function renderParamForm() {
   </div>`;
   $('#pSave').onclick = saveParamsFromForm;
   $('#pReset').onclick = () => { localStorage.removeItem(paramStoreKey(CUR_STRAT.id)); renderParamForm(); toast('已恢复系统默认参数'); };
+}
+
+function applyParamsToForm(params) {
+  if (!CUR_STRAT || !params) return;
+  renderParamForm(params);
 }
 
 function collectParams() {
@@ -573,9 +729,118 @@ function saveParamsFromForm() {
   toast('参数已保存 (本机)');
 }
 
+function switchSelKind(kind) {
+  SEL_KIND = kind;
+  SEL_VIEW_RUN_ID = null;
+  $$('.sel-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === kind));
+  loadSelectState(kind);
+}
+
+function updateSelStatusMeta(r) {
+  if (!r || !r.run_id) {
+    if (SEL_VIEW_RUN_ID) $('#selStatus').textContent = '历史记录';
+    return;
+  }
+  const parts = [];
+  if (r.trade_date) parts.push(r.trade_date);
+  if (r.count != null) parts.push(`${r.count} 只`);
+  if (r.elapsed != null) parts.push(`${r.elapsed}s`);
+  if (SEL_VIEW_RUN_ID && !r.is_current) parts.push('(历史)');
+  else if (r.is_current) parts.push('· 当前');
+  $('#selStatus').textContent = parts.join(' · ');
+}
+
+function instCellHtml(it, kind, fromSaved) {
+  if (kind === 'etf') return '';
+  if (fromSaved && ('inst_holder_count' in it || it.inst_holder_source != null)) {
+    return fmtInstHolderInline(it, kind);
+  }
+  return instHolderLoadingHtml();
+}
+
+function needsInstPoll(items) {
+  return items.some(it => !('inst_holder_count' in it) && it.inst_holder_source == null);
+}
+
+function applySelectPayload(r, kind) {
+  if (r.strategy_id && STRATEGIES.some(s => s.id === r.strategy_id)) {
+    $('#stratSelect').value = r.strategy_id;
+    onStrategyChange(true);
+  }
+  if (r.params && Object.keys(r.params).length) applyParamsToForm(r.params);
+  const fromSaved = Boolean(r.run_id);
+  renderSelResults(r.items || [], kind, fromSaved);
+  updateSelStatusMeta(r);
+  if (kind === 'stock' && (r.items || []).length && !SEL_VIEW_RUN_ID && needsInstPoll(r.items)) {
+    pollInstHolders(kind);
+  }
+}
+
+async function loadSelHistory(kind, activeRunId) {
+  const list = $('#selHistoryList');
+  try {
+    const r = await api('/api/select/history?kind=' + kind);
+    const runs = r.runs || [];
+    if (!runs.length) {
+      list.innerHTML = '<li class="empty">暂无记录</li>';
+      return;
+    }
+    list.innerHTML = runs.map(h => {
+      const active = (activeRunId != null && h.run_id === activeRunId)
+        || (activeRunId == null && SEL_VIEW_RUN_ID == null && h.is_current);
+      const cur = h.is_current ? '<span class="h-cur">当前</span>' : '';
+      return `<li class="${active ? 'active' : ''}" data-run="${h.run_id}">
+        <span class="h-date">${h.trade_date || '—'}</span>
+        <span class="h-strat">${stratLabel(h.strategy_id)}</span>
+        <span class="h-cnt">${h.count} 只 · ${h.elapsed != null ? h.elapsed + 's' : ''}</span>
+        ${cur}
+      </li>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<li class="empty">加载失败</li>';
+  }
+}
+
+async function loadHistoryRun(runId) {
+  SEL_VIEW_RUN_ID = runId;
+  try {
+    const r = await api('/api/select/history/' + runId);
+    const kind = r.kind || SEL_KIND;
+    if (kind !== SEL_KIND) {
+      SEL_KIND = kind;
+      $$('.sel-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === kind));
+    }
+    applySelectPayload(r, kind);
+    await loadSelHistory(kind, runId);
+  } catch (e) { toast('读取历史记录失败'); }
+}
+
+function viewCurrentRun() {
+  SEL_VIEW_RUN_ID = null;
+  loadSelectState(SEL_KIND);
+}
+
+async function loadSelectState(kind) {
+  SEL_KIND = kind;
+  $$('.sel-kind-tab').forEach(b => b.classList.toggle('active', b.dataset.kind === kind));
+  if (SEL_VIEW_RUN_ID) {
+    await loadHistoryRun(SEL_VIEW_RUN_ID);
+    return;
+  }
+  try {
+    const r = await api('/api/select/result?kind=' + kind);
+    applySelectPayload(r, kind);
+    await loadSelHistory(kind, r.run_id);
+  } catch (e) { toast('读取结果失败'); }
+}
+
 async function runSelect(kind) {
   if (!CUR_STRAT) { toast('请先选择策略'); return; }
   clearTimeout(INST_POLL);
+  SEL_VIEW_RUN_ID = null;
+  SEL_KIND = kind;
+  switchMobileView('select');
+  switchSelKind(kind);
   const params = collectParams();
   localStorage.setItem(paramStoreKey(CUR_STRAT.id), JSON.stringify(params));
   $('#runStock').disabled = $('#runEtf').disabled = true;
@@ -595,9 +860,20 @@ async function runSelect(kind) {
 
 function pollSelect(kind) {
   clearTimeout(SEL_POLL);
+  const t0 = Date.now();
   const tick = async () => {
     let st;
-    try { st = await api('/api/select/status?kind=' + kind); } catch (e) { return; }
+    try { st = await api('/api/select/status?kind=' + kind); }
+    catch (e) {
+      if (Date.now() - t0 > 300000) {
+        $('#runStock').disabled = $('#runEtf').disabled = false;
+        $('#selStatus').textContent = '状态查询失败';
+        toast('选股状态查询失败，请刷新页面');
+        return;
+      }
+      SEL_POLL = setTimeout(tick, 2000);
+      return;
+    }
     if (st.running) {
       $('#selStatus').textContent = `${kind === 'etf' ? '选基' : '选股'}运行中… ${Math.round(st.elapsed || 0)}s`;
       SEL_POLL = setTimeout(tick, 1500);
@@ -606,17 +882,14 @@ function pollSelect(kind) {
     $('#runStock').disabled = $('#runEtf').disabled = false;
     if (st.error) { $('#selStatus').textContent = '失败'; toast('选股失败: ' + st.error); return; }
     $('#selStatus').textContent = `完成 · ${st.count || 0} 只 · ${st.elapsed || 0}s`;
-    await loadSelResult(kind);
+    SEL_VIEW_RUN_ID = null;
+    await loadSelectState(kind);
   };
   tick();
 }
 
 async function loadSelResult(kind) {
-  try {
-    const r = await api('/api/select/result?kind=' + kind);
-    renderSelResults(r.items || [], kind);
-    if (kind === 'stock' && (r.items || []).length) pollInstHolders(kind);
-  } catch (e) { toast('读取结果失败'); }
+  await loadSelectState(kind);
 }
 
 
@@ -636,8 +909,7 @@ function pollInstHolders(kind) {
   tick();
 }
 
-function renderSelResults(items, kind) {
-  SEL_LAST_KIND = kind;
+function renderSelResults(items, kind, fromSaved) {
   const body = $('#selBody');
   $('#selAll').checked = false;
   if (!items.length) {
@@ -650,7 +922,7 @@ function renderSelResults(items, kind) {
     const close = it.close != null ? Number(it.close) : 0;
     const lot = minLot(it.code);
     const tier = it.tier ? `<small class="tier-${it.tier}">${it.tier}级</small>` : '';
-    const inst = kind === 'etf' ? '' : instHolderLoadingHtml();
+    const inst = instCellHtml(it, kind, fromSaved);
     return `<tr data-code="${it.code}">
       <td class="op"><input type="checkbox" class="pick-chk" /></td>
       <td><div class="cell-2"><b>${it.name || '-'}</b><small>${it.code}${inst}</small></div></td>
@@ -664,7 +936,7 @@ function renderSelResults(items, kind) {
 }
 
 async function placePicks() {
-  const kind = SEL_LAST_KIND;
+  const kind = SEL_KIND;
   const rows = $$('#selBody tr[data-code]');
   const items = [];
   rows.forEach(tr => {
@@ -728,6 +1000,7 @@ function bind() {
   $('#prevDay').onclick = () => stepDay('prev');
   $('#nextDay').onclick = () => stepDay('next');
   $('#calBtn').onclick = openCalendar;
+  $('#syncBtn').onclick = runDataSync;
   $('#calMask').onclick = closeCalendar;
   $('#calClose').onclick = closeCalendar;
   $('#calPrevM').onclick = () => calShiftMonth(-1);
@@ -774,7 +1047,7 @@ function bind() {
   });
   $('#tradeBody').addEventListener('click', async (e) => {
     const d = e.target.closest('[data-deltrade]'); if (!d) return;
-    if (!confirm('确定删除这条成交记录? (仅删记录, 不回滚资金/持仓)')) return;
+    if (!await uiConfirm('确定删除这条成交记录?\n(仅删记录, 不回滚资金/持仓)', '删除成交')) return;
     try { await api('/api/trade/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trade_id: d.dataset.deltrade }) }); toast('已删除'); await load(); }
     catch (err) { toast('删除失败: ' + err.message); }
   });
@@ -788,7 +1061,7 @@ function bind() {
   // 调整模拟资金
   $('#capitalBtn').onclick = async () => {
     const cur = STATE ? STATE.summary.cash : 0;
-    const v = prompt('设置可用资金 (元, 不能为负):', cur);
+    const v = await uiPrompt('设置可用资金 (元, 不能为负)', cur, '改资金');
     if (v === null) return;
     const cash = Number(v);
     if (isNaN(cash) || cash < 0) { toast('金额无效'); return; }
@@ -805,11 +1078,14 @@ function bind() {
     switchMobileView(on ? 'trade' : 'select');
     $('#selEntry').textContent = on ? '每日选股 ▸' : '◂ 返回交易';
   };
-  $('#stratSelect').addEventListener('change', onStrategyChange);
-  $('#paramToggle').onclick = () => {
-    const f = $('#paramForm');
-    f.style.display = f.style.display === 'none' ? '' : 'none';
-  };
+  $('#stratSelect').addEventListener('change', () => onStrategyChange());
+  $$('.sel-kind-tab').forEach(b => b.onclick = () => switchSelKind(b.dataset.kind));
+  $('#selHistoryList').addEventListener('click', (e) => {
+    const li = e.target.closest('[data-run]');
+    if (!li) return;
+    loadHistoryRun(Number(li.dataset.run));
+  });
+  $('#selHistoryCurrent').onclick = viewCurrentRun;
   $('#runStock').onclick = () => runSelect('stock');
   $('#runEtf').onclick = () => runSelect('etf');
   $('#selAll').addEventListener('change', (e) => {
@@ -818,8 +1094,8 @@ function bind() {
   $('#placePicks').onclick = placePicks;
 
   $('#resetBtn').onclick = async () => {
-    if (!confirm('确定重置模拟账户? 所有持仓/委托/成交将清空。')) return;
-    const cap = prompt('初始资金 (元):', STATE ? STATE.summary.initial_capital : 1000000);
+    if (!await uiConfirm('确定重置模拟账户?\n所有持仓/委托/成交将清空。', '重置账户')) return;
+    const cap = await uiPrompt('初始资金 (元)', STATE ? STATE.summary.initial_capital : 1000000, '重置账户');
     if (cap === null) return;
     await api('/api/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initial_capital: Number(cap) || null }) });
     toast('账户已重置'); await load();
@@ -829,7 +1105,8 @@ function bind() {
 // ---------------- 启动 ----------------
 async function boot() {
   document.body.className = 'view-trade';
-  bind();
+  initDialog();
+  try { bind(); } catch (e) { console.error('bind failed', e); toast('界面初始化异常，请刷新'); }
   setSide('buy');
   setAuthMode('login');
   if (TOKEN) {
