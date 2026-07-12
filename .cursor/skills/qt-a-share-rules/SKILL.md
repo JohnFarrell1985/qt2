@@ -60,8 +60,9 @@ python -m src.trading execute --picks reports/candidates_bull_launch_20260707.js
 
 ## QMT-MCP
 
-- 先开 QMT 客户端 → `.\.cursor\scripts\start-qmt-mcp.ps1`
-- MCP `qmt-mcp`：下单、MA 策略生成（离线模式可连，交易需 XTQuant）
+- Cursor 打开工作区后，`qmt-mcp` 通过 `.cursor/mcp.json` **自启动**（stdio；入口 `~/.local/mcp/QMT-MCP/run_stdio_mcp.py`，command 用绝对路径，Cursor 不展开 `${userHome}`）
+- 先开 Mini QMT 客户端并登录，交易/行情工具才能连上 XTQuant
+- 调试 SSE 模式（可选）：`.\.cursor\scripts\start-qmt-mcp.ps1`
 
 ## PIT 原则
 

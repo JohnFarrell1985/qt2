@@ -24,6 +24,11 @@ def mock_xtquant():
     xtquant.xtconstant.STOCK_SELL = 24
     xtquant.xtconstant.FIX_PRICE = 11
     xtquant.xtconstant.LATEST_PRICE = 5
+    xtquant.xtconstant.MARKET_PEER_PRICE_FIRST = 44
+    xtquant.xtconstant.MARKET_SH_CONVERT_5_CANCEL = 42
+    xtquant.xtconstant.MARKET_SZ_CONVERT_5_CANCEL = 47
+    xtquant.xtconstant.CREDIT_FIN_BUY = 27
+    xtquant.xtconstant.CREDIT_SLO_SELL = 28
 
     modules = {
         "xtquant": xtquant,
@@ -402,3 +407,102 @@ class TestIsConnected:
 
     def test_true_after_connect(self, connected_trader):
         assert connected_trader.is_connected is True
+
+
+# ---------------------------------------------------------------------------
+# 多市场 / 多板块 / 多委托类型 覆盖
+# ---------------------------------------------------------------------------
+
+class TestMultiMarketOrders:
+
+    def test_code_normalized_for_bare_input(self, connected_trader):
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("600519", "buy", 100)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][1] == "600519.SH"
+
+    def test_star_board_min_quantity_bumped(self, connected_trader):
+        """科创板买入不足 200 股自动抬升到 200。"""
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("688981.SH", "buy", 100)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][3] == 200  # quantity
+
+    def test_hk_code_normalized(self, connected_trader):
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("00700", "buy", 500, price_type="FIX_PRICE", price=380.0)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][1] == "00700.HK"
+
+    def test_market_order_routes_to_peer_price(self, connected_trader, mock_xtquant):
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("600519.SH", "buy", 100, price_type="MARKET")
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][4] == mock_xtquant.xtconstant.MARKET_PEER_PRICE_FIRST
+
+    def test_hk_market_order_forced_to_limit(self, connected_trader, mock_xtquant):
+        """港股通市价委托被降级为限价 (FIX_PRICE)。"""
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("00700.HK", "buy", 500, price_type="MARKET", price=380.0)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][4] == mock_xtquant.xtconstant.FIX_PRICE
+
+    def test_credit_order_type(self, connected_trader, mock_xtquant):
+        """两融融资买入使用 CREDIT_FIN_BUY 委托类型。"""
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock(
+            "600519.SH", quantity=100, order_type="CREDIT_FIN_BUY",
+            price_type="FIX_PRICE", price=1800.0,
+        )
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][2] == mock_xtquant.xtconstant.CREDIT_FIN_BUY
+
+    def test_price_rounded_to_tick(self, connected_trader):
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("600519.SH", "buy", 100, price_type="FIX_PRICE", price=1800.126)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][5] == 1800.13
+
+    def test_normalize_false_passes_raw(self, connected_trader):
+        connected_trader._trader.order_stock.return_value = 1
+        connected_trader.order_stock("600519", "buy", 150, normalize=False)
+        call_args = connected_trader._trader.order_stock.call_args
+        assert call_args[0][1] == "600519"
+        assert call_args[0][3] == 150
+
+
+class TestAccountTypeResolution:
+
+    def test_hk_alias(self):
+        from src.trading.qmt_trader import QMTTrader
+        assert QMTTrader._resolve_account_type("HK") == "HUGANGTONG"
+        assert QMTTrader._resolve_account_type("SGT") == "SHENGANGTONG"
+        assert QMTTrader._resolve_account_type("CREDIT") == "CREDIT"
+        assert QMTTrader._resolve_account_type("STOCK") == "STOCK"
+
+
+class TestCancelAsync:
+
+    def test_cancel_async(self, connected_trader):
+        connected_trader._trader.cancel_order_stock_async.return_value = 7
+        assert connected_trader.cancel_order_async(10001) == 7
+
+
+class TestQueryTrades:
+
+    def test_returns_list(self, connected_trader):
+        trade = MagicMock()
+        trade.order_id = 1
+        trade.stock_code = "600519.SH"
+        trade.traded_id = "T1"
+        trade.traded_price = 1800.0
+        trade.traded_volume = 100
+        trade.traded_amount = 180000.0
+        connected_trader._trader.query_stock_trades.return_value = [trade]
+        result = connected_trader.query_trades()
+        assert result[0]["code"] == "600519.SH"
+        assert result[0]["traded_volume"] == 100
+
+    def test_none_returns_empty(self, connected_trader):
+        connected_trader._trader.query_stock_trades.return_value = None
+        assert connected_trader.query_trades() == []

@@ -97,6 +97,7 @@ class BulkWriter:
         "watchlist_stock", "watchlist_intel",
         "hsgt_market_daily", "stock_moneyflow_daily", "stock_lhb_daily",
         "institution_survey", "alt_datacollect_progress",
+        "stock_inst_holder",
         "stock_universe",
         "collect_log", "collect_dead_letter",
     })

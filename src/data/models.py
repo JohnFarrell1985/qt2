@@ -758,3 +758,25 @@ class InstitutionSurvey(Base):
         Index("idx_isvy_code_date", "code", "survey_date"),
         UniqueConstraint("code", "survey_date", "org_name", name="uq_isvy_code_date_org"),
     )
+
+
+class StockInstHolder(Base):
+    """机构持有家数 — 按报告期 (东财 TOTAL_ORG_NUM 等)"""
+
+    __tablename__ = "stock_inst_holder"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="6 位股票代码")
+    report_date = Column(Date, nullable=False, comment="报告截止日 如 2026-03-31")
+    holder_count = Column(Integer, nullable=False, comment="机构持有家数")
+    is_complete = Column(Boolean, nullable=False, default=False, comment="披露是否完整")
+    source = Column(String(20), nullable=False, default="eastmoney")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint("code", "report_date", "source", name="uq_sih_code_date_src"),
+        Index("idx_sih_report_date", "report_date"),
+        Index("idx_sih_code", "code"),
+        Index("idx_sih_code_report", "code", "report_date"),
+    )

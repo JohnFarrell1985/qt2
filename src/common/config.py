@@ -297,6 +297,38 @@ class MaFilterConfig(BaseSettings):
         alias="SELECTION_MA5_MA10_TOUCH_PCT",
         description="MA5 与 MA10 正好相交: 差距不超过该比例(%)",
     )
+    require_ma5_ma10_above_long: bool = Field(
+        default=False,
+        alias="SELECTION_REQUIRE_MA5_MA10_ABOVE_LONG",
+        description="MA5 与 MA10 均须在指定长均线上方 (见 ma5_ma10_above_groups)",
+    )
+    ma5_ma10_above_groups: list[list[int]] = Field(
+        default_factory=list,
+        alias="SELECTION_MA5_MA10_ABOVE_GROUPS",
+        description="长均线条件: 组内 AND (MA5/10 均在各均线之上), 组间 OR。例 [[20,30],[40,50]]",
+    )
+
+    @field_validator("ma5_ma10_above_groups", mode="before")
+    @classmethod
+    def _parse_ma_groups(cls, v):
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            groups: list[list[int]] = []
+            for part in v.split("|"):
+                part = part.strip()
+                if not part:
+                    continue
+                groups.append([int(x.strip()) for x in part.split(",") if x.strip()])
+            return groups
+        if isinstance(v, list):
+            if not v:
+                return []
+            if isinstance(v[0], list):
+                return v
+            if isinstance(v[0], int):
+                return [v]
+        return v
 
     @field_validator("compute_periods", "filter_periods", mode="before")
     @classmethod

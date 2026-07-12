@@ -18,6 +18,8 @@
     "ma5_ma10_max_days_to_cross": 1.0,
     "ma5_ma10_slope_lookback": 1,
     "ma5_ma10_require_next_day": true,
+    "require_ma5_ma10_above_long": false,
+    "ma5_ma10_above_groups": [],
     "prior_surge_lookback_days": 6,
     "prior_surge_min_pct": 5.0,
     "universe": "all_a",

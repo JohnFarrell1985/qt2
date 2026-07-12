@@ -10,5 +10,7 @@ qt-quant v4：MA 程序选股 + 回测 + QMT 交易。
 | [03-选股模块.md](03-选股模块.md) | MA 程序选股、`src/selection/` |
 | [04-回测引擎.md](04-回测引擎.md) | `strategy_runner` + CachedPicker |
 | [05-交易模块.md](05-交易模块.md) | QMT 模拟/实盘 |
+| [06-模拟盘交易UI.md](06-模拟盘交易UI.md) | Web 模拟盘、`src/webui/` |
+| **[07-用户手册.md](07-用户手册.md)** | **快速上手：安装、选股、UI、回测、QMT** |
 
-快速上手见项目根目录 [README.md](../README.md)。
+**新用户请先看 [07-用户手册](07-用户手册.md)**；也可参考项目根目录 [README.md](../README.md)。

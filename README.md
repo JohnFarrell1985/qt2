@@ -60,7 +60,7 @@ python -m src.trading execute --picks reports/candidates_bull_launch_20260707.js
 
 ## 文档
 
-详见 [`doc/README.md`](doc/README.md)（00 总体设计 → 05 交易模块）。
+详见 [`doc/README.md`](doc/README.md)（**[用户手册](doc/07-用户手册.md)** · 00 总体设计 → 06 模拟盘 UI）。
 
 ## 定时同步
 

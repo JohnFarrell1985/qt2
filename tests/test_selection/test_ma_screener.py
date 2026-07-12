@@ -410,3 +410,41 @@ def test_ma_snapshot_includes_cross_metrics():
     state = detect_ma5_ma10_cross(mas, cfg)
     if state:
         assert snap.get("ma5_ma10_cross_state") == state
+
+
+class TestMa5Ma10AboveLong:
+    def _mas_with_spreads(self):
+        """MA5=12, MA10=11, MA20=10, MA30=9, MA40=8, MA50=7."""
+        n = 80
+        closes = pd.Series([10.0 + i * 0.05 for i in range(n)])
+        periods = [5, 10, 20, 30, 40, 50, 60]
+        mas = compute_mas(closes, periods)
+        return mas
+
+    def test_disabled_passes(self):
+        from src.selection.ma_screener import passes_ma5_ma10_above_long_filter
+
+        cfg = MaFilterConfig(require_ma5_ma10_above_long=False)
+        assert passes_ma5_ma10_above_long_filter(self._mas_with_spreads(), cfg) is True
+
+    def test_group_or_logic(self):
+        from src.selection.ma_screener import passes_ma5_ma10_above_long_filter
+
+        mas = self._mas_with_spreads()
+        cfg = MaFilterConfig(
+            require_ma5_ma10_above_long=True,
+            ma5_ma10_above_groups=[[20, 30], [40, 50]],
+        )
+        assert passes_ma5_ma10_above_long_filter(mas, cfg) is True
+
+    def test_fails_when_below_long_ma(self):
+        from src.selection.ma_screener import passes_ma5_ma10_above_long_filter
+
+        n = 80
+        closes = pd.Series([10.0] * n)  # 平坦 → 各 MA 相等
+        mas = compute_mas(closes, [5, 10, 20, 30])
+        cfg = MaFilterConfig(
+            require_ma5_ma10_above_long=True,
+            ma5_ma10_above_groups=[[20, 30]],
+        )
+        assert passes_ma5_ma10_above_long_filter(mas, cfg) is False

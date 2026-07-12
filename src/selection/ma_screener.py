@@ -288,6 +288,40 @@ def passes_ma_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
     return _divergence_at_offset(mas, cfg, offset=0)
 
 
+def passes_ma5_ma10_above_long_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
+    """MA5 与 MA10 是否均在指定长均线上方 (组内 AND, 组间 OR).
+
+    例: ``[[20, 30], [40, 50]]`` → (MA5/10 均在 20、30 之上) 或 (均在 40、50 之上)。
+    ``require_ma5_ma10_above_long=False`` 或未配置条件组时恒为 True。
+    """
+    if not cfg.require_ma5_ma10_above_long:
+        return True
+    groups = cfg.ma5_ma10_above_groups
+    if not groups:
+        return True
+
+    if 5 not in mas or 10 not in mas:
+        return False
+    ma5 = _latest(mas[5], 0)
+    ma10 = _latest(mas[10], 0)
+    if ma5 is None or ma10 is None:
+        return False
+
+    for group in groups:
+        ok = True
+        for period in group:
+            if period not in mas:
+                ok = False
+                break
+            ma_long = _latest(mas[period], 0)
+            if ma_long is None or ma5 <= ma_long or ma10 <= ma_long:
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
 def _daily_change_pct(bars: pd.DataFrame, bar_index: int) -> float | None:
     """单日涨跌幅 (%), ``bar_index`` 为 bars 中的位置."""
     if bar_index < 1 or bar_index >= len(bars):
@@ -762,10 +796,15 @@ def _load_limit_status_map(trade_date: date) -> dict[str, dict]:
 def screen_universe(
     trade_date: date,
     cfg: MaFilterConfig | None = None,
+    rank_cfg: RankConfig | None = None,
 ) -> tuple[list[str], dict[str, dict]]:
-    """对全市场做 MA 向上发散 + 前期大涨 + 当日缩量初筛."""
+    """对全市场做 MA 向上发散 + 前期大涨 + 当日缩量初筛.
+
+    ``rank_cfg`` 显式传入时不读取 (也不修改) 全局 ``settings.selection.rank``,
+    便于按用户/按次覆盖排序参数而互不影响。
+    """
     cfg = cfg or settings.selection.ma_filter
-    rank_cfg = settings.selection.rank
+    rank_cfg = rank_cfg or settings.selection.rank
     max_period = max(cfg.compute_periods)
     lookback = max(
         max_period + cfg.prior_surge_lookback_days + 10,
@@ -799,6 +838,8 @@ def screen_universe(
         closes = bars["close"].astype(float)
         mas = compute_mas(closes, cfg.compute_periods)
         if not passes_ma_filter(mas, cfg):
+            continue
+        if not passes_ma5_ma10_above_long_filter(mas, cfg):
             continue
         if not passes_prior_surge_filter(bars, cfg, code):
             continue

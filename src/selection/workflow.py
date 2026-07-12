@@ -8,9 +8,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import src.selection.strategies  # noqa: F401 — 注册策略
 from src.common.config import PROJECT_ROOT, get_strategy_meta, settings
 from src.common.logger import get_logger
-from src.selection.ma_screener import screen_universe
+from src.selection.strategy import get_strategy
 
 logger = get_logger(__name__)
 
@@ -85,8 +86,13 @@ def save_report(report: dict[str, Any], path: Path, csv_also: bool = False) -> N
         logger.info("CSV 已保存: %s", csv_path)
 
 
-def run_ma_screen(trade_date: date) -> tuple[list[str], dict[str, dict]]:
-    return screen_universe(trade_date)
+def run_ma_screen(trade_date: date, strategy_id: str | None = None) -> tuple[list[str], dict[str, dict]]:
+    sid = strategy_id or settings.selection.active_strategy
+    result = get_strategy(sid).screen("stock", trade_date, None)
+    candidates = result.candidates
+    if result.export_top_n:
+        candidates = candidates[: result.export_top_n]
+    return candidates, result.snapshots
 
 
 def run_screen(

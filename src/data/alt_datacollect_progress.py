@@ -19,6 +19,7 @@ CAT_SURVEY = "institution_survey"
 CAT_INDEX_WEIGHT = "index_weight"
 CAT_SECTOR_STOCK = "sector_stock"
 CAT_SECTOR_DATA = "sector_data"
+CAT_INST_HOLDER = "stock_inst_holder"
 
 # ``src.data.alt_data_sync`` 另类 6 类: hsgt / lhb / moneyflow / survey / index_weight / sector_stock
 # 另: ``sector_data``(板块K/资金流) 在 ``sector_market_data`` 中维护, 也写入本表 (category=sector_data) — 合计日频「另类+板块」7 类

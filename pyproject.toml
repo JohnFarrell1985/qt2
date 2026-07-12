@@ -35,6 +35,8 @@ dependencies = [
     "tqdm>=4.66.1",
     "schedule>=1.2.0",
     "matplotlib>=3.7.0",
+    "fastapi>=0.139.0",
+    "uvicorn[standard]>=0.51.0",
 ]
 
 [project.optional-dependencies]

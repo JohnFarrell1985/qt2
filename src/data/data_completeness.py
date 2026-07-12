@@ -149,7 +149,7 @@ def _check_empty_tables(conn, report: CompletenessReport):
             "collect_log", "collect_dead_letter",
             # Tushare/AkShare 多源, 由 ``python -m src.data.alt_data_sync`` 按需灌入
             "hsgt_market_daily", "stock_moneyflow_daily", "stock_lhb_daily",
-            "institution_survey",
+            "institution_survey", "stock_inst_holder",
         ):
             s.issue = f"表 {tname} 为空"
             s.priority = 9

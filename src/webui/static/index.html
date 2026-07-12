@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#c62828" />
+  <title>模拟盘交易终端</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- 登录 / 注册 遮罩 -->
+  <div class="auth-mask" id="authMask">
+    <div class="auth-card">
+      <div class="auth-logo">模拟交易终端</div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-mode="login">登录</button>
+        <button class="auth-tab" data-mode="register">注册</button>
+      </div>
+      <input id="authUser" placeholder="用户名" autocomplete="username" />
+      <input id="authPass" type="password" placeholder="口令" autocomplete="current-password" />
+      <button class="auth-submit" id="authSubmit">登录</button>
+      <p class="auth-tip" id="authTip">默认账号 root / 1234 · 注册只需用户名 + 口令</p>
+    </div>
+  </div>
+
+  <!-- 顶部账户资产条 -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">模拟交易</span>
+      <span class="acct" id="acctName">—</span>
+    </div>
+    <div class="asset-strip" id="assetStrip">
+      <div class="asset-cell main">
+        <label>总资产</label>
+        <b id="totalAsset">--</b>
+      </div>
+      <div class="asset-cell">
+        <label>当日盈亏</label>
+        <b id="todayPnl" class="pnl">--</b>
+      </div>
+      <div class="asset-cell">
+        <label>总盈亏</label>
+        <b id="totalPnl" class="pnl">--</b>
+      </div>
+      <div class="asset-cell">
+        <label>可用资金</label>
+        <b id="availCash">--</b>
+      </div>
+      <div class="asset-cell">
+        <label>持仓市值</label>
+        <b id="marketValue">--</b>
+      </div>
+      <button class="reset-btn" id="capitalBtn" title="调整模拟资金">改资金</button>
+      <button class="reset-btn" id="resetBtn" title="重置模拟账户">重置</button>
+      <button class="reset-btn" id="logoutBtn" title="退出登录">退出</button>
+    </div>
+  </header>
+
+  <!-- 交易日回放条 -->
+  <div class="date-bar" id="dateBar">
+    <span class="date-title">交易日</span>
+    <button class="date-nav" id="prevDay" title="上一交易日">◀</button>
+    <button class="date-cur" id="dateCur">--</button>
+    <button class="date-nav" id="nextDay" title="下一交易日">▶</button>
+    <button class="date-cal" id="calBtn" title="选择交易日">📅</button>
+    <button class="sel-entry" id="selEntry" title="每日选股 / 选基">每日选股 ▸</button>
+    <span class="date-latest" id="dateLatest"></span>
+  </div>
+
+  <!-- 交易日日历弹层 -->
+  <div class="cal-mask" id="calMask"></div>
+  <div class="cal-pop" id="calPop">
+    <div class="cal-head">
+      <button id="calPrevM">‹</button>
+      <b id="calTitle">--</b>
+      <button id="calNextM">›</button>
+    </div>
+    <div class="cal-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-foot">
+      <button id="calToLatest">跳到最新交易日</button>
+      <button id="calClose">关闭</button>
+    </div>
+  </div>
+
+  <main class="layout">
+    <!-- 交易面板 -->
+    <section class="panel trade-panel" id="view-trade">
+      <div class="seg">
+        <button class="seg-btn buy active" data-side="buy">买入</button>
+        <button class="seg-btn sell" data-side="sell">卖出</button>
+      </div>
+
+      <div class="field">
+        <label>证券代码</label>
+        <div class="code-input">
+          <input id="codeInput" type="text" inputmode="text" placeholder="代码/名称 如 600519" autocomplete="off" />
+          <div class="suggest" id="suggest"></div>
+        </div>
+      </div>
+
+      <div class="quote-line" id="quoteLine">
+        <span class="q-name" id="qName">—</span>
+        <span class="q-price" id="qPrice">--</span>
+        <span class="q-chg" id="qChg"></span>
+      </div>
+
+      <!-- 当日价格区间 (按日回放): 从库中日线取最高/最低, 价格须落在区间内 -->
+      <div class="range-line" id="rangeLine" style="display:none">
+        <div class="rl-top">
+          <span class="rl-label">当日区间</span>
+          <span class="rl-low" id="rlLow">--</span>
+          <span class="rl-sep">~</span>
+          <span class="rl-high" id="rlHigh">--</span>
+        </div>
+        <div class="rl-chips">
+          <button data-px="low">最低</button>
+          <button data-px="open">开</button>
+          <button data-px="close">收</button>
+          <button data-px="high">最高</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>价格
+          <span class="market-toggle"><input type="checkbox" id="marketChk" /> 市价(按收盘)</span>
+        </label>
+        <div class="stepper">
+          <button class="step" data-act="price-dec">－</button>
+          <input id="priceInput" type="number" inputmode="decimal" step="0.01" />
+          <button class="step" data-act="price-inc">＋</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>数量(股) <span class="hint" id="qtyHint"></span></label>
+        <div class="stepper">
+          <button class="step" data-act="qty-dec">－</button>
+          <input id="qtyInput" type="number" inputmode="numeric" step="100" placeholder="0" />
+          <button class="step" data-act="qty-inc">＋</button>
+        </div>
+        <div class="quick-qty" id="quickQty">
+          <button data-frac="1">全仓</button>
+          <button data-frac="0.5">1/2</button>
+          <button data-frac="0.3333">1/3</button>
+          <button data-frac="0.25">1/4</button>
+        </div>
+      </div>
+
+      <div class="est">
+        <div><span>预估金额</span><b id="estAmount">--</b></div>
+        <div><span>预估费用</span><b id="estFee">--</b></div>
+      </div>
+
+      <button class="submit-btn buy" id="submitBtn">买入</button>
+      <p class="tip" id="tradeTip"></p>
+    </section>
+
+    <!-- 右侧: 持仓/委托/成交 -->
+    <section class="panel list-panel">
+      <div class="tabs" id="listTabs">
+        <button class="tab active" data-tab="positions">持仓</button>
+        <button class="tab" data-tab="orders">委托</button>
+        <button class="tab" data-tab="trades">成交</button>
+      </div>
+
+      <div class="tab-body">
+        <div class="tab-view active" id="tab-positions">
+          <div class="table-wrap">
+            <table class="grid">
+              <thead>
+                <tr><th>名称/代码</th><th class="r">现价<br>涨幅</th><th class="r">持仓<br>可用</th><th class="r">成本<br>市值</th><th class="r">浮动盈亏<br>比例</th><th class="op"></th></tr>
+              </thead>
+              <tbody id="posBody"><tr class="empty"><td colspan="6">暂无持仓</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tab-view" id="tab-orders">
+          <div class="table-wrap">
+            <table class="grid">
+              <thead><tr><th>时间/代码</th><th class="r">方向<br>类型</th><th class="r">委托价<br>数量</th><th class="r">状态</th><th class="op"></th></tr></thead>
+              <tbody id="orderBody"><tr class="empty"><td colspan="5">暂无委托</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tab-view" id="tab-trades">
+          <div class="table-wrap">
+            <table class="grid">
+              <thead><tr><th>时间/代码</th><th class="r">方向</th><th class="r">成交价<br>数量</th><th class="r">金额<br>费用</th><th class="op"></th></tr></thead>
+              <tbody id="tradeBody"><tr class="empty"><td colspan="5">暂无成交</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 每日选股 / 选基 -->
+    <section class="panel select-panel" id="view-select">
+      <div class="sel-head">
+        <select id="stratSelect" title="选择策略"></select>
+        <button id="paramToggle" class="sel-mini" title="编辑策略参数">参数 ⚙</button>
+        <button id="runStock" class="sel-run">每日选股</button>
+        <button id="runEtf" class="sel-run etf">每日选基</button>
+        <span class="sel-status" id="selStatus"></span>
+      </div>
+      <p class="sel-desc" id="stratDesc"></p>
+      <div class="param-form" id="paramForm" style="display:none"></div>
+      <div class="sel-bar">
+        <label class="sel-all"><input type="checkbox" id="selAll" /> 全选</label>
+        <span class="sel-meta" id="selMeta"></span>
+        <button id="placePicks" class="sel-place">批量挂单 (次日撮合)</button>
+      </div>
+      <div class="table-wrap">
+        <table class="grid sel-grid">
+          <thead>
+            <tr><th class="op"></th><th>名称/代码</th><th class="r">评分<br>级别</th><th class="r">收盘</th><th class="r">挂单价</th><th class="r">数量</th><th>理由</th></tr>
+          </thead>
+          <tbody id="selBody"><tr class="empty"><td colspan="7">选择策略后点击「每日选股 / 每日选基」运行</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- 移动端底部导航 -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="nav-btn active" data-view="trade"><i>⇅</i><span>交易</span></button>
+    <button class="nav-btn" data-view="select"><i>★</i><span>选股</span></button>
+    <button class="nav-btn" data-view="positions"><i>≡</i><span>持仓</span></button>
+    <button class="nav-btn" data-view="orders"><i>◷</i><span>委托</span></button>
+    <button class="nav-btn" data-view="trades"><i>✓</i><span>成交</span></button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

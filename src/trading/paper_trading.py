@@ -5,6 +5,7 @@
 from typing import List, Dict, Optional
 
 from src.common.logger import get_logger
+from src.trading import market_rules
 from src.trading.qmt_trader import QMTTrader
 from src.trading.order_manager import OrderManager
 from src.trading.position_manager import PositionManager
@@ -69,6 +70,9 @@ class PaperTradingEngine:
                 if quantity <= 0:
                     results.append({"code": code, "action": "skip", "reason": "quantity_zero"})
                     continue
+
+                # 按板块规则规整申报数量 (科创板 200 股起, 港股整手等)
+                quantity = market_rules.normalize_quantity(code, quantity, "buy")
 
                 order_id = self.order_mgr.submit_order(
                     code=code, direction="buy", quantity=quantity
