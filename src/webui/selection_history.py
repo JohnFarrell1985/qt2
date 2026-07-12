@@ -98,8 +98,25 @@ def save_run(
             },
         ).fetchone()
     run_id = int(row[0])
+    _trim_runs(username, kind, keep=10)
     logger.info("选股记录已保存: user=%s kind=%s id=%d count=%d", username, kind, run_id, len(items))
     return run_id
+
+
+def _trim_runs(username: str, kind: str, keep: int = 10) -> None:
+    """每个用户每种 kind 最多保留 ``keep`` 条, 删除更早的记录。"""
+    with get_session() as s:
+        s.execute(
+            text(
+                "DELETE FROM paper_selection_runs "
+                "WHERE username = :u AND kind = :k AND id IN ("
+                "  SELECT id FROM paper_selection_runs "
+                "  WHERE username = :u AND kind = :k "
+                "  ORDER BY id DESC OFFSET :keep"
+                ")"
+            ),
+            {"u": username, "k": kind, "keep": keep},
+        )
 
 
 def get_current(username: str, kind: str) -> Optional[Dict[str, Any]]:
@@ -130,7 +147,7 @@ def get_run(username: str, run_id: int) -> Optional[Dict[str, Any]]:
     return _row_to_run(row) if row else None
 
 
-def list_runs(username: str, kind: str, limit: int = 40) -> List[Dict[str, Any]]:
+def list_runs(username: str, kind: str, limit: int = 10) -> List[Dict[str, Any]]:
     ensure_schema()
     with get_session(readonly=True) as s:
         rows = s.execute(
@@ -142,6 +159,34 @@ def list_runs(username: str, kind: str, limit: int = 40) -> List[Dict[str, Any]]
             {"u": username, "k": kind, "lim": limit},
         ).fetchall()
     return [_row_to_summary(r) for r in rows]
+
+
+def delete_run(username: str, run_id: int) -> bool:
+    """删除一条选股记录; 若删的是当前记录, 将最近一条设为 current。"""
+    run = get_run(username, run_id)
+    if not run:
+        return False
+    kind = run["kind"]
+    was_current = run["is_current"]
+    with get_session() as s:
+        s.execute(
+            text("DELETE FROM paper_selection_runs WHERE username = :u AND id = :id"),
+            {"u": username, "id": run_id},
+        )
+        if was_current:
+            s.execute(
+                text(
+                    "UPDATE paper_selection_runs SET is_current = true "
+                    "WHERE id = ("
+                    "  SELECT id FROM paper_selection_runs "
+                    "  WHERE username = :u AND kind = :k "
+                    "  ORDER BY id DESC LIMIT 1"
+                    ")"
+                ),
+                {"u": username, "k": kind},
+            )
+    logger.info("选股记录已删除: user=%s id=%d", username, run_id)
+    return True
 
 
 def update_current_items(username: str, kind: str, items: List[Dict[str, Any]]) -> None:

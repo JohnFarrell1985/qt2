@@ -54,13 +54,6 @@ def _get_account(username: str) -> PaperAccount:
                 bar_provider=_bars,
                 store=_store,
             )
-            # 新账户默认对齐到库中最新有数据的交易日 (便于按日回放)
-            try:
-                latest = _bars.latest_trading_day()
-                if latest and acct.state.get("trade_date") == _today_str():
-                    acct.set_trade_date(latest)
-            except Exception as e:  # noqa: BLE001
-                logger.debug("初始化交易日失败: %s", e)
             _accounts[username] = acct
         return acct
 
@@ -139,6 +132,7 @@ class PickItem(BaseModel):
 class PicksReq(BaseModel):
     kind: str = "stock"
     items: list[PickItem] = []
+    screen_date: Optional[str] = None
 
 
 class SyncKlineReq(BaseModel):
@@ -310,6 +304,15 @@ def create_app() -> FastAPI:
             raise HTTPException(404, detail="选股记录不存在")
         return run
 
+    @app.delete("/api/select/history/{run_id}")
+    def delete_select_history(run_id: int, x_auth_token: Optional[str] = Header(None)):
+        username = _require_user(x_auth_token)
+        from src.webui import selection_history as sh
+
+        if not sh.delete_run(username, run_id):
+            raise HTTPException(404, detail="选股记录不存在")
+        return {"ok": True, "run_id": run_id}
+
     @app.get("/api/select/inst-holders/status")
     def inst_holders_status(kind: str = "stock", x_auth_token: Optional[str] = Header(None)):
         username = _require_user(x_auth_token)
@@ -324,9 +327,16 @@ def create_app() -> FastAPI:
 
     @app.post("/api/picks/order")
     def picks_order(req: PicksReq, x_auth_token: Optional[str] = Header(None)):
-        acct = _get_account(_require_user(x_auth_token))
+        username = _require_user(x_auth_token)
+        acct = _get_account(username)
         items = [it.model_dump() for it in req.items]
-        result = acct.place_picks(items, screen_date=acct.state.get("trade_date"))
+        screen_date = req.screen_date
+        if not screen_date:
+            cur = get_selection_service().current(username, req.kind)
+            screen_date = cur.get("trade_date") if cur else None
+        if not screen_date:
+            screen_date = acct.state.get("trade_date")
+        result = acct.place_picks(items, screen_date=screen_date)
         result["snapshot"] = acct.snapshot(refresh=False)
         return result
 
@@ -357,7 +367,11 @@ def create_app() -> FastAPI:
     @app.get("/api/trade_date")
     def get_trade_date(x_auth_token: Optional[str] = Header(None)):
         acct = _get_account(_require_user(x_auth_token))
-        return {"trade_date": acct.state.get("trade_date"), "latest": _bars.latest_trading_day()}
+        return {
+            "trade_date": acct.state.get("trade_date"),
+            "calendar_today": _today_str(),
+            "latest": _bars.latest_trading_day(),
+        }
 
     @app.post("/api/trade_date")
     def set_trade_date(req: TradeDateReq, x_auth_token: Optional[str] = Header(None)):

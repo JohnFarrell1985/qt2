@@ -107,8 +107,9 @@ class TestPickOrders:
         o = acct.state["orders"][0]
         assert o["status"] == "pending"
 
-    def test_manual_order_unaffected_by_pick_rule(self, acct):
-        # 普通限价买 (origin=manual) 仍按 [low, high] 区间校验
+    def test_manual_order_unaffected_by_pick_rule(self, acct, monkeypatch):
+        # 普通限价买 (origin=manual) 仍按 [low, high] 区间校验 (回放模式)
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-01-05")
         o = acct.place_order("600519.SH", "buy", 100, price=1700.0, price_type="limit")
         assert o["status"] == "filled"              # 1700 在 1/2 区间 [1680,1750]
         assert o["origin"] == "manual"

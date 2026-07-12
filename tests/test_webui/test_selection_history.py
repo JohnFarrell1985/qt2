@@ -20,7 +20,7 @@ class TestSelectionHistory:
             {"max_candidates": 50}, [{"code": "600519.SH"}], 12.3,
         )
         assert rid == 42
-        assert ctx.execute.call_count == 2
+        assert ctx.execute.call_count == 3  # clear current + insert + trim
 
     @patch("src.webui.selection_history.ensure_schema")
     @patch("src.webui.selection_history.get_session")
@@ -35,3 +35,21 @@ class TestSelectionHistory:
         assert run["run_id"] == 1
         assert run["kind"] == "stock"
         assert run["items"][0]["code"] == "x"
+
+    @patch("src.webui.selection_history.ensure_schema")
+    @patch("src.webui.selection_history.get_session")
+    def test_delete_run(self, mock_gs, _ensure):
+        row = (5, "stock", "bull_launch", date(2026, 7, 10), {}, [], 0, 1.0, True, None)
+        ctx = MagicMock()
+        ctx.execute.return_value.fetchone.side_effect = [row, None]
+        mock_gs.return_value.__enter__ = MagicMock(return_value=ctx)
+        mock_gs.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("src.webui.selection_history.get_run") as mock_get:
+            mock_get.return_value = {
+                "run_id": 5, "kind": "stock", "is_current": True,
+                "strategy_id": "bull_launch", "trade_date": "2026-07-10",
+                "params": {}, "items": [], "count": 0, "elapsed": 1.0,
+            }
+            assert sh.delete_run("root", 5) is True
+        assert ctx.execute.call_count >= 2

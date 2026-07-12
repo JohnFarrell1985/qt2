@@ -9,6 +9,7 @@ let curQuote = null;
 let DAY_BAR = null;        // 当前代码在当前交易日的日线 {open,high,low,close,...}
 let TRADE_DATE = null;     // 当前模拟交易日
 let LATEST_DAY = null;     // 库中最新交易日
+let CALENDAR_TODAY = null; // 日历当天 (真实日期)
 let calYear, calMonth;     // 日历弹层正在显示的年月 (0-based month)
 
 let TOKEN = localStorage.getItem('paper_token') || '';
@@ -322,7 +323,9 @@ async function fetchQuote(code) {
 async function loadTradeDate() {
   try {
     const d = await api('/api/trade_date');
-    TRADE_DATE = d.trade_date; LATEST_DAY = d.latest;
+    CALENDAR_TODAY = d.calendar_today || null;
+    TRADE_DATE = d.trade_date;
+    LATEST_DAY = d.latest;
     $('#dateCur').textContent = d.trade_date || '--';
     $('#dateLatest').textContent = d.latest ? `最新 ${d.latest}` : '';
   } catch (e) { /* 无 DB, 保持默认 */ }
@@ -418,7 +421,7 @@ async function runDataSync() {
 }
 
 async function openCalendar() {
-  const base = TRADE_DATE ? new Date(TRADE_DATE) : new Date();
+  const base = CALENDAR_TODAY ? new Date(CALENDAR_TODAY + 'T12:00:00') : new Date();
   calYear = base.getFullYear(); calMonth = base.getMonth();
   $('#calMask').classList.add('show');
   $('#calPop').classList.add('show');
@@ -436,13 +439,15 @@ async function renderCalendar() {
   try { const r = await api(`/api/calendar?start=${start}&end=${end}`); valid = new Set(r.days || []); } catch (e) {}
 
   const firstDow = (new Date(calYear, calMonth, 1).getDay() + 6) % 7; // 周一为首列
+  const todayIso = CALENDAR_TODAY || new Date().toISOString().slice(0, 10);
   let html = '';
   for (let i = 0; i < firstDow; i++) html += '<span class="cal-cell empty"></span>';
   for (let d = 1; d <= lastDay; d++) {
     const iso = `${calYear}-${pad(calMonth + 1)}-${pad(d)}`;
     const on = valid.has(iso);
     const isCur = iso === TRADE_DATE;
-    html += `<span class="cal-cell ${on ? 'on' : 'off'} ${isCur ? 'cur' : ''}" ${on ? `data-day="${iso}"` : ''}>${d}</span>`;
+    const isToday = iso === todayIso;
+    html += `<span class="cal-cell ${on ? 'on' : 'off'} ${isCur ? 'cur' : ''} ${isToday ? 'today' : ''}" ${on ? `data-day="${iso}"` : ''}>${d}</span>`;
   }
   $('#calGrid').innerHTML = html;
 }
@@ -635,6 +640,7 @@ let SEL_POLL = null;
 let INST_POLL = null;
 let SEL_KIND = 'stock';
 let SEL_VIEW_RUN_ID = null;
+let SEL_SCREEN_DATE = null;
 
 function paramStoreKey(sid) {
   const u = localStorage.getItem('paper_user') || '_';
@@ -768,6 +774,7 @@ function applySelectPayload(r, kind) {
     onStrategyChange(true);
   }
   if (r.params && Object.keys(r.params).length) applyParamsToForm(r.params);
+  SEL_SCREEN_DATE = r.trade_date || null;
   const fromSaved = Boolean(r.run_id);
   renderSelResults(r.items || [], kind, fromSaved);
   updateSelStatusMeta(r);
@@ -794,11 +801,26 @@ async function loadSelHistory(kind, activeRunId) {
         <span class="h-strat">${stratLabel(h.strategy_id)}</span>
         <span class="h-cnt">${h.count} 只 · ${h.elapsed != null ? h.elapsed + 's' : ''}</span>
         ${cur}
+        <button type="button" class="h-del" data-del="${h.run_id}" title="删除">×</button>
       </li>`;
     }).join('');
   } catch (e) {
     list.innerHTML = '<li class="empty">加载失败</li>';
   }
+}
+
+async function deleteHistoryRun(runId) {
+  if (!await uiConfirm('删除这条选股记录?', '删除')) return;
+  try {
+    await api('/api/select/history/' + runId, { method: 'DELETE' });
+    if (SEL_VIEW_RUN_ID === runId) {
+      SEL_VIEW_RUN_ID = null;
+      await loadSelectState(SEL_KIND);
+    } else {
+      await loadSelHistory(SEL_KIND, SEL_VIEW_RUN_ID);
+    }
+    toast('已删除');
+  } catch (e) { toast('删除失败: ' + e.message); }
 }
 
 async function loadHistoryRun(runId) {
@@ -951,11 +973,11 @@ async function placePicks() {
   try {
     const r = await api('/api/picks/order', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind, items }),
+      body: JSON.stringify({ kind, items, screen_date: SEL_SCREEN_DATE }),
     });
     const eff = r.effective_date || '次日';
-    const okN = (r.orders || []).filter(o => o.status !== 'failed').length;
-    toast(`已挂单 ${okN} 笔, ${eff} 生效`);
+    const okN = (r.orders || []).filter(o => o.status === 'pending').length;
+    toast(`已委托挂单 ${okN} 笔, ${eff} 生效`);
     if (r.snapshot) render(r.snapshot);
     switchMobileView('orders');
   } catch (e) { toast('挂单失败: ' + e.message); }
@@ -1081,6 +1103,12 @@ function bind() {
   $('#stratSelect').addEventListener('change', () => onStrategyChange());
   $$('.sel-kind-tab').forEach(b => b.onclick = () => switchSelKind(b.dataset.kind));
   $('#selHistoryList').addEventListener('click', (e) => {
+    const delBtn = e.target.closest('[data-del]');
+    if (delBtn) {
+      e.stopPropagation();
+      deleteHistoryRun(Number(delBtn.dataset.del));
+      return;
+    }
     const li = e.target.closest('[data-run]');
     if (!li) return;
     loadHistoryRun(Number(li.dataset.run));

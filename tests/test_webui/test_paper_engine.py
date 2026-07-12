@@ -1,4 +1,6 @@
 """Tests for src/webui/paper_engine.py (自包含模拟盘引擎)"""
+from datetime import date
+
 import pytest
 
 from src.webui.paper_engine import PaperAccount
@@ -84,9 +86,11 @@ def quotes():
 
 @pytest.fixture
 def acct(store, quotes):
-    # 默认走实时报价撮合 (NoBars), 复用既有实时/市价撮合断言
-    return PaperAccount(name="test", initial_capital=1_000_000.0,
-                        quote_provider=quotes, bar_provider=NoBars(), store=store)
+    # 回放模式 (模拟日 < 日历当天): 走实时报价撮合, 复用既有断言
+    a = PaperAccount(name="test", initial_capital=1_000_000.0,
+                     quote_provider=quotes, bar_provider=NoBars(), store=store)
+    a.set_trade_date("2024-01-02")
+    return a
 
 
 class TestBuy:
@@ -210,6 +214,7 @@ class TestPersistence:
     def test_state_persisted(self, store, quotes):
         a1 = PaperAccount(name="persist", initial_capital=1_000_000,
                           quote_provider=quotes, bar_provider=NoBars(), store=store)
+        a1.set_trade_date("2024-01-02")
         a1.place_order("600519.SH", "buy", 100, price_type="market")
         # 同一 store 重新加载 (模拟重启)
         a2 = PaperAccount(name="persist", quote_provider=quotes, bar_provider=NoBars(), store=store)
@@ -219,6 +224,7 @@ class TestPersistence:
     def test_users_isolated(self, store, quotes):
         a = PaperAccount(name="alice", quote_provider=quotes, bar_provider=NoBars(), store=store)
         b = PaperAccount(name="bob", quote_provider=quotes, bar_provider=NoBars(), store=store)
+        a.set_trade_date("2024-01-02")
         a.place_order("600519.SH", "buy", 100, price_type="market")
         assert "600519.SH" in a.state["positions"]
         assert b.state["positions"] == {}
@@ -352,6 +358,7 @@ class TestDeleteTrade:
     def test_delete_is_per_user(self, store, quotes):
         a = PaperAccount(name="alice", quote_provider=quotes, bar_provider=NoBars(), store=store)
         b = PaperAccount(name="bob", quote_provider=quotes, bar_provider=NoBars(), store=store)
+        a.set_trade_date("2024-01-02")
         a.place_order("600519.SH", "buy", 100, price_type="market")
         tid = a.snapshot(refresh=False)["trades"][0]["trade_id"]
         # bob 删除 alice 的 trade_id 无效
@@ -373,8 +380,9 @@ class TestLiveDeferral:
         live_bars.add("688795.SH", "2026-07-11", o=700, h=710, low=695, c=705, pre=701)
         return live_bars
 
-    def test_manual_buy_pending_at_frontier(self, store, quotes, live_bars):
-        """跟盘日 (模拟日=最新日) 任意时刻下单均次日生效, 非仅周末。"""
+    def test_manual_buy_pending_at_frontier(self, store, quotes, live_bars, monkeypatch):
+        """跟盘日 (模拟日=日历当天) 任意时刻下单均次日生效。"""
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-10")
         acct = PaperAccount(
             name="live", initial_capital=5_000_000.0,
             quote_provider=quotes, bar_provider=live_bars, store=store,
@@ -385,8 +393,9 @@ class TestLiveDeferral:
         assert o["effective_date"] == "2026-07-11"
         assert "预约" in o["note"]
 
-    def test_replay_day_fills_same_day_in_range(self, store, quotes):
-        """历史回放日可在当日线价区间内即时成交。"""
+    def test_replay_day_fills_same_day_in_range(self, store, quotes, monkeypatch):
+        """历史回放 (模拟日 < 日历当天) 可在当日线价区间内即时成交。"""
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-12")
         fb = FakeBars()
         fb.add("688795.SH", "2026-07-10", o=690, h=720, low=680, c=701, pre=680)
         fb.add("688795.SH", "2026-07-11", o=700, h=720, low=690, c=710)  # 库内最新日 7/11
@@ -399,7 +408,8 @@ class TestLiveDeferral:
         assert o["status"] == "filled"
         assert o.get("effective_date") is None
 
-    def test_deferred_buy_fills_when_next_low_below_bid(self, store, quotes, live_bars_with_fill):
+    def test_deferred_buy_fills_when_next_low_below_bid(self, store, quotes, live_bars_with_fill, monkeypatch):
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-10")
         acct = PaperAccount(
             name="live2", initial_capital=5_000_000.0,
             quote_provider=quotes, bar_provider=live_bars_with_fill, store=store,
@@ -412,7 +422,8 @@ class TestLiveDeferral:
         assert filled["status"] == "filled"
         assert filled["filled_price"] == 701.01
 
-    def test_deferred_waits_for_kline_when_bar_missing(self, store, quotes):
+    def test_deferred_waits_for_kline_when_bar_missing(self, store, quotes, monkeypatch):
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-10")
         fb = FrontierBars("2026-07-10")
         fb.add("688795.SH", "2026-07-10", o=690, h=720, low=680, c=701, pre=680)
         fb.add("600519.SH", "2026-07-11", o=1700, h=1750, low=1680, c=1720)  # 日历有 7/11, 688795 无 K
