@@ -92,6 +92,7 @@ async def repair_qfq_full(
     divid_sync_days: int = 3650,
     skip_divid: bool = False,
     gap_scan_days: int = ALL_HISTORY_GAP_DAYS,
+    task_offset: int = 0,
 ) -> dict[str, int]:
     """全市场前复权重拉 (消除全部历史混用)."""
     divid_rows = 0
@@ -102,17 +103,32 @@ async def repair_qfq_full(
             logger.warning("除权因子同步失败: %s", exc)
 
     gaps_before = len(codes_with_ex_dividend_gap_in_db(gap_scan_days))
-    logger.info("全量前复权修复开始: gaps_before=%d, days_back=%d", gaps_before, days_back)
+    logger.info(
+        "全量前复权修复开始: gaps_before=%d, days_back=%d, task_offset=%d",
+        gaps_before, days_back, task_offset,
+    )
 
     from src.data import kline_bulk_sync
 
-    kline_rows = await kline_bulk_sync.run(
-        mode="stock",
-        days_back=days_back,
-        source=source,
+    kline_bulk_sync._active_source = source  # noqa: SLF001
+    kline_bulk_sync.reset_em_cache()
+    if source in ("tencent", "auto", "qmt"):
+        kline_bulk_sync.reset_qq_session()
+
+    tasks = kline_bulk_sync._get_stock_tasks(  # noqa: SLF001
+        max(30, days_back), resume=False, fill_interior_gaps=False,
+    )
+    if task_offset > 0:
+        tasks = tasks[task_offset:]
+        logger.info("从任务偏移 %d 续跑, 剩余 %d 只", task_offset, len(tasks))
+
+    kline_rows = await kline_bulk_sync._async_download(  # noqa: SLF001
+        tasks,
+        kline_bulk_sync._fetch_stock_daily,
+        kline_bulk_sync._bulk_upsert_stock_daily,
+        label="repair-qfq full",
         concurrency=concurrency,
-        resume=False,
-        fill_interior_gaps=False,
+        flush_every=50,
     )
 
     gaps_after = len(codes_with_ex_dividend_gap_in_db(gap_scan_days))
@@ -122,6 +138,8 @@ async def repair_qfq_full(
         "gaps_before": gaps_before,
         "gaps_after": gaps_after,
         "stock_count": len(all_stock_codes()),
+        "task_offset": task_offset,
+        "tasks_run": len(tasks),
     }
 
 
@@ -199,6 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="除权因子同步起点 (默认: 增量365 / 全量3650)",
     )
     p.add_argument("--skip-divid", action="store_true", help="跳过除权因子同步")
+    p.add_argument(
+        "--task-offset",
+        type=int,
+        default=0,
+        help="--full 时跳过前 N 个标的 (续跑用, 如 1000)",
+    )
     return p
 
 
@@ -221,6 +245,7 @@ async def async_main(args: argparse.Namespace) -> int:
             divid_sync_days=divid_days,
             skip_divid=args.skip_divid,
             gap_scan_days=ALL_HISTORY_GAP_DAYS,
+            task_offset=max(0, args.task_offset),
         )
     else:
         result = await repair_qfq_incremental(

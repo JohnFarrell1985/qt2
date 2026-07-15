@@ -341,6 +341,7 @@ def _probe_em() -> bool:
 # ==================================================================
 _kline_qmt_client: Any = None
 _qmt_kline_lock = threading.Lock()
+_QMT_FETCH_TIMEOUT_SEC = 180
 
 
 def _get_kline_qmt_client() -> Any:
@@ -559,22 +560,36 @@ def _qmt_df_to_index_records(
 
 
 def _qmt_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
-    sym = _qmt_code_stock_etf(code)
-    c = _get_kline_qmt_client()
-    with _qmt_kline_lock:
-        c.download_history_data(
-            sym, "1d",
-            start_time=start_date[:8], end_time=end_date[:8],
-        )
-        data = c.get_market_data_ex(
-            [sym], period="1d",
-            start_time=start_date[:8], end_time=end_date[:8],
-            dividend_type="front",
-        )
-    df = data.get(sym) if isinstance(data, dict) else None
-    if df is None or (hasattr(df, "empty") and df.empty):
-        return []
-    return _qmt_df_to_stock_records(code, df, start_date, end_date)
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+
+    def _do_fetch() -> list[dict]:
+        sym = _qmt_code_stock_etf(code)
+        c = _get_kline_qmt_client()
+        with _qmt_kline_lock:
+            c.download_history_data(
+                sym, "1d",
+                start_time=start_date[:8], end_time=end_date[:8],
+            )
+            data = c.get_market_data_ex(
+                [sym], period="1d",
+                start_time=start_date[:8], end_time=end_date[:8],
+                dividend_type="front",
+            )
+        df = data.get(sym) if isinstance(data, dict) else None
+        if df is None or (hasattr(df, "empty") and df.empty):
+            return []
+        return _qmt_df_to_stock_records(code, df, start_date, end_date)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(_do_fetch)
+        try:
+            return fut.result(timeout=_QMT_FETCH_TIMEOUT_SEC)
+        except FutTimeout:
+            logger.warning(
+                "QMT K线超时 %ss, 跳过 %s %s~%s",
+                _QMT_FETCH_TIMEOUT_SEC, code, start_date, end_date,
+            )
+            return []
 
 
 def _qmt_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
@@ -1047,9 +1062,9 @@ def _bulk_upsert_stock_daily(
 ) -> None:
     if not records:
         return
-    with get_session() as session:
-        for i in range(0, len(records), batch_size):
-            batch = records[i: i + batch_size]
+    for i in range(0, len(records), batch_size):
+        batch = records[i: i + batch_size]
+        with get_session() as session:
             stmt = insert(StockDaily).values(batch)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["code", "trade_date"],
@@ -1067,7 +1082,7 @@ def _bulk_upsert_stock_daily(
                 },
             )
             session.execute(stmt)
-            log_upsert_commit("kline.stock_daily", len(batch))
+        log_upsert_commit("kline.stock_daily", len(batch))
 
 
 def _bulk_upsert_etf_daily(
