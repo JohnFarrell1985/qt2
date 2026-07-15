@@ -184,7 +184,7 @@ class TestParamMerge:
 
         cat = strategy_catalog()
         ids = {s["id"] for s in cat}
-        assert ids == {"bull_launch"}
+        assert ids == {"bull_launch", "bear_five_dev"}
         assert "bear_rebound" not in ids
         for s in cat:
             assert "params" in s and isinstance(s["params"], list)

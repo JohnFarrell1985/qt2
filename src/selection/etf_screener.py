@@ -16,11 +16,13 @@ from sqlalchemy import text
 from src.common.config import MaFilterConfig, RankConfig, settings
 from src.common.db import get_session
 from src.common.logger import get_logger
+from src.data.price_adjust import repair_mixed_adjustment_bars
 from src.selection.ma_screener import (
     assign_tier,
     compute_mas,
     ma_snapshot,
     passes_ma_filter,
+    passes_ma5_below_long_filter,
     passes_ma5_ma10_above_long_filter,
     passes_max_total_gain_filter,
     passes_monthly_gain_filter,
@@ -61,7 +63,7 @@ def _load_etf_bars(code: str, trade_date: date, lookback: int) -> pd.DataFrame |
     # ETF 无 change_pct 列 → 由收盘价推算 (ma_screener._daily_change_pct 亦有兜底)
     df["change_pct"] = df["close"].pct_change() * 100
     df["turnover_rate"] = pd.NA
-    return df
+    return repair_mixed_adjustment_bars(df)
 
 
 def load_etf_names() -> dict[str, str]:
@@ -105,6 +107,8 @@ def screen_etf_universe(
         if not passes_ma_filter(mas, cfg):
             continue
         if not passes_ma5_ma10_above_long_filter(mas, cfg):
+            continue
+        if not passes_ma5_below_long_filter(mas, cfg):
             continue
         if not passes_prior_surge_filter(bars, cfg, code):
             continue

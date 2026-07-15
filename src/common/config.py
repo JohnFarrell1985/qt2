@@ -307,8 +307,28 @@ class MaFilterConfig(BaseSettings):
         alias="SELECTION_MA5_MA10_ABOVE_GROUPS",
         description="长均线条件: 组内 AND (MA5/10 均在各均线之上), 组间 OR。例 [[20,30],[40,50]]",
     )
+    require_ma5_below_long: bool = Field(
+        default=False,
+        alias="SELECTION_REQUIRE_MA5_BELOW_LONG",
+        description="MA5 须在指定长均线组下方 (见 ma5_below_groups)",
+    )
+    ma5_below_groups: list[list[int]] = Field(
+        default_factory=list,
+        alias="SELECTION_MA5_BELOW_GROUPS",
+        description="长均线条件: 组内 AND (MA5 在各均线之下), 组间 OR。例 [[30]] 或 [[20,30],[40,50]]",
+    )
+    require_close_below_ma5: bool = Field(
+        default=False,
+        alias="SELECTION_REQUIRE_CLOSE_BELOW_MA5",
+        description="收盘价须在锚点均线(默认5日)下方",
+    )
+    ma5_below_pct: float = Field(
+        default=5.0,
+        alias="SELECTION_MA5_BELOW_PCT",
+        description="收盘价相对锚点均线向下至少偏离 (%)",
+    )
 
-    @field_validator("ma5_ma10_above_groups", mode="before")
+    @field_validator("ma5_ma10_above_groups", "ma5_below_groups", mode="before")
     @classmethod
     def _parse_ma_groups(cls, v):
         if v is None or v == "":

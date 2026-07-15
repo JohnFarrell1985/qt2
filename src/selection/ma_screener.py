@@ -16,6 +16,7 @@ from src.common.config import MaFilterConfig, RankConfig, settings
 from src.common.db import get_session
 from src.common.logger import get_logger
 from src.data.limit_status import calc_limit_status, get_prior_surge_min_pct, passes_tradability_filter
+from src.data.price_adjust import repair_mixed_adjustment_bars
 from src.data.universe_provider import AStockUniverseProvider
 
 logger = get_logger(__name__)
@@ -270,7 +271,9 @@ def _passes_imminent_ma_context(mas: dict[int, pd.Series], cfg: MaFilterConfig) 
 def passes_ma_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
     """筛选日 (最近一根 K 线) 是否满足均线条件."""
     periods = cfg.filter_periods
-    if len(periods) < 2:
+    if not periods:
+        return False
+    if (cfg.require_bullish_order or cfg.require_spreading) and len(periods) < 2:
         return False
     for p in periods:
         if p not in mas:
@@ -286,6 +289,64 @@ def passes_ma_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
             return _passes_fresh_or_touch_context(mas, cfg)
 
     return _divergence_at_offset(mas, cfg, offset=0)
+
+
+def passes_ma5_below_long_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
+    """MA5 是否在指定长均线组下方 (组内 AND, 组间 OR).
+
+    例: ``[[30]]`` → MA5 在 MA30 下方; ``[[20, 30], [40, 50]]`` → (均在 20/30 下) 或 (均在 40/50 下)。
+    上市不足、长均线尚不可算时跳过该周期; 若所有组均无可算周期则不剔除 (无法验证)。
+    """
+    if not cfg.require_ma5_below_long:
+        return True
+    groups = cfg.ma5_below_groups
+    if not groups:
+        return False
+    if 5 not in mas:
+        return False
+    ma5 = _latest(mas[5], 0)
+    if ma5 is None:
+        return False
+    any_checked = False
+    for group in groups:
+        ok = True
+        checked = 0
+        for period in group:
+            if period not in mas:
+                ok = False
+                break
+            ma_long = _latest(mas[period], 0)
+            if ma_long is None:
+                continue
+            checked += 1
+            any_checked = True
+            if ma5 >= ma_long:
+                ok = False
+                break
+        if ok and checked > 0:
+            return True
+    if not any_checked:
+        return True
+    return False
+
+
+def _min_bars_required(cfg: MaFilterConfig) -> int:
+    """运行当前 MA 筛选所需的最少 K 线根数.
+
+    长均线条件在数据不足时由 ``passes_ma5_below_long_filter`` 单独放宽, 此处不要求满 60 日。
+    """
+    need = [6, cfg.anchor_ma_period + 1]
+    if cfg.require_ma5_ma10_cross or cfg.require_ma5_ma10_above_long:
+        need.append(11)
+    if cfg.prior_surge_lookback_days > 0:
+        need.append(cfg.prior_surge_lookback_days + 2)
+    if cfg.max_gain_total_pct > 0:
+        need.append(cfg.max_gain_lookback_days + 2)
+    if cfg.max_gain_1m_pct > 0:
+        need.append(cfg.max_gain_1m_lookback_days + 2)
+    if cfg.require_volume_pullback:
+        need.append(21)
+    return max(need)
 
 
 def passes_ma5_ma10_above_long_filter(mas: dict[int, pd.Series], cfg: MaFilterConfig) -> bool:
@@ -351,6 +412,8 @@ def passes_prior_surge_filter(
     code: str = "",
 ) -> bool:
     """筛选日之前的 N 个交易日内, 是否出现过单日大涨."""
+    if cfg.prior_surge_lookback_days <= 0:
+        return True
     lookback = cfg.prior_surge_lookback_days
     if len(bars) < lookback + 2:
         return False
@@ -378,6 +441,8 @@ def total_gain_pct(bars: pd.DataFrame, lookback_days: int) -> float | None:
 
 def passes_max_total_gain_filter(bars: pd.DataFrame, cfg: MaFilterConfig) -> bool:
     """近 N 个交易日总涨幅不超过上限."""
+    if cfg.max_gain_total_pct <= 0:
+        return True
     pct = total_gain_pct(bars, cfg.max_gain_lookback_days)
     if pct is None:
         return False
@@ -392,6 +457,35 @@ def passes_monthly_gain_filter(bars: pd.DataFrame, cfg: MaFilterConfig) -> bool:
     if pct is None:
         return False
     return pct <= cfg.max_gain_1m_pct
+
+
+def passes_close_below_ma5_filter(
+    bars: pd.DataFrame,
+    mas: dict[int, pd.Series],
+    cfg: MaFilterConfig,
+) -> bool:
+    """收盘价须在锚点均线下方, 且向下偏离至少 ``ma5_below_pct`` (%)."""
+    if not cfg.require_close_below_ma5:
+        return True
+
+    anchor = cfg.anchor_ma_period
+    if anchor not in mas:
+        return False
+
+    close = bars["close"].astype(float)
+    ma_anchor = mas[anchor].astype(float)
+    c = close.iloc[-1]
+    ma_val = ma_anchor.iloc[-1]
+    if any(pd.isna(x) for x in (ma_val, c)) or ma_val <= 0:
+        return False
+
+    if c >= ma_val:
+        return False
+    if cfg.ma5_below_pct > 0:
+        dist_pct = (c - ma_val) / ma_val * 100
+        if dist_pct > -cfg.ma5_below_pct:
+            return False
+    return True
 
 
 def passes_close_above_ma5_filter(
@@ -430,6 +524,17 @@ def passes_close_above_ma5_filter(
     return True
 
 
+def passes_price_anchor_filter(
+    bars: pd.DataFrame,
+    mas: dict[int, pd.Series],
+    cfg: MaFilterConfig,
+) -> bool:
+    """锚点均线价格条件: 低于或高于, 由配置决定."""
+    if cfg.require_close_below_ma5:
+        return passes_close_below_ma5_filter(bars, mas, cfg)
+    return passes_close_above_ma5_filter(bars, mas, cfg)
+
+
 def passes_volume_pullback_filter(
     bars: pd.DataFrame,
     mas: dict[int, pd.Series],
@@ -448,7 +553,35 @@ def passes_volume_pullback_filter(
         if v_today >= v_yday * cfg.volume_shrink_ratio:
             return False
 
-    return passes_close_above_ma5_filter(bars, mas, cfg)
+    return passes_price_anchor_filter(bars, mas, cfg)
+
+
+def _score_linear_low_better(value: float, best: float, worst: float) -> float:
+    if value <= best:
+        return 100.0
+    if value >= worst:
+        return 0.0
+    return 100.0 * (worst - value) / (worst - best)
+
+
+def _score_linear_high_better(value: float, best: float, floor: float) -> float:
+    """``value`` 越大越好; 达到 ``best`` 为 100 分, 低于 ``floor`` 为 0."""
+    if value >= best:
+        return 100.0
+    if value <= floor:
+        return 0.0
+    return 100.0 * (value - floor) / (best - floor)
+
+
+def _score_ma5_below_dist(dist_pct: float, target: float) -> float:
+    """收盘价低于 MA5 时打分; 偏离至少 ``target``% 后越大越好."""
+    if dist_pct >= 0:
+        return 0.0
+    dev = abs(dist_pct)
+    if dev < target:
+        return 0.0
+    best = max(target * 3, 15.0)
+    return _score_linear_high_better(dev, best, target)
 
 
 def _max_prior_surge_pct(bars: pd.DataFrame, cfg: MaFilterConfig, code: str = "") -> float | None:
@@ -476,14 +609,6 @@ def _days_since_surge(bars: pd.DataFrame, cfg: MaFilterConfig, code: str = "") -
             if nearest is None or offset < nearest:
                 nearest = offset
     return nearest
-
-
-def _score_linear_low_better(value: float, best: float, worst: float) -> float:
-    if value <= best:
-        return 100.0
-    if value >= worst:
-        return 0.0
-    return 100.0 * (worst - value) / (worst - best)
 
 
 def _score_gain_10d(gain: float | None) -> float:
@@ -576,8 +701,13 @@ def score_snapshot(
     is_limit_up: bool = False,
 ) -> float:
     gain_key = f"gain_{cfg.max_gain_lookback_days}d_pct"
+    ma5_dist = snap.get("ma5_dist_pct", 99.0)
+    if cfg.require_close_below_ma5:
+        ma5_dist_score = _score_ma5_below_dist(ma5_dist, cfg.ma5_below_pct)
+    else:
+        ma5_dist_score = _score_linear_low_better(ma5_dist, 0.0, 5.0)
     parts = {
-        "ma5_dist": _score_linear_low_better(snap.get("ma5_dist_pct", 99.0), 0.0, 5.0),
+        "ma5_dist": ma5_dist_score,
         "vol_shrink": _score_linear_low_better(snap.get("vol_shrink_ratio", 1.0), 0.5, 1.0),
         "gain_10d": _score_gain_10d(snap.get(gain_key)),
         "surge_recency": _score_surge_recency(
@@ -627,10 +757,15 @@ def screen_metrics(
         if val is not None:
             snap[f"ma{p}"] = round(val, 4)
     dist_pct = (c - ma_val) / ma_val * 100
+    if cfg.require_close_below_ma5:
+        snap["ma5_dist_pct"] = round(dist_pct, 4)
+        if dist_pct < 0:
+            snap["ma5_below_dist_pct"] = round(-dist_pct, 4)
+    else:
+        snap["ma5_dist_pct"] = round(max(dist_pct, 0.0), 4)
     snap.update({
         "close": round(c, 4),
         f"ma{anchor}": round(ma_val, 4),
-        "ma5_dist_pct": round(max(dist_pct, 0.0), 4),
         "vol_shrink_ratio": round(v_today / v_yday, 4) if v_yday > 0 else 0.0,
     })
     low = bars["low"].astype(float).iloc[-1]
@@ -715,7 +850,7 @@ def _load_bars_from_db(code: str, trade_date: date, lookback: int) -> pd.DataFra
     ).sort_values("trade_date")
     for col in ("open", "high", "low", "close", "volume", "amount", "change_pct", "turnover_rate"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
+    return repair_mixed_adjustment_bars(df)
 
 
 def _fetch_avg_turnover_20d(code: str, trade_date: date) -> float | None:
@@ -824,7 +959,7 @@ def screen_universe(
 
     for code in universe:
         bars = _load_bars_from_db(code, trade_date, lookback)
-        if bars is None or len(bars) < max_period + 1:
+        if bars is None or len(bars) < _min_bars_required(cfg):
             skip_no_bars += 1
             continue
 
@@ -840,6 +975,8 @@ def screen_universe(
         if not passes_ma_filter(mas, cfg):
             continue
         if not passes_ma5_ma10_above_long_filter(mas, cfg):
+            continue
+        if not passes_ma5_below_long_filter(mas, cfg):
             continue
         if not passes_prior_surge_filter(bars, cfg, code):
             continue

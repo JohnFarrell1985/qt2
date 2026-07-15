@@ -32,6 +32,8 @@ class TestStrategyPresets:
         names = list_strategies()
         assert "bull_launch" in names
         assert "bear_rebound" in names
+        assert "bear_five_dev" in names
+        assert "bear_five_dev" in names
 
     def test_load_bull_launch(self):
         data = load_strategy("bull_launch")

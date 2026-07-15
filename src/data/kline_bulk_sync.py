@@ -208,7 +208,10 @@ def _qq_fetch_kline_once(symbol: str, start_date: str, end_date: str) -> list[li
     if not data:
         return []
     sym_data = data.get(symbol, {})
-    return sym_data.get("day") or sym_data.get("qfqday") or []
+    rows = sym_data.get("qfqday") or []
+    if not rows and sym_data.get("day"):
+        logger.warning("腾讯 K 线 %s 无 qfqday, 跳过未复权 day 数据", symbol)
+    return rows
 
 
 def _qq_fetch_kline(symbol: str, start_date: str, end_date: str) -> list[list[str]]:
@@ -566,6 +569,7 @@ def _qmt_fetch_stock(code: str, start_date: str, end_date: str) -> list[dict]:
         data = c.get_market_data_ex(
             [sym], period="1d",
             start_time=start_date[:8], end_time=end_date[:8],
+            dividend_type="front",
         )
     df = data.get(sym) if isinstance(data, dict) else None
     if df is None or (hasattr(df, "empty") and df.empty):
@@ -584,6 +588,7 @@ def _qmt_fetch_etf(code: str, start_date: str, end_date: str) -> list[dict]:
         data = c.get_market_data_ex(
             [sym], period="1d",
             start_time=start_date[:8], end_time=end_date[:8],
+            dividend_type="front",
         )
     df = data.get(sym) if isinstance(data, dict) else None
     if df is None or (hasattr(df, "empty") and df.empty):
@@ -603,6 +608,7 @@ def _qmt_fetch_index(code: str, start_date: str, end_date: str) -> list[dict]:
         data = c.get_market_data_ex(
             [sym], period="1d",
             start_time=start_date[:8], end_time=end_date[:8],
+            dividend_type="front",
         )
     df = data.get(sym) if isinstance(data, dict) else None
     if df is None or (hasattr(df, "empty") and df.empty):

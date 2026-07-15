@@ -1,0 +1,42 @@
+{
+  "id": "bear_five_dev",
+  "label": "熊市五日偏离",
+  "description": "5日均线在所选长均线组下方；收盘价低于5日线至少偏离设定比例",
+  "ma_filter": {
+    "compute_periods": [5, 10, 15, 20, 30, 40, 50, 60],
+    "filter_periods": [5],
+    "require_bullish_order": false,
+    "require_rising": false,
+    "require_spreading": false,
+    "require_ma5_ma10_cross": false,
+    "require_ma5_below_long": true,
+    "ma5_below_groups": [[30]],
+    "anchor_ma_period": 5,
+    "require_close_below_ma5": true,
+    "ma5_below_pct": 5.0,
+    "require_close_above_ma5": false,
+    "require_ma5_proximity": false,
+    "require_volume_pullback": false,
+    "prior_surge_lookback_days": 0,
+    "max_gain_total_pct": 0,
+    "max_gain_1m_pct": 0,
+    "universe": "all_a",
+    "exclude_st": true,
+    "min_avg_turnover_20d": 0,
+    "min_avg_amount_20d": 0,
+    "exclude_limit_up": false,
+    "max_candidates": 200
+  },
+  "rank": {
+    "enabled": true,
+    "tier_a_min": 65,
+    "tier_b_min": 48,
+    "export_top_n": 50,
+    "weight_ma5_dist": 0.40,
+    "weight_vol_shrink": 0.10,
+    "weight_gain_10d": 0.15,
+    "weight_surge_recency": 0.05,
+    "weight_liquidity": 0.30,
+    "weight_ma5_ma10_cross": 0.0
+  }
+}

@@ -161,7 +161,23 @@ class DataSyncService:
                         fill_interior_gaps=False,
                     )
                 )
-                self._set(phase="settle", stock_rows=int(stock_rows or 0))
+                self._set(phase="ex_div", stock_rows=int(stock_rows or 0))
+
+                logger.info("WebUI 开始除权因子 + 前复权刷新 (source=%s)", source)
+                from src.data.kline_ex_div_refresh import run_ex_div_refresh_pipeline
+
+                ex_div_stats = loop.run_until_complete(
+                    run_ex_div_refresh_pipeline(
+                        source=source,
+                        concurrency=concurrency,
+                    )
+                )
+                self._set(
+                    phase="settle",
+                    divid_rows=int(ex_div_stats.get("divid_rows", 0)),
+                    ex_div_codes=int(ex_div_stats.get("ex_div_codes", 0)),
+                    ex_div_kline_rows=int(ex_div_stats.get("ex_div_kline_rows", 0)),
+                )
             finally:
                 loop.close()
 
@@ -181,8 +197,13 @@ class DataSyncService:
                 error=None,
             )
             logger.info(
-                "WebUI 数据同步完成: etf=%d stock=%d latest=%s elapsed=%.1fs",
-                etf_rows, stock_rows, latest, time.time() - t0,
+                "WebUI 数据同步完成: etf=%d stock=%d ex_div_codes=%s ex_div_kline=%s latest=%s elapsed=%.1fs",
+                etf_rows,
+                stock_rows,
+                self._status.get("ex_div_codes"),
+                self._status.get("ex_div_kline_rows"),
+                latest,
+                time.time() - t0,
             )
         except Exception as e:  # noqa: BLE001
             logger.exception("WebUI 数据同步失败: %s", e)

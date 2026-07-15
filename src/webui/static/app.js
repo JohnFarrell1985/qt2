@@ -360,7 +360,7 @@ async function stepDay(direction) {
 let SYNC_POLL = null;
 
 function syncPhaseLabel(phase) {
-  const m = { etf: 'ETF', stock: 'A股', settle: '结算', done: '完成', error: '失败' };
+  const m = { etf: 'ETF', stock: 'A股', ex_div: '除权复权', settle: '结算', done: '完成', error: '失败' };
   return m[phase] || phase || '';
 }
 
@@ -405,7 +405,7 @@ async function pollSyncStatus() {
 async function runDataSync() {
   if ($('#syncBtn').disabled) return;
   if (!await uiConfirm(
-    '从 QMT 增量同步 A股/ETF 日K（按库内最新交易日自动计算缺口天数），并结算挂单。\n需已启动 MiniQMT。',
+    '从 QMT 增量同步 A股/ETF 日K（按库内最新交易日自动计算缺口天数），\n同步除权因子并对除权标的全量刷新前复权 K 线，然后结算挂单。\n需已启动 MiniQMT。',
     '同步数据'
   )) return;
   $('#syncBtn').disabled = true;
