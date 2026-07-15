@@ -25,7 +25,8 @@ PARAM_SCHEMA: List[Dict[str, Any]] = [
     {"key": "ma5_ma10_require_next_day", "section": "ma_filter", "label": "须预测次日金叉", "type": "bool"},
     {"key": "require_ma5_ma10_above_long", "section": "ma_filter", "label": "5/10须在长均线上方", "type": "bool"},
     {"key": "ma5_ma10_above_groups", "section": "ma_filter", "label": "长均线条件组", "type": "ma_groups",
-     "hint": "组内逗号、组间竖线。例: 20,30|40,50 表示 (均在20/30上) 或 (均在40/50上)"},
+     "hint": "组内逗号、组间竖线。例: 20,30|40,50 表示 (均在20/30上) 或 (均在40/50上)",
+     "default_when_enabled": "20,30|40,50"},
     # —— 价格 / 缩量 ——
     {"key": "anchor_ma_period", "section": "ma_filter", "label": "锚点均线周期", "type": "int"},
     {"key": "ma5_proximity_pct", "section": "ma_filter", "label": "贴近锚点均线上限%", "type": "number", "step": 0.5},
@@ -98,6 +99,17 @@ def _format_ma_groups(groups: Any) -> str:
     return str(groups)
 
 
+def _default_ma5_ma10_above_groups(cfg: MaFilterConfig) -> List[List[int]]:
+    """用户开启长均线过滤但未填条件组时的默认: (均在20/30上) 或 (均在40/50上)。"""
+    _ = cfg  # 预留: 未来可按 compute_periods 推导
+    return [[20, 30], [40, 50]]
+
+
+def _resolve_ma5_ma10_above_groups(cfg: MaFilterConfig) -> None:
+    if cfg.require_ma5_ma10_above_long and not cfg.ma5_ma10_above_groups:
+        cfg.ma5_ma10_above_groups = _default_ma5_ma10_above_groups(cfg)
+
+
 def _ensure_compute_periods(cfg: MaFilterConfig) -> None:
     extra = set(cfg.filter_periods) | {5, 10}
     if cfg.require_ma5_ma10_above_long and cfg.ma5_ma10_above_groups:
@@ -130,6 +142,7 @@ def build_configs(
         if hasattr(target, key):
             setattr(target, key, coerced)
 
+    _resolve_ma5_ma10_above_groups(cfg)
     _ensure_compute_periods(cfg)
 
     meta = {

@@ -212,14 +212,18 @@ function renderOrders(list) {
   const body = $('#orderBody');
   if (!list || !list.length) { body.innerHTML = '<tr class="empty"><td colspan="5">暂无委托</td></tr>'; return; }
   const stMap = { filled: '已成', pending: '挂单', cancelled: '已撤', failed: '废单' };
-  body.innerHTML = list.map(o => `
+  body.innerHTML = list.map(o => {
+    const effTag = (o.status === 'pending' && o.effective_date)
+      ? `<small class="flat">撮合日 ${o.effective_date}</small>` : '';
+    return `
     <tr>
       <td><div class="cell-2"><b>${o.name || o.code}</b><small>${(o.created_at || '').slice(5, 16)} ${o.code}</small></div></td>
       <td class="r"><div class="cell-2"><span class="badge ${o.direction}">${o.direction === 'buy' ? '买' : '卖'}</span><small>${o.price_type === 'market' ? '市价' : '限价'}</small></div></td>
       <td class="r"><div class="cell-2"><span>${o.price_type === 'market' ? '市价' : fmt(o.price, 3)}</span><small>${o.quantity}</small></div></td>
-      <td class="r"><span class="badge st-${o.status}">${stMap[o.status] || o.status}</span>${o.note ? `<div><small class="flat">${o.note}</small></div>` : ''}</td>
+      <td class="r"><span class="badge st-${o.status}">${stMap[o.status] || o.status}</span>${effTag}${o.note ? `<div><small class="flat">${o.note}</small></div>` : ''}</td>
       <td class="op">${o.status === 'pending' ? `<button class="mini-btn cancel" data-cancel="${o.order_id}">撤</button>` : ''}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function renderTrades(list) {
@@ -401,17 +405,20 @@ async function pollSyncStatus() {
 async function runDataSync() {
   if ($('#syncBtn').disabled) return;
   if (!await uiConfirm(
-    '从 QMT 同步最近 15 日 A股/ETF 日K线, 并结算挂单更新盈亏。\n需已启动 MiniQMT。',
+    '从 QMT 增量同步 A股/ETF 日K（按库内最新交易日自动计算缺口天数），并结算挂单。\n需已启动 MiniQMT。',
     '同步数据'
   )) return;
   $('#syncBtn').disabled = true;
   updateSyncStatus({ running: true, phase: 'etf', elapsed: 0 });
   try {
-    await api('/api/sync/kline', {
+    const r = await api('/api/sync/kline', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days_back: 15, concurrency: 4, source: 'qmt' }),
+      body: JSON.stringify({ days_back: 0, concurrency: 4, source: 'qmt' }),
     });
+    if (r.days_back != null) {
+      updateSyncStatus({ running: true, phase: 'etf', elapsed: 0, days_back: r.days_back, db_latest: r.db_latest });
+    }
     pollSyncStatus();
   } catch (e) {
     $('#syncBtn').disabled = false;
@@ -713,6 +720,16 @@ function renderParamForm(overrideParams) {
   </div>`;
   $('#pSave').onclick = saveParamsFromForm;
   $('#pReset').onclick = () => { localStorage.removeItem(paramStoreKey(CUR_STRAT.id)); renderParamForm(); toast('已恢复系统默认参数'); };
+  $$('#paramForm select[data-key="require_ma5_ma10_above_long"]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      if (sel.value !== 'true') return;
+      const groupsEl = $('#paramForm [data-key="ma5_ma10_above_groups"]');
+      if (groupsEl && !groupsEl.value.trim()) {
+        groupsEl.value = '20,30|40,50';
+        groupsEl.placeholder = '20,30|40,50';
+      }
+    });
+  });
 }
 
 function applyParamsToForm(params) {

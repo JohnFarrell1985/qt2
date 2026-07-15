@@ -1569,7 +1569,12 @@ def _index_min_max_maps(session) -> tuple[dict[str, str], dict[str, str]]:
     return min_m, max_m
 
 
-def _get_stock_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
+def _get_stock_tasks(
+    days_back: int,
+    resume: bool,
+    *,
+    fill_interior_gaps: bool | None = None,
+) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
     with get_session() as session:
@@ -1586,16 +1591,22 @@ def _get_stock_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]
             pcf, end_date, last, first, resume,
         ):
             work.append((code, seg_s, seg_e))
-    _maybe_append_interior_tasks(
-        work=work, resume=resume, min_m=min_m, max_m=max_m,
-        table="stock_daily", code_col="code",
-    )
+    if fill_interior_gaps if fill_interior_gaps is not None else _kline_fill_interior_gaps_enabled():
+        _maybe_append_interior_tasks(
+            work=work, resume=resume, min_m=min_m, max_m=max_m,
+            table="stock_daily", code_col="code",
+        )
     if work and resume:
         work.sort(key=lambda t: (t[2], t[1]), reverse=True)
     return work
 
 
-def _get_etf_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
+def _get_etf_tasks(
+    days_back: int,
+    resume: bool,
+    *,
+    fill_interior_gaps: bool | None = None,
+) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
     with get_session() as session:
@@ -1610,16 +1621,22 @@ def _get_etf_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
             pcf, end_date, last, first, resume,
         ):
             work.append((code, seg_s, seg_e))
-    _maybe_append_interior_tasks(
-        work=work, resume=resume, min_m=min_m, max_m=max_m,
-        table="etf_daily", code_col="code",
-    )
+    if fill_interior_gaps if fill_interior_gaps is not None else _kline_fill_interior_gaps_enabled():
+        _maybe_append_interior_tasks(
+            work=work, resume=resume, min_m=min_m, max_m=max_m,
+            table="etf_daily", code_col="code",
+        )
     if work and resume:
         work.sort(key=lambda t: (t[2], t[1]), reverse=True)
     return work
 
 
-def _get_index_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]:
+def _get_index_tasks(
+    days_back: int,
+    resume: bool,
+    *,
+    fill_interior_gaps: bool | None = None,
+) -> list[tuple[str, str, str]]:
     end_date = datetime.now().strftime("%Y%m%d")
     fallback_start = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
     with get_session() as session:
@@ -1635,10 +1652,11 @@ def _get_index_tasks(days_back: int, resume: bool) -> list[tuple[str, str, str]]
             pcf, end_date, last, first, resume,
         ):
             work.append((code, seg_s, seg_e))
-    _maybe_append_interior_tasks(
-        work=work, resume=resume, min_m=min_m, max_m=max_m,
-        table="market_index", code_col="index_code",
-    )
+    if fill_interior_gaps if fill_interior_gaps is not None else _kline_fill_interior_gaps_enabled():
+        _maybe_append_interior_tasks(
+            work=work, resume=resume, min_m=min_m, max_m=max_m,
+            table="market_index", code_col="index_code",
+        )
     if work and resume:
         work.sort(key=lambda t: (t[2], t[1]), reverse=True)
     return work
@@ -1690,6 +1708,7 @@ async def run(
     rate: float = 3.0,
     burst: int = 5,
     resume: bool = True,
+    fill_interior_gaps: bool | None = None,
 ):
     global _active_source
     _active_source = source
@@ -1714,21 +1733,21 @@ async def run(
     total = 0
 
     if mode in ("stock", "all") and d_st is not None:
-        tasks = _get_stock_tasks(d_st, resume)
+        tasks = _get_stock_tasks(d_st, resume, fill_interior_gaps=fill_interior_gaps)
         total += await _async_download(
             tasks, _fetch_stock_daily, _bulk_upsert_stock_daily,
             label="Stock K-line", concurrency=concurrency,
         )
 
     if mode in ("etf", "all") and d_e is not None:
-        tasks = _get_etf_tasks(d_e, resume)
+        tasks = _get_etf_tasks(d_e, resume, fill_interior_gaps=fill_interior_gaps)
         total += await _async_download(
             tasks, _fetch_etf_daily, _bulk_upsert_etf_daily,
             label="ETF K-line", concurrency=concurrency,
         )
 
     if mode in ("index", "all") and d_ix is not None:
-        tasks = _get_index_tasks(d_ix, resume)
+        tasks = _get_index_tasks(d_ix, resume, fill_interior_gaps=fill_interior_gaps)
         total += await _async_download(
             tasks, _fetch_index_daily, _bulk_upsert_index_daily,
             label="Index K-line", concurrency=concurrency,

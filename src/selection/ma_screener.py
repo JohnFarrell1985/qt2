@@ -292,13 +292,13 @@ def passes_ma5_ma10_above_long_filter(mas: dict[int, pd.Series], cfg: MaFilterCo
     """MA5 与 MA10 是否均在指定长均线上方 (组内 AND, 组间 OR).
 
     例: ``[[20, 30], [40, 50]]`` → (MA5/10 均在 20、30 之上) 或 (均在 40、50 之上)。
-    ``require_ma5_ma10_above_long=False`` 或未配置条件组时恒为 True。
+    ``require_ma5_ma10_above_long=False`` 时恒为 True; 开启但未配置条件组时返回 False。
     """
     if not cfg.require_ma5_ma10_above_long:
         return True
     groups = cfg.ma5_ma10_above_groups
     if not groups:
-        return True
+        return False
 
     if 5 not in mas or 10 not in mas:
         return False

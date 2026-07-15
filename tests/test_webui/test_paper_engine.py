@@ -437,3 +437,84 @@ class TestLiveDeferral:
         pending = [x for x in acct.state["orders"] if x["order_id"] == o["order_id"]][0]
         assert pending["status"] == "pending"
         assert "日K线" in pending["note"]
+
+    def test_order_on_710_matches_713_low(self, store, quotes, monkeypatch):
+        """7/10 下单 → 下一交易日 7/13 → 用 7/13 最低价判定成交。"""
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-10")
+
+        class CalBars:
+            """模拟 7/11-7/12 休市, 下一交易日为 7/13。"""
+
+            def latest_trading_day(self):
+                return "2026-07-14"
+
+            def step_trading_day(self, date_str, direction):
+                cal = ["2026-07-10", "2026-07-13", "2026-07-14"]
+                if date_str not in cal:
+                    return None
+                i = cal.index(date_str)
+                if direction == "next":
+                    return cal[i + 1] if i + 1 < len(cal) else None
+                return cal[i - 1] if i > 0 else None
+
+            def get_bar(self, code, date_str):
+                from src.webui.quotes import DayBar
+                if date_str == "2026-07-13":
+                    return DayBar(code=code, date=date_str, low=692.0, high=765.0,
+                                  close=716.0, open=700.0, pre_close=700.0)
+                return None
+
+        acct = PaperAccount(
+            name="d710", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=CalBars(), store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 200, price=701.01, price_type="limit")
+        assert o["status"] == "pending"
+        assert o["effective_date"] == "2026-07-13"
+
+        acct.set_trade_date("2026-07-15")
+        got = [x for x in acct.state["orders"] if x["order_id"] == o["order_id"]][0]
+        assert got["status"] == "filled"
+        assert got["filled_price"] == 701.01
+
+    def test_deferred_fills_using_effective_bar_when_trade_date_ahead(self, store, quotes, monkeypatch):
+        """模拟日跳到生效日之后 (且无该日 K 线) 时, 仍应用生效日 K 线补撮合。"""
+        monkeypatch.setattr("src.webui.paper_engine._today_str", lambda: "2026-07-10")
+
+        class SyncBars:
+            def latest_trading_day(self):
+                return "2026-07-14"
+
+            def step_trading_day(self, date_str, direction):
+                days = ["2026-07-10", "2026-07-13", "2026-07-14"]
+                if date_str not in days:
+                    return None
+                i = days.index(date_str)
+                if direction == "next":
+                    return days[i + 1] if i + 1 < len(days) else None
+                return days[i - 1] if i > 0 else None
+
+            def get_bar(self, code, date_str):
+                if date_str == "2026-07-13":
+                    return DayBar(
+                        code=code, date=date_str, name="摩尔线程",
+                        open=700, high=765, low=692, close=716, pre_close=700,
+                    )
+                return None
+
+        from src.webui.quotes import DayBar
+
+        acct = PaperAccount(
+            name="sync_fill", initial_capital=5_000_000.0,
+            quote_provider=quotes, bar_provider=SyncBars(), store=store,
+        )
+        acct.set_trade_date("2026-07-10")
+        o = acct.place_order("688795.SH", "buy", 200, price=701.01, price_type="limit")
+        assert o["status"] == "pending"
+        assert o["effective_date"] == "2026-07-13"
+
+        acct.set_trade_date("2026-07-15")  # 无 K 线, 且 > 库内最新日
+        order = [x for x in acct.state["orders"] if x["order_id"] == o["order_id"]][0]
+        assert order["status"] == "filled"
+        assert order["filled_price"] == 701.01

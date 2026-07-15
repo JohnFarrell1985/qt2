@@ -4,15 +4,62 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from datetime import date, datetime
 from typing import Any, Callable, Dict, Optional
 
+from sqlalchemy import text
+
+from src.common.db import get_session
 from src.common.logger import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_DAYS_BACK = 15
+DEFAULT_DAYS_BACK = 0  # 0 = 按库内最新交易日自动计算
 DEFAULT_CONCURRENCY = 4
 DEFAULT_SOURCE = "qmt"
+SYNC_BUFFER_DAYS = 3
+SYNC_MIN_DAYS = 3
+SYNC_MAX_DAYS = 30
+
+
+def compute_sync_days_back(
+    *,
+    min_days: int = SYNC_MIN_DAYS,
+    buffer_days: int = SYNC_BUFFER_DAYS,
+    max_days: int = SYNC_MAX_DAYS,
+) -> tuple[int, Optional[str]]:
+    """按 ``stock_daily`` / ``etf_daily`` 库内最新日 vs 今天计算回溯自然日.
+
+    Returns:
+        (days_back, 库内最新交易日 YYYY-MM-DD; 空表时为 None)
+    """
+    today = date.today()
+    latest: Optional[date] = None
+    gaps: list[int] = []
+
+    with get_session() as session:
+        for tbl in ("stock_daily", "etf_daily"):
+            row = session.execute(text(f"SELECT MAX(trade_date) AS d FROM {tbl}")).scalar()
+            if row is None:
+                continue
+            d = row.date() if isinstance(row, datetime) else row
+            if not isinstance(d, date):
+                continue
+            gaps.append(max(0, (today - d).days))
+            if latest is None or d < latest:
+                latest = d
+
+    if not gaps:
+        return max_days, None
+
+    need = max(gaps) + buffer_days
+    days_back = max(min_days, min(need, max_days))
+    latest_s = latest.isoformat() if latest else None
+    logger.info(
+        "WebUI 自动计算 days_back=%d (库内最新=%s, 日历缺口=%d, buffer=%d)",
+        days_back, latest_s, max(gaps), buffer_days,
+    )
+    return days_back, latest_s
 
 
 class DataSyncService:
@@ -41,6 +88,12 @@ class DataSyncService:
         concurrency: int = DEFAULT_CONCURRENCY,
         source: str = DEFAULT_SOURCE,
     ) -> Dict[str, Any]:
+        auto = days_back <= 0
+        if auto:
+            effective_days, db_latest = compute_sync_days_back()
+        else:
+            effective_days = max(1, min(int(days_back), 365))
+            db_latest = None
         with self._lock:
             if self._status.get("running"):
                 return {"ok": False, "detail": "数据同步任务进行中"}
@@ -49,7 +102,9 @@ class DataSyncService:
                 "phase": "etf",
                 "started": time.time(),
                 "elapsed": 0.0,
-                "days_back": days_back,
+                "days_back": effective_days,
+                "days_back_auto": auto,
+                "db_latest": db_latest,
                 "source": source,
                 "concurrency": concurrency,
                 "etf_rows": 0,
@@ -60,11 +115,11 @@ class DataSyncService:
             }
         t = threading.Thread(
             target=self._run,
-            args=(on_settle, days_back, concurrency, source),
+            args=(on_settle, effective_days, concurrency, source),
             daemon=True,
         )
         t.start()
-        return {"ok": True}
+        return {"ok": True, "days_back": effective_days, "db_latest": db_latest}
 
     def _run(
         self,
@@ -90,6 +145,7 @@ class DataSyncService:
                         source=source,
                         concurrency=concurrency,
                         resume=True,
+                        fill_interior_gaps=False,
                     )
                 )
                 self._set(phase="stock", etf_rows=int(etf_rows or 0))
@@ -102,6 +158,7 @@ class DataSyncService:
                         source=source,
                         concurrency=concurrency,
                         resume=True,
+                        fill_interior_gaps=False,
                     )
                 )
                 self._set(phase="settle", stock_rows=int(stock_rows or 0))

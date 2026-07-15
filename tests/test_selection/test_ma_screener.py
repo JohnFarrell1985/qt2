@@ -448,3 +448,9 @@ class TestMa5Ma10AboveLong:
             ma5_ma10_above_groups=[[20, 30]],
         )
         assert passes_ma5_ma10_above_long_filter(mas, cfg) is False
+
+    def test_enabled_without_groups_fails_closed(self):
+        from src.selection.ma_screener import passes_ma5_ma10_above_long_filter
+
+        cfg = MaFilterConfig(require_ma5_ma10_above_long=True, ma5_ma10_above_groups=[])
+        assert passes_ma5_ma10_above_long_filter(self._mas_with_spreads(), cfg) is False

@@ -171,6 +171,13 @@ class TestParamMerge:
         assert cfg.ma5_ma10_above_groups == [[20, 30], [40, 50]]
         assert 20 in cfg.compute_periods and 50 in cfg.compute_periods
 
+    def test_above_long_auto_default_groups(self):
+        from src.selection.strategies.bull_launch import build_configs
+
+        cfg, _, _ = build_configs({"require_ma5_ma10_above_long": "是"})
+        assert cfg.require_ma5_ma10_above_long is True
+        assert cfg.ma5_ma10_above_groups == [[20, 30], [40, 50]]
+
     def test_catalog_lists_strategies(self):
         import src.selection.strategies  # noqa: F401
         from src.selection.strategy import strategy_catalog

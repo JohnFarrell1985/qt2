@@ -136,7 +136,7 @@ class PicksReq(BaseModel):
 
 
 class SyncKlineReq(BaseModel):
-    days_back: int = 15
+    days_back: int = 0  # 0=按库内最新交易日自动计算
     concurrency: int = 4
     source: str = "qmt"
 
@@ -402,13 +402,17 @@ def create_app() -> FastAPI:
         svc = get_data_sync_service()
         res = svc.start(
             _settle_all_accounts,
-            days_back=max(1, min(req.days_back, 365)),
+            days_back=req.days_back if req.days_back > 0 else 0,
             concurrency=max(1, min(req.concurrency, 16)),
             source=req.source if req.source in ("auto", "qmt", "eastmoney", "tencent") else "qmt",
         )
         if not res.get("ok"):
             raise HTTPException(409, detail=res.get("detail", "同步启动失败"))
-        return {"ok": True}
+        return {
+            "ok": True,
+            "days_back": res.get("days_back"),
+            "db_latest": res.get("db_latest"),
+        }
 
     @app.get("/api/sync/status")
     def sync_status(x_auth_token: Optional[str] = Header(None)):

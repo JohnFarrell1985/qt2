@@ -5,8 +5,9 @@
     港股通佣金万3 最低5港元 + 印花税千1 + 交易费/征费/交收费), 复用 ``src/backtest/fees.py``
   - 交易日驱动 (state.trade_date): 可切换到任意有数据的历史交易日, 下单价格须落在
     当日 [最低价, 最高价] 区间内 (数据取自本地 PostgreSQL 日线), 否则挂单待后续交易日撮合。
-    **跟盘模式** (模拟日 ≥ 日历当天): 收盘后选股/下单, 委托一律 **次日** 生效,
-    待同步日 K 后按「最低价 < 挂单价」撮合; **历史回放** (模拟日 < 日历当天) 则可在当日线
+    **跟盘模式** (模拟日 ≥ 日历当天): 当日下单不成交, ``effective_date`` 设为
+    **下单日的下一交易日** (如 7/10→7/13, 跳过周末), 同步日 K 后按该日
+    「最低价 < 挂单价」撮合; **历史回放** (模拟日 < 日历当天) 则可在当日线
     价区间内补录成交。
   - T+1 / T+0 以 **交易日** 为准: A 股 T+1 (当日买入次日可卖); 港股通、可转债、跨境 ETF 支持 T+0。
   - 卖出校验: 无持仓不可卖; 可用不足不可卖。
@@ -232,6 +233,25 @@ class PaperAccount:
         except Exception:  # noqa: BLE001
             return None
 
+    def _bar_for_match(self, qmt_code: str, order: Dict[str, Any]):
+        """撮合用 K 线。
+
+        预约/选股买入 (``effective_date`` 已设定): 生效日已到后 **只取生效日** K 线,
+        按该日最低价与挂单价比较 (例: 7/10 下单 → effective=7/13 → 查 7/13 的 low)。
+        其余委托仍取当前模拟日 K 线。
+        """
+        eff = order.get("effective_date")
+        if (
+            order.get("direction") == "buy"
+            and eff
+            and self._cur_day() >= eff
+        ):
+            try:
+                return self.bars.get_bar(qmt_code, eff)
+            except Exception:  # noqa: BLE001
+                return None
+        return self._day_bar(qmt_code)
+
     def _price_info(self, qmt_code: str):
         """返回 (估值价, 涨跌幅%): 优先当日日线收盘, 退化到实时报价, 再退化到成本价。"""
         bar = self._day_bar(qmt_code)
@@ -258,7 +278,8 @@ class PaperAccount:
     ) -> Dict[str, Any]:
         """下单。direction: buy/sell; price_type: limit/market。
 
-        **跟盘** (模拟日 ≥ 日历当天): 自动设 ``effective_date`` 为下一交易日, 同步日 K 后撮合。
+        **跟盘** (模拟日 ≥ 日历当天): ``effective_date`` = 下单日的 **下一交易日**,
+        同步日 K 后按该日「最低价 < 挂单价」撮合 (非当前模拟日)。
         **回放** (模拟日 < 日历当天): 限价单可在当日线价区间 [最低, 最高] 内即时成交。
         ``origin="pick"`` 的买入在生效日按「最低价 < 挂单价」规则成交。
         """
@@ -361,10 +382,10 @@ class PaperAccount:
         # 预约单: 未到生效交易日前保持挂单
         eff = order.get("effective_date")
         if eff and self._cur_day() < eff:
-            order["note"] = f"预约 {eff} 生效"
+            order["note"] = f"预约 {eff} 撮合 (该日最低<挂单价则成交)"
             return
 
-        bar = self._day_bar(qmt_code)
+        bar = self._bar_for_match(qmt_code, order)
 
         if bar is not None and bar.high > 0 and bar.low > 0:
             if order["price_type"] == "market":
@@ -385,12 +406,12 @@ class PaperAccount:
                     order["note"] = "选股挂单缺少生效日"
                     return
                 if deferred_buy or is_pick_buy:
-                    # 次日/预约买入: 当日最低价 < 挂单价 即成交, 成交价 = min(挂单价, 当日最高)
+                    # 下一交易日买入: 生效日最低价 < 挂单价 → 成交价 = min(挂单价, 当日最高)
                     if bar.low < price - 1e-9:
                         fill_price = min(price, bar.high)
                     else:
                         order["note"] = (
-                            f"当日最低{bar.low:g}≥挂单价{price:g}, 继续挂单(GTC)"
+                            f"{eff}最低{bar.low:g}≥挂单价{price:g}, 继续挂单"
                         )
                         return
                 elif price < bar.low - 1e-6 or price > bar.high + 1e-6:
@@ -402,7 +423,7 @@ class PaperAccount:
                     fill_price = price
             self._execute(order, qmt_code, direction, qty, fill_price)
         elif eff and self._cur_day() >= eff:
-            order["note"] = f"待 {self._cur_day()} 日K线更新后撮合"
+            order["note"] = f"待 {eff} 日K线, 同步后按该日最低价判定"
             return
         elif order.get("origin") == "pick":
             order["note"] = "选股挂单待生效日撮合"
